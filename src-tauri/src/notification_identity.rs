@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-pub const APP_USER_MODEL_ID: &str = "com.leaderxin.quant-desktop";
+pub const APP_USER_MODEL_ID: &str = "com.chinesecanfly-wxy.quant-desktop";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct NotificationIdentityStatus {

@@ -9,7 +9,7 @@ const settings = useSettingsStore();
 const updater = useUpdaterStore();
 const { manualCheck } = useUpdateCheck();
 const appVersion = ref('');
-withDefaults(defineProps<{ copyright?: string }>(), { copyright: '© 2026 Leaderxin' });
+withDefaults(defineProps<{ copyright?: string }>(), { copyright: '© 2026 ChineseCanFly-wxy' });
 
 onMounted(async () => {
   try { appVersion.value = await getVersion(); }

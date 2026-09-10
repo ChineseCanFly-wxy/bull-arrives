@@ -55,7 +55,7 @@ cat ~/.tauri/quant-desktop.key
 
 仓库已 Public，只需 2 个 Secret：
 
-打开 `https://github.com/Leaderxin/quant-desktop/settings/secrets/actions`，点 **New repository secret**：
+打开 `https://github.com/ChineseCanFly-wxy/quant-desktop/settings/secrets/actions`，点 **New repository secret**：
 
 ### 2.1 添加 TAURI_PRIVATE_KEY
 
@@ -113,7 +113,7 @@ git push origin v1.2.0
 
 ### 3.3 监控 CI 运行
 
-打开 `https://github.com/Leaderxin/quant-desktop/actions`，查看 Release workflow：
+打开 `https://github.com/ChineseCanFly-wxy/quant-desktop/actions`，查看 Release workflow：
 
 构建流程（2 个 job）：
 1. **build** — Windows / macOS / Linux 三平台矩阵构建，上传 artifacts
@@ -121,7 +121,7 @@ git push origin v1.2.0
 
 ### 3.4 验证 Release
 
-打开 `https://github.com/Leaderxin/quant-desktop/releases`，确认：
+打开 `https://github.com/ChineseCanFly-wxy/quant-desktop/releases`，确认：
 - 新 Release `v1.2.0` 已创建
 - 安装包文件（`.exe`/`.msi`/`.dmg` 等）已上传
 - `latest.json` 已上传
@@ -138,7 +138,7 @@ git push origin v1.2.0
   "platforms": {
     "windows-x86_64": {
       "signature": "...",
-      "url": "https://github.com/Leaderxin/quant-desktop/releases/download/v1.2.0/..."
+      "url": "https://github.com/ChineseCanFly-wxy/quant-desktop/releases/download/v1.2.0/..."
     }
   }
 }
@@ -194,4 +194,4 @@ git push origin v1.x.0
 | 3 | 添加 Secret `TAURI_KEY_PASSWORD` | Settings → Secrets → Actions | ☐ |
 | 4 | 更新 `CHANGELOG.md` | 项目根目录 | ☐ |
 | 5 | 推送 `v*` tag 触发构建 | `git tag v1.2.0 && git push origin v1.2.0` | ☐ |
-| 6 | 验证 Release 和 `latest.json` | `https://github.com/Leaderxin/quant-desktop/releases` | ☐ |
+| 6 | 验证 Release 和 `latest.json` | `https://github.com/ChineseCanFly-wxy/quant-desktop/releases` | ☐ |
