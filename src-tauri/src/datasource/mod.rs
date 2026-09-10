@@ -1,0 +1,359 @@
+use async_trait::async_trait;
+use std::collections::HashMap;
+use std::sync::{OnceLock, RwLock};
+use std::time::Duration;
+use tokio::sync::Notify;
+use reqwest::Client;
+use crate::domain::*;
+use crate::domain::AppError;
+use market_policy::{MarketGateDecision, MarketRequestPolicy};
+
+// ── Shared HTTP Client ──
+// A single reqwest::Client shared across all data source adapters.
+// Client::clone() is a shallow copy — the connection pool, TLS config,
+// and timeout are all shared by every clone.
+
+static SHARED_CLIENT: OnceLock<Client> = OnceLock::new();
+
+/// Get or initialize the shared reqwest::Client.
+/// All adapters should call this and clone the handle.
+pub fn shared_client() -> &'static Client {
+    SHARED_CLIENT.get_or_init(|| {
+        Client::builder()
+            .timeout(Duration::from_secs(10))
+            .user_agent(concat!(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ",
+                "AppleWebKit/537.36 (KHTML, like Gecko) ",
+                "Chrome/131.0.0.0 Safari/537.36"
+            ))
+            .pool_max_idle_per_host(10)
+            .build()
+            .expect("Failed to build shared reqwest Client — TLS backend may be missing")
+    })
+}
+
+// ── Shared constants across data source adapters ──
+
+/// Major A-share index codes (Shanghai + Shenzhen)
+pub const INDEX_CODES: &str =
+    "s_sh000001,s_sz399001,s_sz399006,s_sh000688,s_sh000698,s_sh000905,s_sh000680";
+
+/// Ticker window default dimensions
+pub const TICKER_WIDTH: u32 = 230;
+pub const TICKER_HEIGHT: u32 = 38;
+
+// ── Data Normalization ──
+
+/// 成交量归一化: 手 → 股 (×100)
+pub const VOLUME_HANDS_TO_SHARES: u64 = 100;
+
+/// 成交额归一化: 万元 → 元 (×10000)
+pub const TURNOVER_WAN_TO_YUAN: f64 = 10000.0;
+
+/// 将成交量从手转换为股
+#[inline]
+pub fn normalize_volume(volume_hands: u64) -> u64 {
+    volume_hands * VOLUME_HANDS_TO_SHARES
+}
+
+/// 将成交额从万元转换为元
+#[inline]
+pub fn normalize_turnover(turnover_wan: f64) -> f64 {
+    turnover_wan * TURNOVER_WAN_TO_YUAN
+}
+
+/// Derive a display category from a full CN symbol (sh/sz/bj + 6-digit code),
+/// following the A-share code-assignment convention:
+///   sh 0xxxxx → 指数 (上证/中证);  sh 5xxxxx → ETF;  sh 6xxxxx → A股;  sh 9xxxxx → B股
+///   sz 399xxx → 指数 (深证);      sz 159xxx → ETF; sz 16xxxx → LOF;  sz 2xxxxx → B股;  其余 → A股
+///   bj 899xxx → 指数 (北证50 等);  其余 bj → 北交所 A股
+/// Returns "" for symbols without a CN exchange prefix (HK/US etc.).
+pub fn cn_category(full_code: &str) -> &'static str {
+    if full_code.starts_with("sh") {
+        let code = &full_code[2..];
+        if code.starts_with('0') {
+            return "ZS";
+        }
+        if code.starts_with('5') {
+            return "ETF";
+        }
+        if code.starts_with('9') {
+            return "GP-B";
+        }
+        return "GP-A";
+    }
+    if full_code.starts_with("sz") {
+        let code = &full_code[2..];
+        if code.starts_with("39") {
+            return "ZS";
+        }
+        if code.starts_with("159") {
+            return "ETF";
+        }
+        if code.starts_with("16") {
+            return "LOF";
+        }
+        if code.starts_with('2') {
+            return "GP-B";
+        }
+        return "GP-A";
+    }
+    if full_code.starts_with("bj") {
+        let code = &full_code[2..];
+        if code.starts_with("899") {
+            return "ZS";
+        }
+        return "GP-A";
+    }
+    ""
+}
+
+/// 将图表周期字符串映射为分钟跨度（仅分钟周期返回 Some）。
+/// 用于区分分钟 K 线与日/周/月 K 线。
+pub fn minute_span(period: &str) -> Option<u32> {
+    match period {
+        "1min" => Some(1),
+        "5min" => Some(5),
+        "15min" => Some(15),
+        "30min" => Some(30),
+        "60min" => Some(60),
+        _ => None,
+    }
+}
+
+/// Abstract data source trait — all market data adapters implement this
+#[async_trait]
+pub trait DataSource: Send + Sync {
+    /// Unique identifier for this data source
+    fn name(&self) -> &str;
+
+    /// Human-readable display name
+    fn display_name(&self) -> &str;
+
+    /// Fetch real-time quotes (batch)
+    async fn fetch_realtime(
+        &self,
+        codes: &[String],
+        market: &str,
+    ) -> Result<Vec<Quote>, AppError>;
+
+    /// Fetch major indices
+    async fn fetch_indices(&self) -> Result<Vec<IndexQuote>, AppError>;
+
+    /// Search stocks (fuzzy match code or name)
+    async fn search(
+        &self,
+        keyword: &str,
+        market: &str,
+    ) -> Result<Vec<StockBrief>, AppError>;
+
+    /// Fetch 5-level depth (bid/ask order book)
+    async fn fetch_depth(
+        &self,
+        _code: &str,
+        _market: &str,
+    ) -> Result<crate::domain::Depth, AppError> {
+        Ok(crate::domain::Depth {
+            code: _code.to_string(),
+            bids: vec![],
+            asks: vec![],
+        })
+    }
+
+    /// Fetch intraday minute data for charting
+    async fn fetch_minute_data(
+        &self,
+        _code: &str,
+        _market: &str,
+    ) -> Result<Vec<crate::domain::MinuteData>, AppError> {
+        Ok(vec![])
+    }
+
+    /// Fetch K-line data for charting (daily/weekly/monthly)
+    /// - `end_date`: None → latest data; Some("YYYY-MM-DD") → data up to and including this date
+    /// - `count`: None → default 200; Some(n) → return at most n bars
+    async fn fetch_kline(
+        &self,
+        _code: &str,
+        _market: &str,
+        _period: &str,
+        _end_date: Option<&str>,
+        _count: Option<u32>,
+    ) -> Result<Vec<crate::domain::KLineData>, AppError> {
+        Ok(vec![])
+    }
+
+    /// Health check
+    async fn health_check(&self) -> Result<bool, AppError>;
+}
+
+/// Data source manager — registration, switching, unified dispatch
+pub struct DataSourceManager {
+    sources: HashMap<String, Box<dyn DataSource>>,
+    active: RwLock<String>,
+    request_policy: RwLock<MarketRequestPolicy>,
+    pub wakeup: Notify,
+    revision: std::sync::atomic::AtomicU64,
+}
+
+impl DataSourceManager {
+    pub fn new() -> Self {
+        Self {
+            sources: HashMap::new(),
+            active: RwLock::new(String::new()),
+            request_policy: RwLock::new(MarketRequestPolicy::default()),
+            wakeup: Notify::new(),
+            revision: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn invalidate_requests(&self) {
+        self.revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.wakeup.notify_one();
+    }
+
+    /// Replace the runtime request policy after validating `settings.quote_schedule`.
+    /// The previous policy remains active if the JSON is invalid.
+    pub fn set_request_policy_json(&self, quote_schedule: Option<&str>) -> Result<(), String> {
+        let policy = MarketRequestPolicy::from_quote_schedule_json(quote_schedule)?;
+        self.set_request_policy(policy);
+        Ok(())
+    }
+
+    pub fn set_request_policy(&self, policy: MarketRequestPolicy) {
+        *self
+            .request_policy
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = policy;
+        self.invalidate_requests();
+    }
+
+    pub fn request_decision(&self) -> MarketGateDecision {
+        self.request_policy
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .decision_now()
+    }
+
+    /// Gate every outbound market-data request before selecting either the active
+    /// source or a fallback source. Callers that invoke a `DataSource` directly
+    /// (notably watchlist search) must call this method first as well.
+    pub fn ensure_request_allowed(&self) -> Result<(), String> {
+        self.request_policy
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .ensure_request_allowed()
+    }
+
+    /// Register a data source. First registered source becomes active automatically.
+    pub fn register(&mut self, source: Box<dyn DataSource>) {
+        let name = source.name().to_string();
+        if self.sources.is_empty() {
+            *self.active.write().unwrap_or_else(|e| e.into_inner()) = name.clone();
+        }
+        self.sources.insert(name, source);
+    }
+
+    /// Switch the active data source (notifies the scheduler to refresh immediately).
+    pub fn set_active(&self, name: &str) -> Result<(), String> {
+        if self.sources.contains_key(name) {
+            *self.active.write().unwrap_or_else(|e| e.into_inner()) = name.to_string();
+            log::info!("Data source switched to: {}", name);
+            self.invalidate_requests();
+            Ok(())
+        } else {
+            log::warn!("Attempted to switch to unregistered data source: {}", name);
+            Err(format!("Data source '{}' is not registered", name))
+        }
+    }
+
+    /// Set the active data source WITHOUT notifying the scheduler.
+    /// Used during initial setup — the scheduler's main loop will pick up
+    /// the correct source on its first tick without a duplicate wakeup fetch.
+    pub fn set_active_initial(&self, name: &str) -> Result<(), String> {
+        if self.sources.contains_key(name) {
+            *self.active.write().unwrap_or_else(|e| e.into_inner()) = name.to_string();
+            log::info!("Data source set (initial): {}", name);
+            Ok(())
+        } else {
+            log::warn!("Attempted to set unregistered data source: {}", name);
+            Err(format!("Data source '{}' is not registered", name))
+        }
+    }
+
+    /// Get the name of the currently active data source
+    pub fn active_name(&self) -> String {
+        self.active.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Get a reference to the currently active data source.
+    /// Returns None if no source is registered (shouldn't happen after setup).
+    pub fn active_source(&self) -> Option<&dyn DataSource> {
+        let name = self.active.read().unwrap_or_else(|e| e.into_inner());
+        self.sources.get(&*name).map(|s| s.as_ref())
+    }
+
+    /// Get a reference to a specific data source by name
+    pub fn get_source(&self, name: &str) -> Option<&dyn DataSource> {
+        self.sources.get(name).map(|s| s.as_ref())
+    }
+
+    /// Iterate over all registered data sources (name, source)
+    pub fn all_sources(&self) -> Vec<(String, &dyn DataSource)> {
+        self.sources
+            .iter()
+            .map(|(k, v)| (k.clone(), v.as_ref()))
+            .collect()
+    }
+
+    /// List all registered data sources (id, display_name)
+    pub fn list_sources(&self) -> Vec<(&str, &str)> {
+        self.sources
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.display_name()))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn minute_span_maps_known_periods() {
+        assert_eq!(minute_span("1min"), Some(1));
+        assert_eq!(minute_span("5min"), Some(5));
+        assert_eq!(minute_span("15min"), Some(15));
+        assert_eq!(minute_span("30min"), Some(30));
+        assert_eq!(minute_span("60min"), Some(60));
+        assert_eq!(minute_span("daily"), None);
+        assert_eq!(minute_span("weekly"), None);
+    }
+
+    #[test]
+    fn cn_category_classifies_cn_symbols() {
+        assert_eq!(cn_category("sh600519"), "GP-A");
+        assert_eq!(cn_category("sz000001"), "GP-A");
+        assert_eq!(cn_category("sz300750"), "GP-A");
+        assert_eq!(cn_category("sh000852"), "ZS");
+        assert_eq!(cn_category("sz399006"), "ZS");
+        assert_eq!(cn_category("sh510050"), "ETF");
+        assert_eq!(cn_category("sz159915"), "ETF");
+        assert_eq!(cn_category("sz161725"), "LOF");
+        assert_eq!(cn_category("sh900901"), "GP-B");
+        assert_eq!(cn_category("bj920185"), "GP-A");
+        assert_eq!(cn_category("bj899050"), "ZS");
+        assert_eq!(cn_category(""), "");
+    }
+}
+
+pub mod sina;
+pub mod tencent;
+pub mod market_clock;
+pub mod market_policy;
+pub mod search;
+pub mod headers;

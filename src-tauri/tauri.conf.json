@@ -1,0 +1,77 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "quant-desktop",
+  "version": "1.0.0",
+  "identifier": "com.leaderxin.quant-desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:3000",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "QuantDesktop - 免费实时A股看盘",
+        "width": 1000,
+        "height": 680,
+        "visible": false,
+        "center": true,
+        "decorations": true,
+        "resizable": true
+      },
+      {
+        "label": "ticker",
+        "title": "QuantDesktop Ticker",
+        "url": "ticker.html",
+        "width": 230,
+        "height": 38,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "dragDropEnabled": true,
+        "resizable": false,
+        "focus": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset:; style-src 'self' 'unsafe-inline'; script-src 'self'",
+      "pattern": {
+        "use": "brownfield"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": false,
+    "targets": "all",
+    "windows": {
+      "nsis": {
+        "languages": ["SimpChinese", "English"]
+      },
+      "wix": {
+        "language": "zh-CN"
+      }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/ChineseCanFly-wxy/quant-desktop/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdCMjNCQkVDMTAxRjJBMUMKUldRY0toOFE3THNqZTh6bVNtWHlyZmk2N2ZHeEprVXNXRVFtRzF3aHIvNXlPTmRHbzhoTXNla08K",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}
