@@ -64,7 +64,7 @@ cargo build --manifest-path src-tauri/Cargo.toml
 
 ```powershell
 # Windows PowerShell: 设置签名环境变量（更新功能需要）
-$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content "$env:USERPROFILE\.tauri\quant-desktop.key"
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content "$env:USERPROFILE\.tauri\bull-arrives.key"
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "your-password"
 npm run tauri:build
 

@@ -27,7 +27,7 @@ bull-arrives (Public Repo)
 
 ```bash
 npx tauri signer generate \
-  -w ~/.tauri/quant-desktop.key \
+  -w ~/.tauri/bull-arrives.key \
   -p "786541437" \
   --ci \
   --force
@@ -37,14 +37,14 @@ npx tauri signer generate \
 
 | 文件 | 用途 | 存放位置 |
 |------|------|---------|
-| `~/.tauri/quant-desktop.key` | 私钥（加密） | 本地 + GitHub Secret |
-| `~/.tauri/quant-desktop.key.pub` | 公钥 | 已写入 `src-tauri/tauri.conf.json` |
+| `~/.tauri/bull-arrives.key` | 私钥（加密） | 本地 + GitHub Secret |
+| `~/.tauri/bull-arrives.key.pub` | 公钥 | 已写入 `src-tauri/tauri.conf.json` |
 
 ### 查看私钥内容
 
 **Git Bash:**
 ```bash
-cat ~/.tauri/quant-desktop.key
+cat ~/.tauri/bull-arrives.key
 ```
 
 复制输出的全部内容，下一步要用。
@@ -62,7 +62,7 @@ cat ~/.tauri/quant-desktop.key
 | 字段 | 值 |
 |------|-----|
 | **Name** | `TAURI_PRIVATE_KEY` |
-| **Secret** | 粘贴第一步 `cat ~/.tauri/quant-desktop.key` 输出的全部内容 |
+| **Secret** | 粘贴第一步 `cat ~/.tauri/bull-arrives.key` 输出的全部内容 |
 
 ### 2.2 添加 TAURI_KEY_PASSWORD
 
