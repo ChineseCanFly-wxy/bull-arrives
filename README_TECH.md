@@ -93,7 +93,7 @@ node scripts/build.mjs
 | `portable.dat` | 数据目录 | 更新方式 |
 |---|---|---|
 | 存在 | `<exe 目录>/data/` | 手动下载新 zip 覆盖 |
-| 不存在 | `%APPDATA%/quant-desktop/` | 内置自动更新 |
+| 不存在 | `%APPDATA%/bull-arrives/` | 内置自动更新 |
 
 绿色版会自动隐藏"检查更新"按钮（状态栏）和托盘菜单中的更新选项，启动时也不会自动检测更新。
 
@@ -105,14 +105,14 @@ npm run tauri build
 
 # 2. 手动创建绿色版 zip
 $src = "src-tauri\target\release"
-$staging = "portable\quant-desktop"
+$staging = "portable\bull-arrives"
 mkdir $staging -Force > $null
 Copy-Item "$src\Bull Arrives.exe" -Destination "$staging\"
 New-Item -ItemType File -Path "$staging\portable.dat" > $null
-Compress-Archive -Path "$staging\*" -DestinationPath "$src\bundle\quant-desktop_1.2.8_x64-portable.zip"
+Compress-Archive -Path "$staging\*" -DestinationPath "$src\bundle\bull-arrives_1.0.0_x64-portable.zip"
 ```
 
-> 产物：`src-tauri\target\release\bundle\quant-desktop_<version>_x64-portable.zip`
+> 产物：`src-tauri\target\release\bundle\bull-arrives_<version>_x64-portable.zip`
 
 #### CI 自动打包
 
@@ -123,7 +123,7 @@ CI（`.github/workflows/release.yml`）在 Windows 构建后自动执行上述�
 | | 安装版（`.exe` / `.msi`） | 绿色版（`.zip`） |
 |---|---|---|
 | 安装方式 | 运行安装向导 | 解压即用 |
-| 数据位置 | `%APPDATA%/quant-desktop/` | `<exe 目录>/data/` |
+| 数据位置 | `%APPDATA%/bull-arrives/` | `<exe 目录>/data/` |
 | 自动更新 | ✅ 后台静默更新 | ❌ 手动下载替换 |
 | 开机自启 | ✅ 支持 | ⚠️ 支持，但移动目录后失效 |
 | 注册表 | 写入卸载信息 | 无残留 |
@@ -132,7 +132,7 @@ CI（`.github/workflows/release.yml`）在 Windows 构建后自动执行上述�
 ## 项目结构
 
 ```
-quant-desktop/
+bull-arrives/
 ├── src/                          # Vue 前端
 │   ├── main.ts                   # 主窗口入口
 │   ├── ticker.ts                 # 行情条入口（独立 Vue 应用）

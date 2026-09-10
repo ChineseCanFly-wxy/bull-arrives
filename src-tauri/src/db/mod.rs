@@ -17,7 +17,7 @@ impl Database {
         if let Err(e) = std::fs::create_dir_all(&app_dir) {
             log::warn!("Failed to create app data dir {:?}: {}", app_dir, e);
         }
-        let db_path = app_dir.join("quant-desktop.db");
+        let db_path = app_dir.join("bull-arrives.db");
         let conn = Connection::open(db_path)?;
         let db = Self { conn: Mutex::new(conn) };
         db.migrate()?;

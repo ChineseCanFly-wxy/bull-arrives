@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    quant_desktop_lib::run()
+    bull_arrives_lib::run()
 }

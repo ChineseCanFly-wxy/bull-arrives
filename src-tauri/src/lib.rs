@@ -278,7 +278,7 @@ pub fn run() {
         .setup(|app| {
             // Data directory:
             // - Portable mode (portable.dat exists next to exe) → <exe_dir>/data/
-            // - Normal mode → %APPDATA%/quant-desktop/
+            // - Normal mode → %APPDATA%/bull-arrives/
             let (app_dir, is_portable) = std::env::current_exe()
                 .ok()
                 .and_then(|exe| {
@@ -293,13 +293,13 @@ pub fn run() {
                 .unwrap_or_else(|| {
                     let dir = dirs::data_dir()
                         .expect("Failed to get system data directory")
-                        .join("quant-desktop");
+                        .join("bull-arrives");
                     (dir, false)
                 });
 
-            // Initialize logger — writes to both stderr (dev) and quant-desktop.log (file)
+            // Initialize logger — writes to both stderr (dev) and bull-arrives.log (file)
             std::fs::create_dir_all(&app_dir).expect("Failed to create app data directory");
-            let log_file = File::create(app_dir.join("quant-desktop.log"))
+            let log_file = File::create(app_dir.join("bull-arrives.log"))
                 .expect("Failed to create log file");
             CombinedLogger::init(vec![
                 TermLogger::new(

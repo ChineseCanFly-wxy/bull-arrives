@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Bull Arrives",
-  "version": "1.2.0",
-  "identifier": "com.chinesecanfly-wxy.quant-desktop",
+  "productName": "BullArrives",
+  "version": "1.0.0",
+  "identifier": "com.chinesecanfly-wxy.bull-arrives",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:3000",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Bull Arrives - 免费实时A股看盘",
+        "title": "Bull Arrives - 牛市来时，你第一个看见",
         "width": 1000,
         "height": 680,
         "visible": false,

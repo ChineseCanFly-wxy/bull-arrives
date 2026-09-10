@@ -7,7 +7,7 @@
 ## 架构
 
 ```
-quant-desktop (Public Repo)
+bull-arrives (Public Repo)
 ┌──────────────────────────────────────────────┐
 │ CI (v* tag)                                  │
 │  1. build (Win/Mac/Linux 矩阵)               │
