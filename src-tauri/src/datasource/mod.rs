@@ -239,9 +239,9 @@ impl DataSourceManager {
             .decision_now()
     }
 
-    /// Gate every outbound market-data request before selecting either the active
-    /// source or a fallback source. Callers that invoke a `DataSource` directly
-    /// (notably watchlist search) must call this method first as well.
+    /// Gate every outbound live market-data request before selecting either the
+    /// active source or a fallback source. Metadata search is intentionally not
+    /// gated, so users can manage their watchlist outside quote polling hours.
     pub fn ensure_request_allowed(&self) -> Result<(), String> {
         self.request_policy
             .read()

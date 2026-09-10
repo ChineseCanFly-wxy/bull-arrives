@@ -1,9 +1,58 @@
 use crate::datasource::market_clock::MarketSession;
 use crate::domain::UpdateInfo;
 use crate::PortableMode;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_updater::UpdaterExt;
+
+const AUTO_PROXY_PORTS: &[u16] = &[7890, 10809, 10808, 7891, 1080, 8118, 8080];
+
+/// A listening port is not necessarily an HTTP proxy (8080 is often nginx or
+/// a development server). Probe the CONNECT handshake before using it.
+fn detect_http_proxy_port() -> Option<u16> {
+    AUTO_PROXY_PORTS.iter().copied().find(|port| {
+        let address = SocketAddr::from(([127, 0, 0, 1], *port));
+        let mut stream = match TcpStream::connect_timeout(&address, std::time::Duration::from_millis(75)) {
+            Ok(stream) => stream,
+            Err(_) => return false,
+        };
+        if stream.set_write_timeout(Some(std::time::Duration::from_millis(250))).is_err()
+            || stream.set_read_timeout(Some(std::time::Duration::from_millis(250))).is_err()
+        {
+            return false;
+        }
+        if stream
+            .write_all(b"CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\n")
+            .is_err()
+        {
+            return false;
+        }
+
+        let mut response = [0u8; 256];
+        let bytes_read = match stream.read(&mut response) {
+            Ok(bytes_read) => bytes_read,
+            Err(_) => return false,
+        };
+        is_successful_proxy_connect(&response[..bytes_read])
+    })
+}
+
+fn is_successful_proxy_connect(response: &[u8]) -> bool {
+    let Some(status_line) = std::str::from_utf8(response)
+        .ok()
+        .and_then(|text| text.lines().next())
+    else {
+        return false;
+    };
+    let mut fields = status_line.split_whitespace();
+    matches!(fields.next(), Some("HTTP/1.0") | Some("HTTP/1.1"))
+        && fields
+            .next()
+            .and_then(|status| status.parse::<u16>().ok())
+            .is_some_and(|status| (200..300).contains(&status))
+}
 
 /// 自动代理仅用于更新客户端，不修改进程环境，也不阻塞行情窗口启动。
 async fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
@@ -11,12 +60,9 @@ async fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Upd
         .iter().any(|key| std::env::var_os(key).is_some());
     let mut builder = app.updater_builder();
     if !explicit_proxy {
-        let port = tokio::task::spawn_blocking(|| {
-            [7890u16, 10809, 10808, 7891, 1080, 8118, 8080].into_iter().find(|port| {
-                let address = std::net::SocketAddr::from(([127, 0, 0, 1], *port));
-                std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(75)).is_ok()
-            })
-        }).await.map_err(|e| format!("更新代理探测失败：{}", e))?;
+        let port = tokio::task::spawn_blocking(detect_http_proxy_port)
+            .await
+            .map_err(|e| format!("更新代理探测失败：{}", e))?;
         if let Some(port) = port {
             let proxy = format!("http://127.0.0.1:{}", port).parse()
                 .map_err(|e| format!("更新代理地址无效：{}", e))?;
@@ -25,6 +71,23 @@ async fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Upd
     }
     // updater_builder 保留插件默认的 cleanup_before_exit 回调，不自行退出进程。
     builder.build().map_err(|e| format!("Updater init failed: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_successful_proxy_connect;
+
+    #[test]
+    fn proxy_probe_requires_successful_connect_response() {
+        assert!(is_successful_proxy_connect(
+            b"HTTP/1.1 200 Connection Established\r\n\r\n"
+        ));
+        assert!(!is_successful_proxy_connect(b"HTTP/1.1 400 Bad Request\r\n\r\n"));
+        assert!(!is_successful_proxy_connect(
+            b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n"
+        ));
+        assert!(!is_successful_proxy_connect(b"not an HTTP response"));
+    }
 }
 
 /// Core update-check logic (no State dependency). Callable from the tray menu

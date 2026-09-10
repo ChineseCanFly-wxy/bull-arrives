@@ -854,7 +854,17 @@ pub fn run() {
             commands::updater::install_update,
             commands::updater::is_trading_session,
         ])
-        .run(tauri::generate_context!())
-        .expect("Failed to start application");
-}
+        .build(tauri::generate_context!())
+        .expect("Failed to build application")
+        .run(|app_handle, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if let Err(error) = commands::window::show_main_window(app_handle.clone()) {
+                    log::warn!("Dock 重新打开主窗口失败: {}", error);
+                }
+            }
 
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app_handle, event);
+        });
+}
