@@ -311,7 +311,7 @@ pub fn run() {
                 WriteLogger::new(LevelFilter::Info, Config::default(), log_file),
             ])
             .expect("Failed to initialize logger");
-            log::info!("QuantDesktop v{} starting", env!("CARGO_PKG_VERSION"));
+            log::info!("Bull Arrives v{} starting", env!("CARGO_PKG_VERSION"));
             log::info!(
                 "Data directory: {:?} (portable: {})",
                 app_dir, is_portable
@@ -421,7 +421,7 @@ pub fn run() {
                         .cloned()
                         .expect("Default window icon not embedded — check tauri.conf.json icons config"),
                 )
-                .tooltip("QuantDesktop")
+                .tooltip("Bull Arrives")
                 .menu(&menu)
                 .on_menu_event({
                     let db = db.clone();

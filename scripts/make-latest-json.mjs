@@ -49,7 +49,7 @@ for (const file of files) {
   const platform = detectPlatform(file);
   if (!platform) continue;
   platforms[platform] = {
-    url: `https://github.com/ChineseCanFly-wxy/quant-desktop/releases/download/${tag}/${file}`
+    url: `https://github.com/ChineseCanFly-wxy/bull-arrives/releases/download/${tag}/${file}`
   };
 }
 

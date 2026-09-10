@@ -205,7 +205,7 @@ async function handleClick() {
     <div v-if="groupFlash" class="ticker-empty">当前分组 · {{ groupName }}</div>
     <template v-else-if="initFailed">
       <div class="ticker-row ticker-error-row">
-        <span class="ticker-error-text" :title="'点击重试'">QuantDesktop</span>
+        <span class="ticker-error-text" :title="'点击重试'">Bull Arrives</span>
         <span class="ticker-retry-hint">· 点击重试</span>
       </div>
     </template>

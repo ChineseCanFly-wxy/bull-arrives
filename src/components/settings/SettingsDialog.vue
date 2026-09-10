@@ -289,7 +289,7 @@ onBeforeUnmount(stopCapture);
         <section v-else class="settings-panel">
           <header class="panel-heading"><span>05</span><div><h2>系统</h2><p>配置启动行为与运行方式。</p></div></header>
           <article class="setting-card">
-            <div class="inline-setting"><div><h3>开机自启</h3><p>登录 Windows 时自动启动 QuantDesktop。</p></div><button class="switch" :class="{ on: settings.autoLaunch }" role="switch" :aria-checked="settings.autoLaunch" :disabled="isSaving('autostart')" @click="safelyRun('autostart', () => settings.toggleAutoLaunch())"><span /></button></div>
+            <div class="inline-setting"><div><h3>开机自启</h3><p>登录 Windows 时自动启动 Bull Arrives。</p></div><button class="switch" :class="{ on: settings.autoLaunch }" role="switch" :aria-checked="settings.autoLaunch" :disabled="isSaving('autostart')" @click="safelyRun('autostart', () => settings.toggleAutoLaunch())"><span /></button></div>
             <div class="system-line"><span>运行模式</span><b>{{ settings.isPortable ? '便携模式' : '标准安装' }}</b></div>
           </article>
           <WindowSizeSettings />

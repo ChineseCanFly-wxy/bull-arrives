@@ -33,7 +33,7 @@ mod platform {
 
     fn shortcut_path() -> Result<PathBuf, String> {
         let appdata = std::env::var_os("APPDATA").ok_or("无法读取当前用户 APPDATA")?;
-        Ok(PathBuf::from(appdata).join("Microsoft/Windows/Start Menu/Programs/QuantDesktop.lnk"))
+        Ok(PathBuf::from(appdata).join("Microsoft/Windows/Start Menu/Programs/Bull Arrives.lnk"))
     }
 
     unsafe fn initialize_com() -> Result<ComGuard, String> {

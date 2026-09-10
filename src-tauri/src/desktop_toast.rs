@@ -30,7 +30,7 @@ fn ensure_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String>
         "notification-toast",
         WebviewUrl::App("toast.html".into()),
     )
-    .title("QuantDesktop 提醒")
+    .title("Bull Arrives 提醒")
     .inner_size(360.0, 142.0)
     .decorations(false)
     .resizable(false)

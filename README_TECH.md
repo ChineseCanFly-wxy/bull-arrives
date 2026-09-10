@@ -1,4 +1,4 @@
-# QuantDesktop
+# Bull Arrives
 
 桌面级 A 股行情监控工具，基于 Tauri 2 + Vue 3 + Rust 构建。
 
@@ -84,7 +84,7 @@ node scripts/build.mjs
 
 ### 绿色版（Portable Zip）
 
-绿色版是一个免安装的 `.zip` 包，解压后直接运行 `quant-desktop.exe` 即可使用，**所有数据（数据库、日志）存储在 exe 同级 `data/` 目录下**，不写入系统 `%APPDATA%`，适合 U 盘携带或多版本并存。
+绿色版是一个免安装的 `.zip` 包，解压后直接运行 `Bull Arrives.exe` 即可使用，**所有数据（数据库、日志）存储在 exe 同级 `data/` 目录下**，不写入系统 `%APPDATA%`，适合 U 盘携带或多版本并存。
 
 #### 工作原理
 
@@ -107,7 +107,7 @@ npm run tauri build
 $src = "src-tauri\target\release"
 $staging = "portable\quant-desktop"
 mkdir $staging -Force > $null
-Copy-Item "$src\quant-desktop.exe" -Destination "$staging\"
+Copy-Item "$src\Bull Arrives.exe" -Destination "$staging\"
 New-Item -ItemType File -Path "$staging\portable.dat" > $null
 Compress-Archive -Path "$staging\*" -DestinationPath "$src\bundle\quant-desktop_1.2.8_x64-portable.zip"
 ```

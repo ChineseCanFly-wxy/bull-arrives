@@ -249,7 +249,7 @@ pub async fn test_notification(app: tauri::AppHandle) -> Result<DeliveryStatus, 
     let (response, receiver) = tokio::sync::oneshot::channel();
     let job = DeliveryJob {
         id: id.clone(),
-        title: "QuantDesktop 通知测试".into(),
+        title: "Bull Arrives 通知测试".into(),
         body: "收到此通知说明系统已受理通知；是否显示横幅仍受勿扰和系统策略影响。".into(),
         history_version: u64::MAX,
         force_desktop: setting_enabled(&app, "notification_desktop_always", false),
