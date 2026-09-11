@@ -80,9 +80,41 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ github.ref_name }}"
-          node scripts/extract-changelog.mjs "$VERSION" > "$RUNNER_TEMP/changelog.md" 2>/dev/null || echo "No changelog entry for $VERSION" > "$RUNNER_TEMP/changelog.md"
+          NOTE="$RUNNER_TEMP/changelog.md"
+
+          # 这里必须失败即中断。曾经用 `|| echo "No changelog entry ..."` 兜底，
+          # 结果是 tag 打在 CHANGELOG 提交之前时 CI 一路绿灯，latest.json 的
+          # notes 被写成那句占位文案，终端用户点更新只能看到"暂无更新说明"。
+          if ! node scripts/extract-changelog.mjs "$VERSION" > "$NOTE"; then
+            echo "::error::CHANGELOG.md 中找不到 $VERSION 的条目。请先补好 CHANGELOG 并提交，再重新打 tag。"
+            echo "CHANGELOG.md 现有版本条目："
+            grep -E '^##[[:space:]]+v?[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md || true
+            exit 1
+          fi
+
+          if [ ! -s "$NOTE" ]; then
+            echo "::error::$VERSION 的 CHANGELOG 条目为空。"
+            exit 1
+          fi
+
+          # 应用端 UpdateDialog.vue 的 renderMarkdownLines 只认这种结构：
+          # 以 "## vX.Y.Z" 开头，靠 "### 分组" 建小节，靠 "- 条目" 收集内容。
+          # 没有 "###" 分组时所有条目会被静默丢弃，用户端同样看到"暂无更新说明"。
+          if ! head -n 1 "$NOTE" | grep -qE '^##[[:space:]]+v?[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::CHANGELOG 条目首行必须是 '## vX.Y.Z'，当前为：$(head -n 1 "$NOTE")"
+            exit 1
+          fi
+          if ! grep -qE '^###[[:space:]]+\S' "$NOTE"; then
+            echo "::error::$VERSION 的 CHANGELOG 条目缺少 '### 分组'，应用端会显示为空。请用 '### 分组' + '- 条目' 的结构编写。"
+            exit 1
+          fi
+          if ! grep -qE '^[-*][[:space:]]+\S' "$NOTE"; then
+            echo "::error::$VERSION 的 CHANGELOG 条目没有任何 '- 条目'，应用端会显示为空。"
+            exit 1
+          fi
+
           echo "body<<EOF" >> $GITHUB_OUTPUT
-          cat "$RUNNER_TEMP/changelog.md" >> $GITHUB_OUTPUT
+          cat "$NOTE" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - uses: tauri-apps/tauri-action@v0

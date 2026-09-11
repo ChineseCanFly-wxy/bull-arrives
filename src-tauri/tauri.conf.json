@@ -68,7 +68,7 @@
       "endpoints": [
         "https://github.com/ChineseCanFly-wxy/bull-arrives/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI4NjI5MDBDQzE3MzlENzUKUldSMW5YUEJESkJpdUxTeWdRc3JodjFRU2s1WWRBWWZIYU5CWlJ4OEs1RzlzQ2o4VnIwNHpkc3UK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENEQTFFQkVCMzBDQUFCMTcKUldRWHE4b3c2K3VoelNuSHRxOGRJZ3JSdzVuOFhMUUJ4RzUyNWZ5ZlNZdzZ6T2lDZkdJWEtSMnQK",
       "windows": {
         "installMode": "passive"
       }
