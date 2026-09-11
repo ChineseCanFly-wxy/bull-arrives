@@ -267,5 +267,5 @@ Bull Arrives 的核心理念是 **"不打扰的看盘"**：
 ---
 
 <p align="center">
-  <b>Bull Arrives v1.2.0</b> — 牛市来时，你第一个看见。
+  <b>Bull Arrives v1.0.0</b> — 牛市来时，你第一个看见。
 </p>

@@ -138,8 +138,9 @@ pub async fn search_stocks(
     manager: State<'_, Arc<DataSourceManager>>,
     keyword: String,
 ) -> Result<Vec<crate::domain::StockBrief>, String> {
+    // Stock search is metadata discovery, so it remains available outside
+    // quote polling sessions. Live quotes/details keep their own time gate.
     // ── Tier 1: Sina suggest API (name + fuzzy code search) ──
-    manager.ensure_request_allowed()?;
     match crate::datasource::search::suggest_search(&keyword).await {
         Ok(results) if !results.is_empty() => {
             return Ok(results);
@@ -149,7 +150,6 @@ pub async fn search_stocks(
     }
 
     // ── Tier 2: Tencent smartbox API (name + fuzzy code search) ──
-    manager.ensure_request_allowed()?;
     match crate::datasource::search::tencent_suggest_search(&keyword).await {
         Ok(results) if !results.is_empty() => {
             return Ok(results);
@@ -161,7 +161,6 @@ pub async fn search_stocks(
     // ── Tier 3: DataSource-based exact-code search ──
     let mut results: Vec<crate::domain::StockBrief> = Vec::new();
     let active_name = if let Some(source) = manager.active_source() {
-        manager.ensure_request_allowed()?;
         match source.search(&keyword, "CN").await {
             Ok(r) => results = r,
             Err(e) => log::warn!("Search via {} failed: {}", source.name(), e),
@@ -174,7 +173,6 @@ pub async fn search_stocks(
     if results.is_empty() {
         for (name, source) in manager.all_sources() {
             if name != active_name {
-                manager.ensure_request_allowed()?;
                 match source.search(&keyword, "CN").await {
                     Ok(fb_results) if !fb_results.is_empty() => {
                         results = fb_results;
