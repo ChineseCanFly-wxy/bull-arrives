@@ -65,9 +65,13 @@ function startSettingsListen() {
 }
 
 function startCycle() {
+  if (cycleTimer) clearInterval(cycleTimer);
+  cycleTimer = null;
+  if (settings.tickerDisplayMode !== 'carousel') return;
   cycleTimer = setInterval(() => {
-    if (!paused.value && tickerItems.value.length > 2) {
-      page.value = (page.value + 2) % tickerItems.value.length;
+    const step = Math.min(settings.tickerPageSize, tickerItems.value.length);
+    if (!paused.value && tickerItems.value.length > step) {
+      page.value = (page.value + step) % tickerItems.value.length;
     }
   }, 3000);
 }
@@ -87,14 +91,26 @@ const tickerItems = computed(() =>
 const visibleItems = computed(() => {
   const items = tickerItems.value;
   if (items.length === 0) return [];
-  if (items.length === 1) return [items[0]];
-  const count = Math.min(2, items.length);
+  if (settings.tickerDisplayMode === 'fixed') return items;
+  const count = Math.min(settings.tickerPageSize, items.length);
   const result = [];
   for (let i = 0; i < count; i++) {
     result.push(items[(page.value + i) % items.length]);
   }
   return result;
 });
+
+watch(
+  () => [settings.tickerDisplayMode, settings.tickerPageSize, tickerItems.value.length] as const,
+  () => {
+    page.value = 0;
+    startCycle();
+    const rows = Math.max(1, visibleItems.value.length);
+    invoke('resize_ticker_window', { visibleRows: rows }).catch((e) => {
+      console.error('[TickerBar] resize failed:', e);
+    });
+  },
+);
 
 const retryHintVisible = ref(false);
 
@@ -189,7 +205,7 @@ async function handleClick() {
 <template>
   <div
     class="ticker-bar"
-    :class="{ mono: settings.tickerSingleColor }"
+    :class="{ mono: settings.tickerSingleColor, fixed: settings.tickerDisplayMode === 'fixed' }"
     :style="monoStyle"
     role="button"
     tabindex="0"
@@ -200,6 +216,7 @@ async function handleClick() {
     @mousedown="onMouseDown"
     @mouseenter="paused = true"
     @mouseleave="paused = false"
+    @wheel.stop
     @click="handleClick"
   >
     <div v-if="groupFlash" class="ticker-empty">当前分组 · {{ groupName }}</div>
@@ -250,6 +267,10 @@ async function handleClick() {
 }
 .ticker-bar:hover {
   background: rgba(255, 255, 255, 0.03);
+}
+.ticker-bar.fixed {
+  justify-content: flex-start;
+  overflow-y: auto;
 }
 .ticker-row {
   display: flex;

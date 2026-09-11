@@ -105,6 +105,16 @@ function resetHotkey() {
   void commitHotkey('Alt+Q');
 }
 
+function onTickerModeChange(event: Event) {
+  const value = (event.target as HTMLInputElement).value as 'carousel' | 'fixed';
+  void safelyRun('ticker-mode', () => settings.setTickerDisplayMode(value));
+}
+
+function onTickerPageSizeChange(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value);
+  void safelyRun('ticker-page-size', () => settings.setTickerPageSize(value));
+}
+
 async function runAction(key: string, action: () => Promise<unknown>) {
   if (savingKeys.value.has(key)) return;
   const next = new Set(savingKeys.value);
@@ -272,6 +282,18 @@ onBeforeUnmount(stopCapture);
             <p v-if="hotkeyError" class="field-error">{{ hotkeyError }}</p>
           </article>
           <article class="setting-card">
+            <h3>展示方式</h3>
+            <p class="card-desc">轮播可自定义每页数量；固定模式会一次展示当前分组全部股票。</p>
+            <div class="ticker-mode-options" role="radiogroup" aria-label="悬浮窗展示方式">
+              <label><input type="radio" name="ticker-mode" value="carousel" :checked="settings.tickerDisplayMode === 'carousel'" :disabled="isSaving('ticker-mode')" @change="onTickerModeChange" /><span><b>轮播</b><small>每 3 秒翻页，鼠标悬停暂停</small></span></label>
+              <label><input type="radio" name="ticker-mode" value="fixed" :checked="settings.tickerDisplayMode === 'fixed'" :disabled="isSaving('ticker-mode')" @change="onTickerModeChange" /><span><b>固定</b><small>默认展示全部，不自动翻页</small></span></label>
+            </div>
+            <label v-if="settings.tickerDisplayMode === 'carousel'" class="ticker-count-row">
+              <span><b>每页展示数量</b><small>可设置 1–20 只，超过当前分组数量时自动按实际数量展示。</small></span>
+              <input type="number" min="1" max="20" step="1" :value="settings.tickerPageSize" :disabled="isSaving('ticker-page-size')" @change="onTickerPageSizeChange" />
+            </label>
+          </article>
+          <article class="setting-card">
             <div class="slider-block"><div><span>透明度</span><b>{{ opacityDraft }}%</b></div><input type="range" min="5" max="100" step="1" :value="opacityDraft" @input="onOpacityInput" @change="onOpacityCommit" /><p>数值越低，悬浮窗越隐蔽。</p></div>
             <div class="inline-setting"><div><h3>单色显示</h3><p>统一文字颜色，代替红涨绿跌。</p></div><button class="switch" :class="{ on: settings.tickerSingleColor }" role="switch" :aria-checked="settings.tickerSingleColor" @click="safelyRun('single-color', () => settings.setTickerSingleColor(!settings.tickerSingleColor))"><span /></button></div>
             <div v-if="settings.tickerSingleColor" class="color-row"><span>字体颜色</span><label><input type="color" :value="settings.tickerTextColor" @change="onColorCommit" /><code>{{ settings.tickerTextColor }}</code></label></div>
@@ -342,6 +364,16 @@ onBeforeUnmount(stopCapture);
 .explain-grid div { display: flex; flex-direction: column; gap: 3px; padding: 9px; border-radius: var(--radius-sm); background: var(--color-surface-1); }
 .explain-grid b { color: var(--color-text-secondary); font-size: var(--text-xs); }
 .explain-grid span { color: var(--color-text-tertiary); font-size: 10px; line-height: 1.4; }
+.ticker-mode-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.ticker-mode-options label { display: flex; min-width: 0; gap: 8px; padding: 10px; border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); cursor: pointer; }
+.ticker-mode-options label:has(input:checked) { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }
+.ticker-mode-options input { margin-top: 2px; accent-color: var(--color-accent); }
+.ticker-mode-options span, .ticker-count-row > span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.ticker-mode-options b, .ticker-count-row b { color: var(--color-text-primary); font-size: var(--text-xs); }
+.ticker-mode-options small, .ticker-count-row small { color: var(--color-text-tertiary); font-size: 10px; line-height: 1.45; }
+.ticker-count-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-border-0); }
+.ticker-count-row input { width: 72px; min-height: 32px; padding: 0 8px; border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-primary); font-family: var(--font-mono); }
+.ticker-count-row input:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .hotkey-row { display: flex; gap: 8px; margin-top: 12px; }
 .hotkey-box { display: flex; flex: 1; min-height: 42px; align-items: center; justify-content: center; flex-direction: column; border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-primary); font-family: var(--font-mono); cursor: pointer; }
 .hotkey-box.capturing { border-color: var(--color-accent); color: var(--color-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 10%, transparent); }

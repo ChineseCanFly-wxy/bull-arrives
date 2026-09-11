@@ -192,6 +192,7 @@ pub struct DataSourceManager {
     sources: HashMap<String, Box<dyn DataSource>>,
     active: RwLock<String>,
     request_policy: RwLock<MarketRequestPolicy>,
+    request_policy_enabled: std::sync::atomic::AtomicBool,
     pub wakeup: Notify,
     revision: std::sync::atomic::AtomicU64,
 }
@@ -202,6 +203,7 @@ impl DataSourceManager {
             sources: HashMap::new(),
             active: RwLock::new(String::new()),
             request_policy: RwLock::new(MarketRequestPolicy::default()),
+            request_policy_enabled: std::sync::atomic::AtomicBool::new(false),
             wakeup: Notify::new(),
             revision: std::sync::atomic::AtomicU64::new(0),
         }
@@ -232,7 +234,21 @@ impl DataSourceManager {
         self.invalidate_requests();
     }
 
+    pub fn set_request_policy_enabled(&self, enabled: bool) {
+        self.request_policy_enabled
+            .store(enabled, std::sync::atomic::Ordering::Release);
+        self.invalidate_requests();
+    }
+
+    pub fn request_policy_enabled(&self) -> bool {
+        self.request_policy_enabled
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
     pub fn request_decision(&self) -> MarketGateDecision {
+        if !self.request_policy_enabled() {
+            return MarketGateDecision::Allowed;
+        }
         self.request_policy
             .read()
             .unwrap_or_else(|error| error.into_inner())
@@ -243,10 +259,10 @@ impl DataSourceManager {
     /// source or a fallback source. Callers that invoke a `DataSource` directly
     /// (notably watchlist search) must call this method first as well.
     pub fn ensure_request_allowed(&self) -> Result<(), String> {
-        self.request_policy
-            .read()
-            .unwrap_or_else(|error| error.into_inner())
-            .ensure_request_allowed()
+        match self.request_decision() {
+            MarketGateDecision::Allowed => Ok(()),
+            MarketGateDecision::Paused { reason } => Err(reason),
+        }
     }
 
     /// Register a data source. First registered source becomes active automatically.

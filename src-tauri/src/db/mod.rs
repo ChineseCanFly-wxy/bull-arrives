@@ -52,6 +52,11 @@ impl Database {
                 cached_at   TEXT NOT NULL,
                 PRIMARY KEY (code, market)
             );
+            CREATE TABLE IF NOT EXISTS index_quote_cache (
+                code        TEXT PRIMARY KEY,
+                data        TEXT NOT NULL,
+                cached_at   TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS price_alerts (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 code            TEXT NOT NULL,
@@ -149,6 +154,9 @@ impl Database {
             ("refresh_interval", "0"),
             ("theme", "light"),
             ("ticker_visible", "1"),
+            ("ticker_display_mode", "carousel"),
+            ("ticker_page_size", "2"),
+            ("quote_schedule_enabled", "0"),
             ("auto_launch", "false"),
             ("alerts_enabled", "1"),
         ];
@@ -314,6 +322,45 @@ impl Database {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn cache_indices(&self, indices: &[crate::domain::IndexQuote]) -> SqliteResult<()> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM index_quote_cache", [])?;
+        for index in indices {
+            let data = match serde_json::to_string(index) {
+                Ok(data) => data,
+                Err(error) => {
+                    log::warn!("Failed to serialize index {} for cache: {}", index.code, error);
+                    continue;
+                }
+            };
+            tx.execute(
+                "INSERT OR REPLACE INTO index_quote_cache (code, data, cached_at)
+                 VALUES (?1, ?2, ?3)",
+                params![index.code, data, now],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_cached_indices(&self) -> SqliteResult<Vec<crate::domain::IndexQuote>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn.prepare("SELECT data FROM index_quote_cache ORDER BY rowid")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut indices = Vec::new();
+        for row in rows {
+            if let Ok(data) = row {
+                match serde_json::from_str::<crate::domain::IndexQuote>(&data) {
+                    Ok(index) => indices.push(index),
+                    Err(error) => log::warn!("Failed to deserialize cached index (skipping): {}", error),
+                }
+            }
+        }
+        Ok(indices)
     }
 
     // ── Atomic Watchlist Reorder Operations ──

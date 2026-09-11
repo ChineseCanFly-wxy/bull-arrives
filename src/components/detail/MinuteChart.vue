@@ -53,7 +53,7 @@ watch(() => [props.code, props.market], async () => {
 
 .minute-chart {
   flex: 1;
-  min-height: 420px;
+  min-height: 0;
   position: relative;
 }
 </style>

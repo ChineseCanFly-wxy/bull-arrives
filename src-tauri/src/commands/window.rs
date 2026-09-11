@@ -125,3 +125,43 @@ pub fn set_ticker_opacity(
     log::info!("[ticker] opacity set to {}%", opacity);
     Ok(())
 }
+
+/// 根据当前可见行情行数调整悬浮窗高度，最多占用显示器可用高度。
+#[tauri::command]
+pub fn resize_ticker_window(app: AppHandle, visible_rows: u32) -> Result<(), String> {
+    let window = app
+        .get_webview_window("ticker")
+        .ok_or_else(|| "Ticker window not found".to_string())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let monitor = window.current_monitor().map_err(|e| e.to_string())?;
+    let max_height = monitor
+        .as_ref()
+        .map(|m| (m.size().height as f64 / scale).floor() as u32)
+        .unwrap_or(600)
+        .saturating_sub(40)
+        .max(38);
+    let rows = visible_rows.clamp(1, 200);
+    let height = (rows.saturating_mul(19)).max(38).min(max_height);
+    window
+        .set_size(tauri::LogicalSize::new(230_u32, height))
+        .map_err(|e| e.to_string())?;
+
+    if let (Some(monitor), Ok(position), Ok(size)) = (
+        monitor,
+        window.outer_position(),
+        window.outer_size(),
+    ) {
+        let origin = monitor.position();
+        let bounds = monitor.size();
+        let max_x = origin.x + bounds.width as i32 - size.width as i32;
+        let max_y = origin.y + bounds.height as i32 - size.height as i32;
+        let x = position.x.clamp(origin.x, max_x.max(origin.x));
+        let y = position.y.clamp(origin.y, max_y.max(origin.y));
+        if x != position.x || y != position.y {
+            window
+                .set_position(tauri::PhysicalPosition::new(x, y))
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}

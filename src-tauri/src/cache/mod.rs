@@ -42,6 +42,9 @@ impl QuoteCache {
                 quotes.insert(key, q);
             }
         }
+        if let Ok(cached) = self.db.get_cached_indices() {
+            *self.indices.lock().unwrap_or_else(|e| e.into_inner()) = cached;
+        }
     }
 
     /// Evaluate datasource-fresh quotes only. A code newly entering the current
@@ -157,9 +160,15 @@ impl QuoteCache {
             .collect()
     }
 
-    /// Update indices
+    /// Update indices in memory.
     pub fn update_indices(&self, indices: Vec<IndexQuote>) {
         *self.indices.lock().unwrap_or_else(|e| e.into_inner()) = indices;
+    }
+
+    pub fn persist_indices(&self, indices: &[IndexQuote]) {
+        if let Err(error) = self.db.cache_indices(indices) {
+            log::warn!("Failed to persist indices to DB: {}", error);
+        }
     }
 
     /// Get cached indices
@@ -439,6 +448,7 @@ impl Scheduler {
                     log::warn!("Failed to emit policy-blocked cached quotes: {}", error);
                 }
             }
+            Self::fetch_and_emit_indices(manager, cache, app_handle).await;
             return None;
         }
         if codes.is_empty() {
@@ -543,11 +553,22 @@ impl Scheduler {
         }
         if let Err(reason) = manager.ensure_request_allowed() {
             log::debug!("Index refresh blocked by request policy: {}", reason);
+            let cached = cache.get_indices();
+            if !cached.is_empty() {
+                if let Err(error) = app_handle.emit("indices-updated", &cached) {
+                    log::warn!("Failed to emit policy-blocked cached indices: {}", error);
+                }
+            }
             return;
         }
         if let Some(source) = manager.active_source() {
+            let revision = manager.revision();
             match source.fetch_indices().await {
                 Ok(fresh) => {
+                    if manager.revision() != revision || manager.ensure_request_allowed().is_err() {
+                        manager.wakeup.notify_one();
+                        return;
+                    }
                     let prev = cache.get_indices();
                     let changed = prev.len() != fresh.len()
                         || !fresh.iter().zip(&prev).all(|(n, p)| {
@@ -557,8 +578,15 @@ impl Scheduler {
                                 && n.change_pct == p.change_pct
                         });
                     cache.update_indices(fresh);
+                    let current = cache.get_indices();
+                    let cache_for_persist = cache.clone();
+                    let indices_for_db = current.clone();
+                    if let Err(error) = tokio::task::spawn_blocking(move || {
+                        cache_for_persist.persist_indices(&indices_for_db);
+                    }).await {
+                        log::warn!("指数缓存落盘任务失败: {}", error);
+                    }
                     if changed {
-                        let current = cache.get_indices();
                         if let Err(e) = app_handle.emit("indices-updated", &current) {
                             log::warn!("Failed to emit indices-updated: {}", e);
                         }

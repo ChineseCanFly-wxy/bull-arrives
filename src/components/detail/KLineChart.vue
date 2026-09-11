@@ -58,7 +58,7 @@ watch(() => [props.code, props.market, props.period], async () => {
 
 .kline-chart {
   flex: 1;
-  min-height: 420px;
+  min-height: 0;
   position: relative;
 }
 </style>

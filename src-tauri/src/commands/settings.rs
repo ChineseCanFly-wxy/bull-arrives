@@ -26,8 +26,30 @@ pub fn set_setting(
     if key == "alerts_enabled" && value != "0" && value != "1" {
         return Err("提醒总开关只能为 0 或 1".into());
     }
+    if key == "quote_schedule_enabled" && value != "0" && value != "1" {
+        return Err("行情时间限制开关只能为 0 或 1".into());
+    }
+    let policy_on_enable = if key == "quote_schedule_enabled" && value == "1" {
+        let schedule = db.get_setting("quote_schedule").map_err(|e| e.to_string())?;
+        Some(crate::datasource::market_policy::MarketRequestPolicy::from_quote_schedule_json(schedule.as_deref())?)
+    } else {
+        None
+    };
+    if key == "ticker_display_mode" && value != "carousel" && value != "fixed" {
+        return Err("悬浮窗展示方式只能为 carousel 或 fixed".into());
+    }
+    if key == "ticker_page_size" {
+        let size = value.parse::<u32>().map_err(|_| "悬浮窗每页数量必须为整数")?;
+        if !(1..=20).contains(&size) {
+            return Err("悬浮窗每页数量必须在 1–20 之间".into());
+        }
+    }
     db.set_setting(&key, &value).map_err(|e| e.to_string())?;
     if let Some(policy) = policy { manager.set_request_policy(policy); }
+    if let Some(policy) = policy_on_enable { manager.set_request_policy(policy); }
+    if key == "quote_schedule_enabled" {
+        manager.set_request_policy_enabled(value == "1");
+    }
     Ok(())
 }
 

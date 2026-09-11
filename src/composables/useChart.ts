@@ -63,6 +63,7 @@ export function useChart(options: {
         low: d.low,
         close: d.close,
         volume: d.volume,
+        turnover: d.turnover,
       };
     });
   }

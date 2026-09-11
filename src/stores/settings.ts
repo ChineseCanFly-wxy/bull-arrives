@@ -36,6 +36,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const tickerOpacity = ref(100);
   const tickerSingleColor = ref(false);
   const tickerTextColor = ref('#9AA5B1');
+  const tickerDisplayMode = ref<'carousel' | 'fixed'>('carousel');
+  const tickerPageSize = ref(2);
+  const quoteScheduleEnabled = ref(false);
   const alertsEnabled = ref(true);
   const notificationDesktopAlways = ref(false);
   const refreshInterval = ref(REFRESH_INTERVAL_AUTO);
@@ -54,6 +57,11 @@ export const useSettingsStore = defineStore('settings', () => {
   function clampInterval(v: number): number {
     if (Number.isNaN(v) || v <= 0) return REFRESH_INTERVAL_AUTO;
     return Math.min(60, Math.max(1, Math.round(v)));
+  }
+
+  function clampTickerPageSize(v: number): number {
+    if (Number.isNaN(v)) return 2;
+    return Math.min(20, Math.max(1, Math.round(v)));
   }
 
   /// Apply a raw `settings` table value to the matching reactive ref.
@@ -78,6 +86,15 @@ export const useSettingsStore = defineStore('settings', () => {
         break;
       case 'ticker_text_color':
         tickerTextColor.value = value || '#9AA5B1';
+        break;
+      case 'ticker_display_mode':
+        tickerDisplayMode.value = value === 'fixed' ? 'fixed' : 'carousel';
+        break;
+      case 'ticker_page_size':
+        tickerPageSize.value = clampTickerPageSize(parseInt(value, 10));
+        break;
+      case 'quote_schedule_enabled':
+        quoteScheduleEnabled.value = value === '1';
         break;
       case 'alerts_enabled':
         alertsEnabled.value = value !== '0';
@@ -109,6 +126,9 @@ export const useSettingsStore = defineStore('settings', () => {
       applySettingLocally('ticker_opacity', settings.value['ticker_opacity'] ?? '100');
       applySettingLocally('ticker_single_color', settings.value['ticker_single_color'] ?? '0');
       applySettingLocally('ticker_text_color', settings.value['ticker_text_color'] || '#9AA5B1');
+      applySettingLocally('ticker_display_mode', settings.value['ticker_display_mode'] || 'carousel');
+      applySettingLocally('ticker_page_size', settings.value['ticker_page_size'] || '2');
+      applySettingLocally('quote_schedule_enabled', settings.value['quote_schedule_enabled'] ?? '0');
       applySettingLocally('alerts_enabled', settings.value['alerts_enabled'] ?? '1');
       applySettingLocally('notification_desktop_always', settings.value['notification_desktop_always'] ?? '0');
       applySettingLocally('refresh_interval', settings.value['refresh_interval'] ?? '0');
@@ -227,6 +247,14 @@ export const useSettingsStore = defineStore('settings', () => {
     return setSetting('ticker_text_color', value);
   }
 
+  async function setTickerDisplayMode(value: 'carousel' | 'fixed') {
+    return setSetting('ticker_display_mode', value);
+  }
+
+  async function setTickerPageSize(value: number) {
+    return setSetting('ticker_page_size', String(clampTickerPageSize(value)));
+  }
+
   /// secs = 0 → auto (follow trading session), 1–60 → fixed interval.
   async function setRefreshInterval(secs: number) {
     const v = clampInterval(secs);
@@ -260,11 +288,11 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     settings, datasources, activeDatasource, theme, autoLaunch, isPortable,
-    tickerHotkey, tickerOpacity, tickerSingleColor, tickerTextColor, alertsEnabled, notificationDesktopAlways,
-    refreshInterval, marketSession, error,
+    tickerHotkey, tickerOpacity, tickerSingleColor, tickerTextColor, tickerDisplayMode, tickerPageSize,
+    quoteScheduleEnabled, alertsEnabled, notificationDesktopAlways, refreshInterval, marketSession, error,
     fetchSettings, setSetting, switchDatasource, toggleTheme, toggleAutoLaunch,
     applyTheme, applyRemoteSetting, setTickerHotkey, setTickerOpacity,
-    setTickerSingleColor, setTickerTextColor, setRefreshInterval,
-    fetchMarketSession, effectiveInterval,
+    setTickerSingleColor, setTickerTextColor, setTickerDisplayMode, setTickerPageSize,
+    setRefreshInterval, fetchMarketSession, effectiveInterval,
   };
 });

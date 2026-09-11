@@ -339,19 +339,30 @@ pub fn run() {
                 }
             }
 
-            let quote_schedule = db.get_setting("quote_schedule");
-            match quote_schedule {
+            let quote_schedule_enabled = db
+                .get_setting("quote_schedule_enabled")
+                .ok()
+                .flatten()
+                .as_deref()
+                == Some("1");
+            match db.get_setting("quote_schedule") {
                 Ok(value) => {
                     if let Err(error) = ds_manager.set_request_policy_json(value.as_deref()) {
-                        log::error!("行情时段配置损坏，暂停请求：{}", error);
-                        ds_manager.set_request_policy(datasource::market_policy::MarketRequestPolicy::paused());
+                        if quote_schedule_enabled {
+                            log::error!("行情时段配置损坏，暂停请求：{}", error);
+                            ds_manager.set_request_policy(datasource::market_policy::MarketRequestPolicy::paused());
+                        } else {
+                            log::warn!("行情时段配置损坏，但时间限制未启用：{}", error);
+                        }
                     }
                 }
-                Err(error) => {
+                Err(error) if quote_schedule_enabled => {
                     log::error!("行情时段配置读取失败，暂停请求：{}", error);
                     ds_manager.set_request_policy(datasource::market_policy::MarketRequestPolicy::paused());
                 }
+                Err(error) => log::warn!("行情时段配置读取失败，但时间限制未启用：{}", error),
             }
+            ds_manager.set_request_policy_enabled(quote_schedule_enabled);
             let ds_manager = Arc::new(ds_manager);
 
             // Initialize cache and restore from SQLite
@@ -850,6 +861,7 @@ pub fn run() {
             commands::window::set_main_window_size,
             commands::window::set_ticker_hotkey,
             commands::window::set_ticker_opacity,
+            commands::window::resize_ticker_window,
             commands::updater::check_update,
             commands::updater::install_update,
             commands::updater::is_trading_session,

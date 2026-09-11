@@ -22,6 +22,7 @@ export function useChartCore(options: {
   const loading = ref(false);
   const error = ref('');
   const currentPeriod = ref<PeriodType>('minute');
+  let resizeObserver: ResizeObserver | null = null;
 
   // ---- 主题颜色 ----
 
@@ -72,7 +73,7 @@ export function useChartCore(options: {
         tooltip: {
           labels: ['时间', '开', '高', '低', '收', '量', '额'],
           title: { show: false },
-          rect: { position: 'pointer', paddingLeft: 8, paddingTop: 4, paddingRight: 8, paddingBottom: 4, offsetLeft: 12, offsetTop: 8, offsetRight: 0, offsetBottom: 0, borderRadius: 4, borderSize: 0, backgroundColor: c.tooltipBg },
+          rect: { position: 'fixed', paddingLeft: 8, paddingTop: 4, paddingRight: 8, paddingBottom: 4, offsetLeft: 8, offsetTop: 8, offsetRight: 8, offsetBottom: 0, borderRadius: 4, borderSize: 0, backgroundColor: c.tooltipBg },
           text: { size: 11, color: c.tooltipText, family: 'var(--font-sans)' },
         } as any, // labels/text 为遗留字段，不在 v10 CandleTooltipStyle 类型中
         priceMark: {
@@ -136,7 +137,7 @@ export function useChartCore(options: {
             ],
           },
           title: { show: false },
-          rect: { position: 'pointer', paddingLeft: 8, paddingTop: 4, paddingRight: 8, paddingBottom: 4, offsetLeft: 12, offsetTop: 8, offsetRight: 0, offsetBottom: 0, borderRadius: 4, borderSize: 0, backgroundColor: c.tooltipBg },
+          rect: { position: 'fixed', paddingLeft: 8, paddingTop: 4, paddingRight: 8, paddingBottom: 4, offsetLeft: 8, offsetTop: 8, offsetRight: 8, offsetBottom: 0, borderRadius: 4, borderSize: 0, backgroundColor: c.tooltipBg },
           text: { size: 11, color: c.tooltipText, family: 'var(--font-sans)' },
         } as any, // text 为遗留字段
         priceMark: {
@@ -213,6 +214,9 @@ export function useChartCore(options: {
         error.value = '图表初始化失败';
         return false;
       }
+      resizeObserver?.disconnect();
+      resizeObserver = new ResizeObserver(() => chart.value?.resize());
+      resizeObserver.observe(options.chartRef.value);
     }
 
     if (!chart.value) return false;
@@ -226,6 +230,8 @@ export function useChartCore(options: {
   }
 
   function disposeChart() {
+    resizeObserver?.disconnect();
+    resizeObserver = null;
     if (chart.value) {
       dispose(chart.value);
       chart.value = null;

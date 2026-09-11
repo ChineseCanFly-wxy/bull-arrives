@@ -457,9 +457,10 @@ defineExpose({ clearSelection: () => { selectedRow.value = null; } });
 <style scoped>
 .watchlist-container {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: auto;
   padding: 0 var(--space-4);
 }
 .watchlist-header {

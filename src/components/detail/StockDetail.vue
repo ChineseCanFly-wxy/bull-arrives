@@ -82,6 +82,10 @@ useMinuteKUnavailable(activePeriod);
 
 <style scoped>
 .stock-detail {
+  min-height: 0;
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
+  flex-shrink: 0;
   border-top: 1px solid var(--color-border, rgba(255,255,255,0.08));
   background: var(--color-surface-1);
   padding: 12px 16px;
@@ -144,6 +148,18 @@ useMinuteKUnavailable(activePeriod);
 .chart-toolbar-group {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+@media (max-width: 780px) {
+  .detail-content { flex-direction: column; }
+  .detail-left { flex-shrink: 1; }
+  .chart-toolbar { align-items: flex-start; flex-wrap: wrap; }
+}
+
+@media (max-height: 620px) {
+  .stock-detail { max-height: calc(100vh - 112px); padding-block: 8px; }
+  .detail-header { margin-bottom: 8px; }
 }
 </style>
