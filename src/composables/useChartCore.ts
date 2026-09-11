@@ -15,6 +15,8 @@ export function useChartCore(options: {
   code: MaybeRef<string>;
   market: MaybeRef<string>;
   name?: MaybeRef<string>;
+  /// 昨收价 — 分时图悬停提示里的涨跌幅以它为基准（而非上一分钟）。
+  prevClose?: MaybeRef<number | undefined>;
 }) {
   const settings = useSettingsStore();
 
@@ -71,11 +73,34 @@ export function useChartCore(options: {
         bar: { upColor: '#f85149', downColor: '#3fb950', upBorderColor: '#f85149', downBorderColor: '#3fb950', upWickColor: '#f85149', downWickColor: '#3fb950', noChangeColor: '#8b949e', noChangeBorderColor: '#8b949e', noChangeWickColor: '#8b949e', compareRule: 'current_open' },
         area: { lineSize: 1.5, lineColor: '#58a6ff' },
         tooltip: {
-          labels: ['时间', '开', '高', '低', '收', '量', '额'],
+          legend: {
+            // klinecharts 内置的 {change} 按「上一根 bar」计算，用在分时图上会得到
+            // 每分钟的微小波动。这里改为以昨收为基准，才是交易软件里「分时涨跌幅」的口径。
+            template: (data: { current?: KCLineData | null } | null) => {
+              const close = data?.current?.close;
+              const prevClose = unref(options.prevClose);
+              let changeText = '--';
+              let changeColor = c.tooltipText;
+              if (typeof close === 'number' && typeof prevClose === 'number' && prevClose > 0) {
+                const pct = ((close - prevClose) / prevClose) * 100;
+                changeText = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+                changeColor = pct > 0 ? '#f85149' : pct < 0 ? '#3fb950' : '#8b949e';
+              }
+              return [
+                { title: '时间', value: '{time}' },
+                { title: '开', value: '{open}' },
+                { title: '高', value: '{high}' },
+                { title: '低', value: '{low}' },
+                { title: '收', value: '{close}' },
+                { title: '涨跌幅', value: { text: changeText, color: changeColor } },
+                { title: '量', value: '{volume}' },
+              ];
+            },
+          },
           title: { show: false },
           rect: { position: 'fixed', paddingLeft: 8, paddingTop: 4, paddingRight: 8, paddingBottom: 4, offsetLeft: 8, offsetTop: 8, offsetRight: 8, offsetBottom: 0, borderRadius: 4, borderSize: 0, backgroundColor: c.tooltipBg },
           text: { size: 11, color: c.tooltipText, family: 'var(--font-sans)' },
-        } as any, // labels/text 为遗留字段，不在 v10 CandleTooltipStyle 类型中
+        } as any, // legend.template 支持回调，labels/text 为遗留字段不在 v10 类型中
         priceMark: {
           high: { show: false },
           low: { show: false },

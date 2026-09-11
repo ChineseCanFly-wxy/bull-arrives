@@ -6,6 +6,7 @@ import { useSettingsStore, REFRESH_INTERVAL_AUTO } from '@/stores/settings';
 import QuoteScheduleSettings from './QuoteScheduleSettings.vue';
 import WindowSizeSettings from './WindowSizeSettings.vue';
 import GroupHotkeySettings from './GroupHotkeySettings.vue';
+import { eventToHotkey, formatHotkeyLabel } from '@/utils/hotkey';
 
 const props = defineProps<{ show: boolean }>();
 const emit = defineEmits<{ 'update:show': [value: boolean] }>();
@@ -33,7 +34,6 @@ const hotkeyError = ref<string | null>(null);
 const opacityDraft = ref(100);
 const intervalDraft = ref(3);
 const intervalAuto = computed(() => settings.refreshInterval === REFRESH_INTERVAL_AUTO);
-const MODIFIER_KEYS = new Set(['Control', 'Alt', 'Shift', 'Meta']);
 
 watch(() => props.show, (open) => {
   if (open) {
@@ -48,25 +48,6 @@ watch(() => props.show, (open) => {
     stopCapture();
   }
 }, { immediate: true });
-
-function eventToHotkey(event: KeyboardEvent): string | null {
-  if (event.key === 'Escape') return 'cancel';
-  if (event.key === 'Enter') return 'confirm';
-  if (MODIFIER_KEYS.has(event.key)) return null;
-  const parts: string[] = [];
-  if (event.ctrlKey) parts.push('Ctrl');
-  if (event.altKey) parts.push('Alt');
-  if (event.shiftKey) parts.push('Shift');
-  if (event.metaKey) parts.push('Super');
-  if (parts.length === 0) return null;
-  let main = event.key;
-  if (main === ' ') main = 'Space';
-  else if (main.length === 1) main = main.toUpperCase();
-  else if (/^F\d{1,2}$/.test(main)) { /* already supported */ }
-  else if (main.startsWith('Arrow')) main = main.slice(5);
-  else return null;
-  return [...parts, main].join('+');
-}
 
 function onKeyDown(event: KeyboardEvent) {
   event.preventDefault();
@@ -273,7 +254,7 @@ onBeforeUnmount(stopCapture);
             <h3>全局快捷键</h3><p class="card-desc">在任何界面显示或隐藏悬浮行情条。</p>
             <div class="hotkey-row">
               <button class="hotkey-box" :class="{ capturing }" @click="startCapture">
-                {{ capturing ? (capturedCombo || '请按组合键…') : settings.tickerHotkey }}
+                {{ capturing ? (capturedCombo ? formatHotkeyLabel(capturedCombo) : '请按组合键…') : formatHotkeyLabel(settings.tickerHotkey) }}
                 <small v-if="capturing">{{ capturedCombo ? 'Enter 确认 · Esc 取消' : '需包含修饰键' }}</small>
               </button>
               <button class="minor-btn" @click="capturing ? stopCapture() : startCapture()">{{ capturing ? '取消' : '录制' }}</button>

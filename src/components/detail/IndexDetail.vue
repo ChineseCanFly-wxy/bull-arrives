@@ -19,6 +19,12 @@ const emit = defineEmits<{
 
 const isUp = computed(() => props.index.change_pct >= 0);
 
+// 指数行情不带昨收字段，用「最新价 - 涨跌额」反推，供分时图涨跌幅使用。
+const prevClose = computed(() => {
+  const value = props.index.price - props.index.change;
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+});
+
 const activePeriod = ref<PeriodType>('minute');
 const activeSubIndicator = ref<SubIndicatorType>('VOL');
 const activeMainOverlay = ref<MainOverlayType>('MA');
@@ -111,6 +117,7 @@ const statCards = computed(() => [
           :code="index.code"
           market="CN"
           :name="index.name"
+          :prev-close="prevClose"
         />
         <KLineChart
           v-else

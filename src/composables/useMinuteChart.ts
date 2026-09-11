@@ -13,6 +13,8 @@ export function useMinuteChart(options: {
   code: MaybeRef<string>;
   market: MaybeRef<string>;
   name?: MaybeRef<string>;
+  /// 昨收价，用于悬停提示中的分时涨跌幅。
+  prevClose?: MaybeRef<number | undefined>;
 }) {
   const { chart, loading, error, periodToKlinecharts, syncPrecision, initChartCore, disposeChart: coreDispose, reapplyStyles } = useChartCore(options);
 

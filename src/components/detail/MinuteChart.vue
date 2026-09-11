@@ -6,6 +6,8 @@ const props = defineProps<{
   code: string;
   market: string;
   name?: string;
+  /// 昨收价 — 悬停提示的涨跌幅以此为基准；不确定时留空则显示 “--”。
+  prevClose?: number;
 }>();
 
 const chartRef = ref<HTMLElement | null>(null);
@@ -15,6 +17,7 @@ const { loading, error, initChart, loadData } = useMinuteChart({
   code: computed(() => props.code),
   market: computed(() => props.market),
   name: computed(() => props.name ?? ''),
+  prevClose: computed(() => props.prevClose),
 });
 
 onMounted(async () => {

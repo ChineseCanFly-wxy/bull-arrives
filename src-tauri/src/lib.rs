@@ -838,6 +838,7 @@ pub fn run() {
             desktop_toast::dismiss_desktop_toast,
             desktop_toast::view_desktop_toast,
             group_hotkeys::set_group_hotkey,
+            group_hotkeys::get_group_hotkey_status,
             commands::holdings::get_holdings,
             commands::holdings::save_holding,
             commands::holdings::delete_holding,
