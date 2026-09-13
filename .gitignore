@@ -55,3 +55,6 @@ docs/code-review-*.md
 
 # 本机构建的交付 exe（正式发布走 GitHub Releases）
 /BullArrives.exe
+
+# 方案类文档仅本地维护，不进仓库（2026-09-13 定）
+docs/AI接入方案.md
