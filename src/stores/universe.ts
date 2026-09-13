@@ -469,6 +469,7 @@ export const useUniverseStore = defineStore('universe', () => {
         filter: filter.value,
         page: wanted,
         pageSize: pageSize.value,
+        reuseSnapshot: true,
         source: sourceMode.value,
       });
       if (request !== generation) return;
