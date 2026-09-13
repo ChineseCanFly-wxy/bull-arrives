@@ -45,11 +45,6 @@ function logToBackend(level: 'info' | 'warn' | 'error', message: string): void {
   });
 }
 
-/** 诊断用：把任意文本写进日志（fire-and-forget） */
-function logDiagnostic(message: string): void {
-  logToBackend('info', `[诊断] ${message}`);
-}
-
 /**
  * 后端 `get_filter_presets` 失败时的兜底预设。
  *
@@ -574,7 +569,6 @@ export const useUniverseStore = defineStore('universe', () => {
     showResults,
     toggleResults,
     flushPersist,
-    logDiagnostic,
     hydrate,
     applyPreset,
     markCustom,

@@ -7,7 +7,7 @@
 // - 快照在 Rust 侧带 60 秒缓存，重复点击「筛选」不会打爆数据源
 // - 结果表支持本地排序；「加自选」会自动把 6 位代码转成 sh/sz/bj 前缀的完整符号
 
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue';
 import {
   NButton,
   NCheckbox,
@@ -101,31 +101,6 @@ onBeforeUnmount(() => {
   // 关闭对话框时立即落盘：防抖的 400ms 可能在用户直接退出程序时被带走
   universe.flushPersist();
 });
-
-// ── 表格渲染诊断：把真实 DOM 的行数与尺寸写进日志 ──
-// 背景：后端明明返回了数据、store 里也有，但表格渲染成空 —— 必须看到真实 DOM 才能定位。
-watch(
-  () => [universe.resultsVisible, universe.rows.length, universe.pageLoading] as const,
-  async ([visible]) => {
-    if (!visible) return;
-    await nextTick();
-    window.setTimeout(() => {
-      const scope = document.querySelector('.screener');
-      const table = scope?.querySelector('.n-data-table');
-      const body = scope?.querySelector('.n-data-table-base-table-body');
-      const rows = scope?.querySelectorAll('.n-data-table-tr:not(.n-data-table-tr--summary)');
-      const rect = (el?: Element | null) => {
-        if (!el) return '无元素';
-        const r = el.getBoundingClientRect();
-        return `${Math.round(r.width)}x${Math.round(r.height)}`;
-      };
-      universe.logDiagnostic(
-        `表格DOM：数据行=${rows?.length ?? '无'} 表格=${rect(table)} 表体=${rect(body)} ` +
-          `首行=${rect(rows?.[0])} 表体HTML长度=${body ? body.innerHTML.length : 0}`,
-      );
-    }, 400);
-  },
-);
 
 const activeDesc = computed(
   () =>
