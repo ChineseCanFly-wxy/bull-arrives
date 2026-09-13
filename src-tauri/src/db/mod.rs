@@ -1,5 +1,6 @@
 pub mod groups;
 pub mod holdings;
+pub mod monitors;
 #[cfg(test)]
 mod regression_tests;
 
@@ -23,6 +24,7 @@ impl Database {
         db.migrate()?;
         db.migrate_groups()?;
         db.migrate_holdings()?;
+        db.migrate_monitors()?;
         db.migrate_price_alerts()?;
         db.migrate_watchlist_codes()?;
         db.init_defaults()?;
@@ -159,6 +161,16 @@ impl Database {
             ("quote_schedule_enabled", "0"),
             ("auto_launch", "false"),
             ("alerts_enabled", "1"),
+            // AI / 量化智能总开关：关闭后所有「自动运行」的智能功能一并停止。
+            // 手动点击触发的功能（个股量化评分、推荐榜）不受它约束。
+            ("ai_enabled", "1"),
+            // 智能监控（ATR 自动止损/止盈），跟随 ai_enabled
+            ("ai_monitor_enabled", "1"),
+            // 全市场快照取数通道：auto（东财优先，新浪兜底）/ sina / eastmoney。
+            // 实测部分网络下东财 clist 路径被针对性阻断，故默认 auto。
+            ("universe_source", "auto"),
+            // 筛选器结果表每页条数（1–100）
+            ("universe_page_size", "20"),
         ];
         for (k, v) in defaults {
             if self.get_setting(k)?.is_none() {

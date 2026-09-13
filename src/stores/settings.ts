@@ -41,6 +41,11 @@ export const useSettingsStore = defineStore('settings', () => {
   const quoteScheduleEnabled = ref(false);
   const alertsEnabled = ref(true);
   const notificationDesktopAlways = ref(false);
+  /// AI / 量化智能总开关。关闭后所有「自动运行」的智能功能一并停止，
+  /// 手动点击触发的分析/推荐榜不受它约束。
+  const aiEnabled = ref(true);
+  /// 智能监控（ATR 自动止损/止盈），受 aiEnabled 约束。
+  const aiMonitorEnabled = ref(true);
   const refreshInterval = ref(REFRESH_INTERVAL_AUTO);
   const marketSession = ref<MarketSessionInfo>({
     session: '休市',
@@ -102,6 +107,12 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'notification_desktop_always':
         notificationDesktopAlways.value = value === '1';
         break;
+      case 'ai_enabled':
+        aiEnabled.value = value !== '0';
+        break;
+      case 'ai_monitor_enabled':
+        aiMonitorEnabled.value = value !== '0';
+        break;
       case 'refresh_interval':
         refreshInterval.value = clampInterval(parseInt(value, 10));
         break;
@@ -131,6 +142,8 @@ export const useSettingsStore = defineStore('settings', () => {
       applySettingLocally('quote_schedule_enabled', settings.value['quote_schedule_enabled'] ?? '0');
       applySettingLocally('alerts_enabled', settings.value['alerts_enabled'] ?? '1');
       applySettingLocally('notification_desktop_always', settings.value['notification_desktop_always'] ?? '0');
+      applySettingLocally('ai_enabled', settings.value['ai_enabled'] ?? '1');
+      applySettingLocally('ai_monitor_enabled', settings.value['ai_monitor_enabled'] ?? '1');
       applySettingLocally('refresh_interval', settings.value['refresh_interval'] ?? '0');
       datasources.value = await invoke<[string, string][]>('list_datasources');
       autoLaunch.value = await isEnabled();
@@ -289,7 +302,9 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     settings, datasources, activeDatasource, theme, autoLaunch, isPortable,
     tickerHotkey, tickerOpacity, tickerSingleColor, tickerTextColor, tickerDisplayMode, tickerPageSize,
-    quoteScheduleEnabled, alertsEnabled, notificationDesktopAlways, refreshInterval, marketSession, error,
+    quoteScheduleEnabled, alertsEnabled, notificationDesktopAlways,
+    aiEnabled, aiMonitorEnabled,
+    refreshInterval, marketSession, error,
     fetchSettings, setSetting, switchDatasource, toggleTheme, toggleAutoLaunch,
     applyTheme, applyRemoteSetting, setTickerHotkey, setTickerOpacity,
     setTickerSingleColor, setTickerTextColor, setTickerDisplayMode, setTickerPageSize,

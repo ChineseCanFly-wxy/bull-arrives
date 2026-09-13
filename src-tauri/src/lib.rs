@@ -7,7 +7,9 @@ pub mod notifications;
 pub mod notification_identity;
 pub mod desktop_toast;
 pub mod alerts;
+pub mod monitor;
 pub mod group_hotkeys;
+pub mod quant;
 
 use std::fs::File;
 use std::sync::Arc;
@@ -821,6 +823,13 @@ pub fn run() {
             commands::quote::get_depth,
             commands::quote::get_intraday,
             commands::quote::get_kline,
+            commands::universe::get_market_universe,
+            commands::universe::get_filter_presets,
+            commands::analysis::analyze_stock,
+            commands::rank::scan_and_rank,
+            commands::monitor::get_monitors,
+            commands::monitor::save_monitor,
+            commands::monitor::delete_monitor,
             commands::watchlist::get_watchlist,
             commands::watchlist::add_watch,
             commands::watchlist::remove_watch,
@@ -858,6 +867,8 @@ pub fn run() {
             commands::settings::get_portable_mode,
             commands::settings::set_refresh_interval,
             commands::settings::get_market_session,
+            commands::settings::get_build_info,
+            commands::settings::log_frontend,
             commands::window::show_main_window,
             commands::window::set_main_window_size,
             commands::window::set_ticker_hotkey,

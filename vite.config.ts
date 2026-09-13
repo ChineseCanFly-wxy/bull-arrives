@@ -8,6 +8,12 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [vue()],
 
+  // 前端构建指纹：打进 bundle 里，用于排查「WebView 加载了旧版前端」的问题。
+  // 界面上显示的构建号 = 这个值，与 exe 的构建时间应一致。
+  define: {
+    __BULL_FRONTEND_BUILD__: JSON.stringify(new Date().toISOString().replace("T", " ").slice(0, 19)),
+  },
+
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),

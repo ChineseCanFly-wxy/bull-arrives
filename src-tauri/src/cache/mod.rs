@@ -78,6 +78,30 @@ impl QuoteCache {
                 }
             },
         );
+
+        // 止损/止盈监控（量化自动算位，复用同一批新鲜行情）
+        crate::monitor::evaluate_monitors(&self.db, quotes, now, |event| {
+            let title = format!("智能监控 · {} {}", event.name, event.code);
+            let body = if event.trigger_type == "stop_loss" {
+                format!(
+                    "已跌破量化止损位 {:.4}（参考价 {:.4}），现价 {:.4}，注意风险",
+                    event.trigger_price, event.reference_price, event.current_price
+                )
+            } else {
+                format!(
+                    "已突破量化止盈位 {:.4}（参考价 {:.4}），现价 {:.4}，可考虑兑现",
+                    event.trigger_price, event.reference_price, event.current_price
+                )
+            };
+            match serde_json::to_value(event) {
+                Ok(mut payload) => {
+                    payload["title"] = serde_json::Value::String(title);
+                    payload["body"] = serde_json::Value::String(body);
+                    crate::notifications::publish(app_handle, payload);
+                }
+                Err(error) => log::warn!("监控事件序列化失败: {}", error),
+            }
+        });
     }
 
     fn sync_alert_scope(&self, codes: &[(String, String)]) {

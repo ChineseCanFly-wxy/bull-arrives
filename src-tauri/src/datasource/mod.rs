@@ -373,3 +373,9 @@ pub mod market_clock;
 pub mod market_policy;
 pub mod search;
 pub mod headers;
+pub mod eastmoney_universe;
+pub mod eastmoney_kline;
+pub mod sina_universe;
+pub mod kline;
+#[cfg(test)]
+mod network_smoke;

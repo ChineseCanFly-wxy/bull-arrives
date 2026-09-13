@@ -29,6 +29,10 @@ pub fn set_setting(
     if key == "quote_schedule_enabled" && value != "0" && value != "1" {
         return Err("行情时间限制开关只能为 0 或 1".into());
     }
+    // AI / 量化智能相关开关同样只允许 0/1，避免前端写入其它值后判断语义含糊。
+    if (key == "ai_enabled" || key == "ai_monitor_enabled") && value != "0" && value != "1" {
+        return Err("AI 智能开关只能为 0 或 1".into());
+    }
     let policy_on_enable = if key == "quote_schedule_enabled" && value == "1" {
         let schedule = db.get_setting("quote_schedule").map_err(|e| e.to_string())?;
         Some(crate::datasource::market_policy::MarketRequestPolicy::from_quote_schedule_json(schedule.as_deref())?)
@@ -37,6 +41,17 @@ pub fn set_setting(
     };
     if key == "ticker_display_mode" && value != "carousel" && value != "fixed" {
         return Err("悬浮窗展示方式只能为 carousel 或 fixed".into());
+    }
+    if key == "universe_source" && !matches!(value.as_str(), "auto" | "sina" | "eastmoney") {
+        return Err("全市场数据源只能为 auto / sina / eastmoney".into());
+    }
+    if key == "universe_page_size" {
+        let size = value
+            .parse::<u32>()
+            .map_err(|_| "筛选结果每页条数必须为整数")?;
+        if !(1..=100).contains(&size) {
+            return Err("筛选结果每页条数必须在 1–100 之间".into());
+        }
     }
     if key == "ticker_page_size" {
         let size = value.parse::<u32>().map_err(|_| "悬浮窗每页数量必须为整数")?;
@@ -99,6 +114,58 @@ pub fn set_refresh_interval(
         if secs == 0 { "auto".to_string() } else { format!("{}s", secs) }
     );
     Ok(())
+}
+
+/// 前端日志通道：把 JS 侧的错误写进 bull-arrives.log。
+///
+/// 背景：前端 `console.error` 只进 WebView 的开发者控制台，用户看不到、我们也拿不到。
+/// 排查「界面没反应但后端日志一片干净」这类问题时，必须有这条通道。
+#[tauri::command]
+pub fn log_frontend(level: String, message: String) {
+    let trimmed = message.trim();
+    // 单条上限，防止异常数据把日志撑爆
+    let message = if trimmed.len() > 2000 { &trimmed[..2000] } else { trimmed };
+    match level.as_str() {
+        "error" => log::error!("[前端] {message}"),
+        "warn" => log::warn!("[前端] {message}"),
+        _ => log::info!("[前端] {message}"),
+    }
+}
+
+/// 构建信息。用于在界面上确认「当前跑的是不是最新版本」——
+/// 之前排查问题时反复卡在「用户跑的到底是哪个 exe」上，直接显示出来最省事。
+#[derive(serde::Serialize)]
+pub struct BuildInfo {
+    pub version: String,
+    /// 可执行文件的修改时间，等价于构建完成时间
+    pub built_at: String,
+    pub profile: String,
+    /// 可执行文件完整路径，便于发现「其实在跑另一个副本」
+    pub exe_path: String,
+}
+
+#[tauri::command]
+pub fn get_build_info() -> BuildInfo {
+    let exe = std::env::current_exe().ok();
+    let built_at = exe
+        .as_ref()
+        .and_then(|path| std::fs::metadata(path).ok())
+        .and_then(|meta| meta.modified().ok())
+        .map(|time| {
+            chrono::DateTime::<chrono::Local>::from(time)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|| "未知".to_string());
+
+    BuildInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        built_at,
+        profile: if cfg!(debug_assertions) { "debug" } else { "release" }.to_string(),
+        exe_path: exe
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "未知".to_string()),
+    }
 }
 
 /// Current market session plus the interval the scheduler is actually using.

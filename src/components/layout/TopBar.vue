@@ -3,6 +3,8 @@ import { computed, ref, defineAsyncComponent } from 'vue';
 import { useSettingsStore } from '@/stores/settings';
 import { NIcon, NDropdown } from 'naive-ui';
 const SettingsDialog = defineAsyncComponent(() => import('@/components/settings/SettingsDialog.vue'));
+const UniverseScreenerDialog = defineAsyncComponent(() => import('@/components/screener/UniverseScreenerDialog.vue'));
+const MonitorDialog = defineAsyncComponent(() => import('@/components/monitor/MonitorDialog.vue'));
 
 const settings = useSettingsStore();
 
@@ -25,6 +27,16 @@ function handleDsSelect(key: string) {
 const showSettings = ref(false);
 function openSettings() {
   showSettings.value = true;
+}
+
+const showScreener = ref(false);
+function openScreener() {
+  showScreener.value = true;
+}
+
+const showMonitor = ref(false);
+function openMonitor() {
+  showMonitor.value = true;
 }
 </script>
 
@@ -55,6 +67,29 @@ function openSettings() {
 
       <button
         class="cog-btn"
+        aria-label="打开持仓监控"
+        title="持仓监控（止损/止盈）"
+        @click="openMonitor"
+      >
+        <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 3a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V18l-1.6-1.2L10 18l-2.4-1.2L6 18v-2.3A7 7 0 0 1 3 10a7 7 0 0 1 7-7Z" />
+          <path d="M7.5 10.5l1.7 1.7 3.3-3.4" />
+        </svg>
+      </button>
+
+      <button
+        class="cog-btn"
+        aria-label="打开全市场筛选器"
+        title="全市场筛选器"
+        @click="openScreener"
+      >
+        <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2.5 4h15l-5.8 6.8V17l-3.4-2V10.8L2.5 4Z" />
+        </svg>
+      </button>
+
+      <button
+        class="cog-btn"
         :aria-label="`打开设置 (${settings.tickerHotkey})`"
         :title="`设置 (悬浮窗快捷键: ${settings.tickerHotkey})`"
         @click="openSettings"
@@ -67,6 +102,8 @@ function openSettings() {
     </div>
 
     <SettingsDialog v-if="showSettings" v-model:show="showSettings" />
+    <UniverseScreenerDialog v-if="showScreener" v-model:show="showScreener" />
+    <MonitorDialog v-if="showMonitor" v-model:show="showMonitor" />
   </header>
 </template>
 

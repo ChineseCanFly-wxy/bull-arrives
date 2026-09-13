@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { NAlert, NModal } from 'naive-ui';
 import { invoke } from '@tauri-apps/api/core';
 import { useSettingsStore, REFRESH_INTERVAL_AUTO } from '@/stores/settings';
+import { useUniverseStore } from '@/stores/universe';
 import QuoteScheduleSettings from './QuoteScheduleSettings.vue';
 import WindowSizeSettings from './WindowSizeSettings.vue';
 import GroupHotkeySettings from './GroupHotkeySettings.vue';
@@ -11,11 +12,21 @@ import { eventToHotkey, formatHotkeyLabel } from '@/utils/hotkey';
 const props = defineProps<{ show: boolean }>();
 const emit = defineEmits<{ 'update:show': [value: boolean] }>();
 const settings = useSettingsStore();
+const universeStore = useUniverseStore();
 
-type SectionKey = 'market' | 'alerts' | 'ticker' | 'appearance' | 'system';
+/** 筛选结果分页大小的可选项 */
+const universePageSizeOptions = [20, 50, 100];
+
+function onUniversePageSizeChange(event: Event) {
+  const value = Number((event.target as HTMLSelectElement).value);
+  void universeStore.setPageSize(value);
+}
+
+type SectionKey = 'market' | 'alerts' | 'ai' | 'ticker' | 'appearance' | 'system';
 const sections: Array<{ key: SectionKey; label: string; eyebrow: string }> = [
   { key: 'market', label: '行情', eyebrow: 'MARKET' },
   { key: 'alerts', label: '提醒', eyebrow: 'ALERTS' },
+  { key: 'ai', label: '智能', eyebrow: 'AI / QUANT' },
   { key: 'ticker', label: '悬浮窗', eyebrow: 'TICKER' },
   { key: 'appearance', label: '外观', eyebrow: 'THEME' },
   { key: 'system', label: '系统', eyebrow: 'SYSTEM' },
@@ -25,8 +36,10 @@ const actionError = ref<string | null>(null);
 const savingKeys = ref(new Set<string>());
 interface NotificationIdentityStatus { supported: boolean; registered: boolean; shortcut_path?: string; detail: string }
 interface NotificationTestStatus { native: 'accepted' | 'failed'; native_error?: string; desktop: string; desktop_error?: string }
+interface BuildInfo { version: string; built_at: string; profile: string; exe_path: string }
 const notificationIdentity = ref<NotificationIdentityStatus | null>(null);
 const notificationResult = ref<NotificationTestStatus | null>(null);
+const buildInfo = ref<BuildInfo | null>(null);
 
 const capturing = ref(false);
 const capturedCombo = ref<string | null>(null);
@@ -44,6 +57,7 @@ watch(() => props.show, (open) => {
     actionError.value = null;
     safelyRun('session', () => settings.fetchMarketSession());
     void loadNotificationIdentity();
+    void loadBuildInfo();
   } else {
     stopCapture();
   }
@@ -153,6 +167,11 @@ async function loadNotificationIdentity() {
   try { notificationIdentity.value = await invoke<NotificationIdentityStatus>('get_notification_identity_status'); }
   catch (error) { notificationIdentity.value = { supported: true, registered: false, detail: String(error) }; }
 }
+/// 读取构建信息，用于确认当前运行的确实是刚构建出来的版本
+async function loadBuildInfo() {
+  try { buildInfo.value = await invoke<BuildInfo>('get_build_info'); }
+  catch (error) { console.warn('[settings] 读取构建信息失败:', error); }
+}
 async function registerNotificationIdentity() {
   notificationIdentity.value = await invoke<NotificationIdentityStatus>('register_notification_identity');
 }
@@ -216,6 +235,21 @@ onBeforeUnmount(stopCapture);
             </div>
           </article>
           <QuoteScheduleSettings />
+          <article class="setting-card">
+            <h3>筛选结果每页条数</h3>
+            <p class="card-desc">全市场筛选器结果表的分页大小，范围 1–100 条，默认 20 条。</p>
+            <div class="inline-setting">
+              <div><b class="page-size-label">每页显示</b><p>在筛选器工具条上也可以随时改。</p></div>
+              <select
+                class="page-size-select"
+                :value="universeStore.pageSize"
+                :disabled="universeStore.loading"
+                @change="onUniversePageSizeChange"
+              >
+                <option v-for="size in universePageSizeOptions" :key="size" :value="size">{{ size }} 条/页</option>
+              </select>
+            </div>
+          </article>
         </section>
 
         <section v-else-if="activeSection === 'alerts'" class="settings-panel">
@@ -247,9 +281,50 @@ onBeforeUnmount(stopCapture);
           </article>
         </section>
 
+        <section v-else-if="activeSection === 'ai'" class="settings-panel">
+          <header class="panel-heading"><span>03</span><div><h2>AI / 量化智能</h2><p>总开关统一管理所有自动运行的智能功能。</p></div></header>
+          <article class="setting-card accent-card">
+            <div class="card-title-row">
+              <div><h3>AI 智能总开关</h3><p>关闭后，后台自动运行的 AI / 量化功能全部停止；手动点击的分析与推荐仍可照常使用。</p></div>
+              <button class="switch" :class="{ on: settings.aiEnabled }" role="switch" :aria-checked="settings.aiEnabled" :disabled="isSaving('ai')" @click="safelyRun('ai', () => settings.setSetting('ai_enabled', settings.aiEnabled ? '0' : '1'))"><span /></button>
+            </div>
+            <div v-if="!settings.aiEnabled" class="alert-guidance">
+              <b>已全部停用</b>
+              <p>智能监控已暂停，不会再产生任何后台计算与提醒。逐票的涨跌幅 / 固定价格提醒属于「提醒」分类，不受此处影响。</p>
+            </div>
+          </article>
+          <article class="setting-card">
+            <h3>自动运行的功能</h3>
+            <p class="card-desc">这些功能在后台持续运行，因此可单独开关，并统一受上面的总开关约束。</p>
+            <div class="inline-setting">
+              <div>
+                <h3>智能监控 · 量化止损止盈</h3>
+                <p>按 ATR14 自动计算止损 / 止盈位，盘中价格触及即提醒；价格和阈值全部由模型算出，无需手填。</p>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: settings.aiEnabled && settings.aiMonitorEnabled }"
+                role="switch"
+                :aria-checked="settings.aiEnabled && settings.aiMonitorEnabled"
+                :disabled="!settings.aiEnabled || isSaving('ai-monitor')"
+                @click="safelyRun('ai-monitor', () => settings.setSetting('ai_monitor_enabled', settings.aiMonitorEnabled ? '0' : '1'))"
+              ><span /></button>
+            </div>
+          </article>
+          <article class="setting-card compact-card">
+            <h3>手动触发，无需开关</h3>
+            <p>下面这些只有你主动点击时才会运行，不会产生后台请求，所以不占用这里的开关。</p>
+            <div class="explain-grid">
+              <div><b>量化评分</b><span>双击个股打开「分析」时才计算</span></div>
+              <div><b>推荐榜</b><span>在筛选器里点「生成推荐榜」时才扫描</span></div>
+              <div><b>涨跌幅 / 价格提醒</b><span>原有逐票规则，请在「提醒」中管理</span></div>
+            </div>
+          </article>
+        </section>
+
         <section v-else-if="activeSection === 'ticker'" class="settings-panel">
           <GroupHotkeySettings />
-          <header class="panel-heading"><span>03</span><div><h2>悬浮窗</h2><p>快捷唤起与低干扰显示。</p></div></header>
+          <header class="panel-heading"><span>04</span><div><h2>悬浮窗</h2><p>快捷唤起与低干扰显示。</p></div></header>
           <article class="setting-card">
             <h3>全局快捷键</h3><p class="card-desc">在任何界面显示或隐藏悬浮行情条。</p>
             <div class="hotkey-row">
@@ -282,7 +357,7 @@ onBeforeUnmount(stopCapture);
         </section>
 
         <section v-else-if="activeSection === 'appearance'" class="settings-panel">
-          <header class="panel-heading"><span>04</span><div><h2>外观</h2><p>选择适合环境的界面明暗。</p></div></header>
+          <header class="panel-heading"><span>05</span><div><h2>外观</h2><p>选择适合环境的界面明暗。</p></div></header>
           <article class="theme-grid">
             <button class="theme-card light" :class="{ active: settings.theme === 'light' }" :disabled="isSaving('theme')" @click="settings.theme !== 'light' && safelyRun('theme', () => settings.toggleTheme())"><i><span /><span /><span /></i><b>浅色</b><small>清晰明快</small></button>
             <button class="theme-card dark" :class="{ active: settings.theme === 'dark' }" :disabled="isSaving('theme')" @click="settings.theme !== 'dark' && safelyRun('theme', () => settings.toggleTheme())"><i><span /><span /><span /></i><b>深色</b><small>专注低光</small></button>
@@ -290,10 +365,14 @@ onBeforeUnmount(stopCapture);
         </section>
 
         <section v-else class="settings-panel">
-          <header class="panel-heading"><span>05</span><div><h2>系统</h2><p>配置启动行为与运行方式。</p></div></header>
+          <header class="panel-heading"><span>06</span><div><h2>系统</h2><p>配置启动行为与运行方式。</p></div></header>
           <article class="setting-card">
             <div class="inline-setting"><div><h3>开机自启</h3><p>登录 Windows 时自动启动 Bull Arrives。</p></div><button class="switch" :class="{ on: settings.autoLaunch }" role="switch" :aria-checked="settings.autoLaunch" :disabled="isSaving('autostart')" @click="safelyRun('autostart', () => settings.toggleAutoLaunch())"><span /></button></div>
             <div class="system-line"><span>运行模式</span><b>{{ settings.isPortable ? '便携模式' : '标准安装' }}</b></div>
+            <div class="system-line"><span>版本</span><b v-if="buildInfo">v{{ buildInfo.version }} · {{ buildInfo.profile }}</b><b v-else>读取中…</b></div>
+            <div class="system-line"><span>构建时间</span><b v-if="buildInfo">{{ buildInfo.built_at }}</b><b v-else>—</b></div>
+            <div v-if="buildInfo" class="system-line exe-line"><span>程序位置</span><code>{{ buildInfo.exe_path }}</code></div>
+            <p v-if="buildInfo" class="build-hint">排查问题时请核对这里的构建时间 —— 如果它不是最近一次构建的时间，说明启动的是旧副本。</p>
           </article>
           <WindowSizeSettings />
         </section>
@@ -366,6 +445,20 @@ onBeforeUnmount(stopCapture);
 .color-row label { display: flex; align-items: center; gap: 8px; }
 .color-row input { width: 34px; height: 24px; padding: 1px; border: 1px solid var(--color-border-1); border-radius: 4px; background: none; }
 .color-row code, .system-line b { color: var(--color-text-primary); font-family: var(--font-mono); }
+.exe-line { align-items: flex-start; }
+.exe-line code { max-width: 62%; overflow-wrap: anywhere; text-align: right; color: var(--color-text-secondary); font-size: 10px; }
+.build-hint { margin-top: 8px; color: var(--color-text-tertiary); font-size: 10px; line-height: 1.5; }
+.page-size-label { color: var(--color-text-secondary); font-size: var(--text-xs); }
+.page-size-select {
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  cursor: pointer;
+}
 .field-error { color: var(--color-warning) !important; }
 .theme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .theme-card { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 14px; border: 1px solid var(--color-border-0); border-radius: var(--radius-md); background: var(--color-surface-0); color: var(--color-text-primary); cursor: pointer; transition: transform var(--transition-fast), border-color var(--transition-fast); }
