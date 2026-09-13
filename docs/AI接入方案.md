@@ -328,58 +328,21 @@ src/
 > 腾讯日K 的字段口径（前复权 + 成交量按手）**与原东财完全一致**，所以换上去之后
 > 指标与打分的计算不需要任何调整。北交所必须靠新浪补。
 
-#### 5.1.4 通达信（mootdx / mootdxPlus）：**Python 解析库已失效**
+#### 5.1.4 通达信（mootdx / mootdxPlus）：**已废弃，由本地 stockdb 取代**
 
-这一条是用户主动提议后专门测的，结论明确：
+> **2026-09-13 定案：整条路线废弃。** 本地数据需求由 **free-stockdb 数据底座（5.3 节）** 全面取代
+> —— 7.7 年全历史日K + 2025 年起 1 分钟K + 复权因子 + **北交所有数据**，毫秒级响应，
+> 无需装客户端、无需手动下载盘后数据。
 
-| 能力 | 结果 |
-|---|---|
-| TCP 连接 7709 端口 | ✅ mootdx 内置 38 台服务器里 **15 台可连通** |
-| `stocks()` 证券列表 | ✅ 27920 条 |
-| `minutes()` 分时 | ✅ 240 条 |
-| `quotes()` 快照 / `bars()` **日K** | ❌ 全部失败 |
+废弃前的实测结论（留档，防止以后重走弯路）：
 
-打开 `raise_exception=True` 后看到真实报错（默认被 mootdx 静默吞掉）：
-
-```
-tdxpy/helper.py:127  get_datetime
-    (zip_day,) = struct.unpack("<I", buffer[pos: pos + 4])
-struct.error: unpack requires a buffer of 4 bytes
-```
-
-**服务器确实回数据了，但字节布局与 `tdxpy 0.2.7` 的解析器不一致**，解析到一半越界。
-把 15 台可连服务器**全部**试过，无一例外。
-
-换成 `mootdxPlus` 也**不解决**：它的 `pyproject.toml` 写的是 `tdxpy = ">=0.2.7,<0.3.0"`，
-和当前安装的完全一致；而 tdxpy 在 PyPI 上**最新就是 0.2.7**。
-它改的是 mootdx 上层（CLI / 结构化输出 / MCP），**没有替换底层二进制解析器**。
-
-> **一条备选路（已验证可行，见下）**：`mootdx.reader` 可以**直接读本地通达信数据文件**
-> （`vipdoc/sh/lday/*.day`），**零网络、零协议、全历史**。前提是装了通达信客户端。
-
-#### 5.1.4.1 本地文件读取：已实测跑通
-
-造了真实的 `.day` 二进制文件实测（不是看文档推断）：
-
-| 项 | 结果 |
-|---|---|
-| `Reader.factory(market='std', tdxdir=...)` | ✅ 创建成功（`StdReader`）|
-| `reader.daily('600519')` | ✅ 返回完整 OHLCV，字段正确 |
-| `.day` 格式 | **32 字节定长记录**：`date(u32) open(u32) high(u32) low(u32) close(u32) amount(f32) volume(u32) reserved(u32)`；**价格以「分」存储**，读取要 ÷100 |
-| volume 口径 | 文件里是**股**，mootdx 输出时 ÷100 变成**手** —— 与项目现有口径一致 |
-| 分钟线 | 路径为 `vipdoc/{sh,sz}/fzline/*.lc5`（5分钟）、`minline/*.lc1`（1分钟），**需真实客户端文件确认扩展名** |
-| **北交所** | ❌ **读不到**。mootdx 的 `find_path` 用 `get_stock_market()` 判断市场目录，它对北交所代码抛 `NotImplementedError`，920000/430047/830799 全部取不到 |
-
-**使用前提（很重要）**：光装客户端**不够** —— 通达信默认只下载你"看过"的股票的日线。
-必须手动跑一次 **「盘后数据下载」**（免费，在 系统 → 盘后数据下载，勾选下载所有 A 股日线），
-否则本地文件是零散的。
-
-**定位与限制**：
-- ✅ 适合：**全市场全历史离线库**，用于回测、因子检验、形态研究（本地分钟线让"全市场 × 多年"的
-  分时形态聚类成为可能，不需要任何网络请求）
-- ❌ 不适合：**实时盯盘 / 盘中提醒** —— 本地文件是"盘后快照"，只有收盘后下载才有当天数据。
-  实时仍然必须走在线通道
-- ⚠️ 依赖 Python（mootdx），因此它属于**阶段 B（Python 研究后端）**，不是现在的内置功能
+- **在线行情接口不可用**：`tdxpy 0.2.7`（PyPI 最新即此版）与当前通达信服务器的字节布局不兼容，
+  `bars() / quotes()` 在 15 台可连服务器上**无一例外**解析越界（`struct.error`）；
+  `mootdxPlus` 只改了上层（CLI / MCP），**没有替换底层解析器**，同样不可用。
+- **本地 `.day` 文件直读可行但有硬伤**：需装通达信客户端并手动跑「盘后数据下载」；
+  更致命的是 **北交所读不到**（mootdx 对北交所代码抛 `NotImplementedError`）——
+  而 stockdb 有北交所数据。
+- 定位原本就是"盘后快照、用于回测"，与 stockdb 的定位重叠，但各方面都不如 stockdb。
 
 #### 5.1.5 其他源
 
@@ -644,7 +607,6 @@ turnover / pct_chg / amplitude / **is_st** / **vol_ratio** / total_mv / float_mv
 | 日K 多通道适配 | **历史数据底座：本地 stockdb**（2019 起日K + 2025 起分钟K + 复权因子，见 5.3） |
 | SQLite 落库、UI、通知 | AI 编排（多模型、多 Agent、RAG、prompt 管理） |
 | — | 长尾数据：**优先 stockdb more-power 版**（官方称含财务/期货/债券/因子/ticks，覆盖待验证），缺项再用 akshare 在线补 |
-| — | （备选，已被 stockdb 基本取代）本地通达信 `.day` 文件读取，见 5.1.4.1 |
 
 **为什么盯着"常驻/低延迟"而不是"难不难"**：盯盘和提醒要毫秒级响应、要能开机就挂着、
 要以单个 exe 分发。放 Python 会引入进程常驻 + GIL + 内存占用 + 启动延迟 ——
@@ -660,7 +622,8 @@ T+1、涨跌停、复权的回测框架是几个月的活。
 | 项 | 体积 |
 |---|---|
 | Python 3.13 解释器本体 | 53 MB |
-| `mootdx` + `pandas` + `numpy` 的 site-packages | 162 MB（pandas 67 / numpy 34 / numpy.libs 21） |
+| `pandas` + `numpy` 的 site-packages | 约 100 MB（pandas 67 / numpy 34 / numpy.libs 21；
+  mootdx 已随通达信路线废弃，阶段 B 不再需要） |
 | **合计** | **约 215 MB**（再上 sklearn / torch 会到 GB 级） |
 
 所以外置要提前认下三个代价：**体积膨胀**、**进程管理**（拉起/退出/端口/僵尸进程）、
@@ -731,7 +694,6 @@ Bull（Rust）                        Python 研究后端
 | [Cricle/akshare-rs](https://lib.rs/crates/akshare) | 你要接入的数据层现成实现，直接 `cargo add akshare` |
 | [akfamily/akshare](https://github.com/akfamily/akshare) | Python 原版，作为**接口文档参考**（要看有哪些数据接口可拿） |
 | [zsrl/pywencai](https://github.com/zsrl/pywencai) | 同花顺问财的 Python 参考实现，移植 `hexin-v` 令牌算法时照它看（实测发现它依赖 jsdom，见 5.2） |
-| [BiomancerGame/mootdxPlus](https://github.com/BiomancerGame/mootdxPlus) | 通达信数据读取的活跃维护分支。**借鉴它的方向（CLI JSON 输出 / 结构化模型 / MCP 工具服务），但注意它仍依赖同一套 `tdxpy` 解析器，实测拿不到 K 线** —— 见 5.1.4 |
 | [0xPlaygrounds/rig](https://github.com/0xPlaygrounds/rig) | Rust LLM 框架选型，文档站 docs.rig.rs 有完整示例 |
 | [a1031198246b/stock-mcp](https://github.com/a1031198246b/stock-mcp) | A 股 MCP 服务，含通达信/新浪/akshare/东财 + **问财自然语言选股**，多源优先级回退设计值得抄 |
 | [lijinly/tushare-mcp-server](https://github.com/lijinly/tushare-mcp-server) | 18 个财务/行情工具的 MCP 封装范式 |
@@ -746,7 +708,7 @@ Bull（Rust）                        Python 研究后端
    └─ 外部 MCP Server（可选挂载）：
         问财 MCP → 自然语言选股
         Tushare MCP → 财务报表
-        通达信 MCP → 本地行情
+        stockdb MCP → 本地行情
 ```
 
 好处：数据源能力可插拔，用户想接什么就配什么，不用每次改代码重新发版。
@@ -893,7 +855,7 @@ Bull（Rust）                        Python 研究后端
 | **列表接口 IP 限流**（新浪拉满 56 页后 HTTP 456，连 IP 被封） | 并发压到 2；识别 456 后**立即停止派发剩余页**；优先用不限流的通道 |
 | **数据源字段缺失**（新浪列表无量比，而预设全都带量比条件） | 显式建模"字段能力"，缺失时**跳过该条件**并把事实回传给 UI，不能拿 0 去比较 |
 | **通道返回数据过短被误判成功**（腾讯给北交所只回 1–2 根） | 判定标准用「根数够不够」而非「非空」；全都不够时返回根数最多的那个 |
-| **通达信 Python 解析库失效**（tdxpy 0.2.7 与新服务器协议不兼容） | 不依赖它；如需要离线数据走本地 `.day` 文件读取（见 5.1.4） |
+| **通达信 Python 解析库失效**（tdxpy 0.2.7 与新服务器协议不兼容） | 已不依赖：离线数据走本地 stockdb（见 5.3），通达信路线整体废弃（见 5.1.4） |
 | 同花顺 Cookie / `hexin-v` 令牌失效或 IP 被拦 | 问财仅作增强，**验证通过前不进任何主流程**（见 5.2）；主链路用东财+腾讯+新浪 |
 | **用户实际运行的不是最新构建** | 设置 → 系统显示「版本 / 构建时间 / 程序路径」，一眼可核对 |
 | LLM 幻觉编造技术指标 | 指标由代码算好塞给它；强制证据引用校验 |
