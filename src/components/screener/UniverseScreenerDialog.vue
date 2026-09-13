@@ -55,10 +55,6 @@ function openAnalysis(row: SnapshotRow) {
   showAnalysis.value = true;
 }
 
-// 前端构建指纹（vite define 注入），与 exe 构建时间对照可发现「加载了旧前端」
-declare const __BULL_FRONTEND_BUILD__: string;
-const frontendBuild = typeof __BULL_FRONTEND_BUILD__ === 'string' ? __BULL_FRONTEND_BUILD__ : '';
-
 const visible = computed({
   get: () => props.show,
   set: value => emit('update:show', value),
@@ -72,15 +68,11 @@ const pagination = computed(() => ({
   pageSizes: [20, 50, 100],
   showSizePicker: true,
   itemCount: universe.totalMatched,
-  // itemCount 一旦给出，naive-ui 就按「远端分页」处理：数据由外部按页提供
-  remote: true,
   prefix: (info: { startIndex: number; endIndex: number; itemCount?: number }) =>
-    `第 ${info.startIndex + 1}–${info.endIndex} 条 · 共 ${info.itemCount ?? universe.totalMatched} 条`,
+    `第 ${info.startIndex + 1}–${info.endIndex + 1} 条 · 共 ${info.itemCount ?? universe.totalMatched} 条`,
   onChange: (value: number) => { void universe.fetchPage(value); },
   onPageSizeChange: (size: number) => { void universe.setPageSize(size); },
 }));
-
-const pageSizeOptions = [20, 50, 100].map(value => ({ label: `${value} 条/页`, value }));
 
 // 每次打开都先恢复上次的条件；首次（或缓存已失效）时再自动拉一次
 /**
@@ -259,7 +251,8 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     v-model:show="visible"
     preset="card"
     title="全市场筛选器"
-    :style="{ width: '94vw' }"
+    :style="{ width: 'min(1120px, calc(100vw - 24px))' }"
+    :content-style="{ maxHeight: 'calc(100vh - 120px)', overflow: 'auto' }"
     :bordered="false"
     size="small"
   >
@@ -267,9 +260,6 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
       <!-- 预设方案 -->
       <div class="preset-bar">
         <div class="chips">
-          <span class="build-stamp" :title="`前端构建 ${frontendBuild}（与设置里的 exe 构建时间应一致，否则说明加载了旧前端）`">
-            {{ frontendBuild }}
-          </span>
           <button
             v-for="preset in universe.presets"
             :key="preset.id"
@@ -387,14 +377,6 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
           :disabled="universe.loading"
           @update:value="universe.setSourceMode"
         />
-        <n-select
-          :value="universe.pageSize"
-          :options="pageSizeOptions"
-          size="small"
-          class="page-size-select"
-          :disabled="universe.loading"
-          @update:value="universe.setPageSize"
-        />
         <n-button type="primary" size="small" :loading="universe.loading" @click="universe.search(false)">
           开始筛选
         </n-button>
@@ -411,7 +393,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
         <span v-if="universe.hasLoaded" class="stats">
           全市场 <b>{{ universe.totalAll }}</b> 只 → 命中
           <b>{{ universe.totalMatched }}</b> 只
-          <span class="muted">（{{ universe.sourceLabel }} · 数据 {{ universe.freshnessText }}）</span>
+          <span class="muted">（{{ universe.sourceLabel }}）</span>
         </span>
 
         <!-- 筛完先只给统计，用户点了才把表格放出来（带命中数，一眼可见） -->
@@ -453,7 +435,8 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
           :loading="universe.loading || universe.pageLoading"
           :row-key="rowKey"
           size="small"
-          :max-height="420"
+          :remote="true"
+          :max-height="'min(420px, 40vh)'"
           :scroll-x="960"
           :pagination="pagination"
         />
@@ -486,8 +469,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 .screener {
   display: flex;
   flex-direction: column;
-  /* 不依赖卡片内部布局，直接给一个确定高度，flex-height 表格才能正确撑开 */
-  height: calc(86vh - 96px);
+  min-width: 0;
   gap: var(--space-2);
 }
 
@@ -502,6 +484,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 .chips {
   display: inline-flex;
   gap: var(--space-1);
+  flex-wrap: wrap;
 }
 .chip {
   padding: 3px 10px;
@@ -544,6 +527,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  flex-wrap: wrap;
 }
 .field-label {
   flex-shrink: 0;
@@ -554,16 +538,18 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 .checks {
   display: inline-flex;
   gap: var(--space-4);
+  flex-wrap: wrap;
 }
 .ranges {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: var(--space-2) var(--space-4);
 }
 .range {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
 }
 .range-label {
   flex-shrink: 0;
@@ -613,23 +599,12 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 .source-select {
   width: 136px;
 }
-.page-size-select {
-  width: 104px;
-}
 .chip-error {
   border-color: var(--color-warning);
   color: var(--color-warning);
 }
 .chip-error:hover {
   background: var(--color-warning-bg);
-}
-.build-stamp {
-  align-self: center;
-  margin-left: auto;
-  color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  white-space: nowrap;
 }
 .empty-line {
   display: flex;
@@ -669,6 +644,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 .table-wrap {
   flex: 1;
   min-height: 0;
+  min-width: 0;
 }
 .table-wrap :deep(.mono) {
   font-family: var(--font-mono);
@@ -709,5 +685,23 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+@media (max-width: 560px) {
+  .ranges {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .preset-desc,
+  .range-label {
+    width: 100%;
+  }
+  .range {
+    flex-wrap: wrap;
+  }
+  .range :deep(.n-input-number) {
+    flex: 1 1 0;
+    min-width: 0;
+    width: 0;
+  }
 }
 </style>

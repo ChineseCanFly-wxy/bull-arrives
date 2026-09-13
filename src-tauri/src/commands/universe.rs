@@ -31,8 +31,6 @@ pub struct UniverseResponse {
     pub total_matched: usize,
     /// 本次实际返回的行数（受 limit 限制）
     pub returned: usize,
-    /// 快照已存在多少秒（`stale` 为 true 时这个值会比较大）
-    pub fetched_age_secs: u64,
     /// 数据是否陈旧：本次刷新失败（很可能被限流），返回的是上次的旧数据
     pub stale: bool,
     /// 本次数据来自哪个通道（sina / eastmoney）
@@ -173,16 +171,10 @@ pub async fn get_market_universe(
         started.elapsed().as_millis()
     );
 
-    let fetched_age_secs = eastmoney_universe::snapshot_cache_age()
-        .await
-        .unwrap_or_default()
-        .as_secs();
-
     Ok(UniverseResponse {
         total_all: outcome.rows.len(),
         total_matched,
         returned: rows.len(),
-        fetched_age_secs,
         stale: outcome.stale,
         source: outcome.source,
         source_label: outcome.source.label().to_owned(),

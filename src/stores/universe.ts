@@ -137,7 +137,6 @@ export const useUniverseStore = defineStore('universe', () => {
   const boardCounts = ref<BoardCount[]>([]);
   const totalAll = ref(0);
   const totalMatched = ref(0);
-  const fetchedAgeSecs = ref(0);
   const stale = ref(false);
   const hasLoaded = ref(false);
 
@@ -517,22 +516,12 @@ export const useUniverseStore = defineStore('universe', () => {
     boardCounts.value = response.board_counts;
     totalAll.value = response.total_all;
     totalMatched.value = response.total_matched;
-    fetchedAgeSecs.value = response.fetched_age_secs;
     stale.value = response.stale;
     source.value = response.source;
     sourceLabel.value = response.source_label;
     volumeRatioSupported.value = response.volume_ratio_supported;
     skippedConditions.value = response.skipped_conditions;
   }
-
-  /** 数据新鲜度文案 */
-  const freshnessText = computed(() => {
-    if (!hasLoaded.value) return '';
-    const secs = fetchedAgeSecs.value;
-    if (secs < 60) return `${secs} 秒前`;
-    const mins = Math.floor(secs / 60);
-    return `${mins} 分钟前`;
-  });
 
   return {
     presets,
@@ -543,7 +532,6 @@ export const useUniverseStore = defineStore('universe', () => {
     boardCounts,
     totalAll,
     totalMatched,
-    fetchedAgeSecs,
     stale,
     hasLoaded,
     source,
@@ -560,7 +548,6 @@ export const useUniverseStore = defineStore('universe', () => {
     resultsVisible,
     loading,
     error,
-    freshnessText,
     ensurePresets,
     retryPresets,
     setSourceMode,

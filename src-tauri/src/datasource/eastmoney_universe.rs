@@ -822,13 +822,6 @@ pub async fn market_snapshot_cached(
     Ok((rows, source))
 }
 
-/// 当前缓存年龄。`None` 表示还没有任何缓存。
-pub async fn snapshot_cache_age() -> Option<Duration> {
-    let cache = SNAPSHOT_CACHE.get_or_init(|| tokio::sync::RwLock::new(None));
-    let guard = cache.read().await;
-    guard.as_ref().map(|cached| cached.fetched_at.elapsed())
-}
-
 /// 快照获取结果：数据 + 是否为「陈旧的兜底数据」+ 数据通道
 pub struct SnapshotOutcome {
     pub rows: Arc<Vec<SnapshotRow>>,
@@ -840,7 +833,7 @@ pub struct SnapshotOutcome {
 /// 带陈旧兜底的快照获取。
 ///
 /// 数据源存在限流与网络波动，因此**刷新失败时不应让功能整体失效**：
-/// 有旧缓存就返回旧数据并标记 `stale`，让 UI 能明确提示「数据陈旧，时间 XX:XX」，
+/// 有旧缓存就返回旧数据并标记 `stale`，让 UI 能明确提示「数据陈旧」，
 /// 这比直接报错、界面空白要好得多。
 pub async fn market_snapshot_with_fallback(
     ttl: Duration,
