@@ -31,8 +31,6 @@ pub struct UniverseResponse {
     pub total_matched: usize,
     /// 本次实际返回的行数（受 limit 限制）
     pub returned: usize,
-    /// 快照已存在多少秒（`stale` 为 true 时这个值会比较大）
-    pub fetched_age_secs: u64,
     /// 数据是否陈旧：本次刷新失败（很可能被限流），返回的是上次的旧数据
     pub stale: bool,
     /// 本次数据来自哪个通道（sina / eastmoney）
@@ -61,6 +59,17 @@ const DEFAULT_PAGE_SIZE: u32 = 20;
 /// 服务端分页的每页上限（与前端可选的最大值一致）
 const MAX_PAGE_SIZE: u32 = 100;
 
+/// 翻页必须继续使用首屏对应的快照；强制刷新始终优先拿新数据。
+fn snapshot_ttl(force_refresh: bool, reuse_snapshot: bool) -> Duration {
+    if force_refresh {
+        Duration::ZERO
+    } else if reuse_snapshot {
+        Duration::MAX
+    } else {
+        DEFAULT_SNAPSHOT_TTL
+    }
+}
+
 /// 获取全市场股票池并应用筛选条件。
 ///
 /// 筛选条件的优先级：`filter` > `preset` > 默认条件。
@@ -69,6 +78,7 @@ const MAX_PAGE_SIZE: u32 = 100;
 /// - `filter` 传完整的筛选条件（前端微调预设后传这个）
 /// - `page` / `page_size`：**服务端分页**。传了 `page` 就只返回那一页
 ///   （`page_size` 缺省 20，上限 100）；翻页由前端逐页请求，避免一次传输几千行
+/// - `reuse_snapshot`：翻页时复用当前快照，即使常规 60 秒 TTL 已过，保证页间一致
 /// - 不传 `page` 时保持旧行为：按 `limit`（默认 500）从头截断
 /// - `force_refresh` 为 `true` 时忽略缓存强制刷新
 /// - `source` 指定取数通道（`sina` / `eastmoney` / `auto`），不传则读设置项 `universe_source`
@@ -84,14 +94,13 @@ pub async fn get_market_universe(
     page_size: Option<u32>,
     limit: Option<usize>,
     force_refresh: Option<bool>,
+    reuse_snapshot: Option<bool>,
     source: Option<String>,
 ) -> Result<UniverseResponse, String> {
-    let ttl = if force_refresh.unwrap_or(false) {
-        // ttl=0 使缓存立即过期，从而强制真实拉取
-        Duration::ZERO
-    } else {
-        DEFAULT_SNAPSHOT_TTL
-    };
+    let ttl = snapshot_ttl(
+        force_refresh.unwrap_or(false),
+        reuse_snapshot.unwrap_or(false),
+    );
     let started = std::time::Instant::now();
 
     // 通道优先级：调用方显式指定 > 设置项 > auto（新浪优先，东财兜底）
@@ -162,9 +171,10 @@ pub async fn get_market_universe(
     };
 
     log::info!(
-        "[universe] get_market_universe: page={:?} size={:?} 快照={}({}) 全市场={} 命中={} 返回={} 耗时={}ms",
+        "[universe] get_market_universe: page={:?} size={:?} reuse_snapshot={} 快照={}({}) 全市场={} 命中={} 返回={} 耗时={}ms",
         page,
         page_size,
+        reuse_snapshot.unwrap_or(false),
         outcome.source.label(),
         if outcome.stale { "陈旧" } else { "新鲜" },
         outcome.rows.len(),
@@ -173,16 +183,10 @@ pub async fn get_market_universe(
         started.elapsed().as_millis()
     );
 
-    let fetched_age_secs = eastmoney_universe::snapshot_cache_age()
-        .await
-        .unwrap_or_default()
-        .as_secs();
-
     Ok(UniverseResponse {
         total_all: outcome.rows.len(),
         total_matched,
         returned: rows.len(),
-        fetched_age_secs,
         stale: outcome.stale,
         source: outcome.source,
         source_label: outcome.source.label().to_owned(),
@@ -202,4 +206,18 @@ pub fn get_filter_presets() -> Vec<PresetInfo> {
     let presets = preset_infos();
     log::info!("[universe] get_filter_presets -> {} 个预设", presets.len());
     presets
+}
+
+#[cfg(test)]
+mod tests {
+    use super::snapshot_ttl;
+    use crate::datasource::eastmoney_universe::DEFAULT_SNAPSHOT_TTL;
+    use std::time::Duration;
+
+    #[test]
+    fn force_refresh_overrides_pagination_snapshot_reuse() {
+        assert_eq!(snapshot_ttl(false, false), DEFAULT_SNAPSHOT_TTL);
+        assert_eq!(snapshot_ttl(false, true), Duration::MAX);
+        assert_eq!(snapshot_ttl(true, true), Duration::ZERO);
+    }
 }

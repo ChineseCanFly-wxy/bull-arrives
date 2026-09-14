@@ -129,7 +129,6 @@ export interface UniverseResponse {
   total_all: number;
   total_matched: number;
   returned: number;
-  fetched_age_secs: number;
   stale: boolean;
   /** 本次数据来自哪个通道 */
   source: SnapshotSource;

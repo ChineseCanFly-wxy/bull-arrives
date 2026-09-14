@@ -148,7 +148,7 @@ pub(crate) fn apply_nonactivating_tool_window_style<R: Runtime>(window: &tauri::
 }
 
 /// Apply overall opacity (0–255) to a Tauri window via WS_EX_LAYERED.
-/// No-op on non-Windows.
+/// Supported on Windows only.
 pub(crate) fn apply_ticker_opacity<R: Runtime>(window: &tauri::WebviewWindow<R>, alpha: u8) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -164,6 +164,25 @@ pub(crate) fn apply_ticker_opacity<R: Runtime>(window: &tauri::WebviewWindow<R>,
         let _ = (window, alpha);
         Err("当前平台暂不支持整体窗口透明度".into())
     }
+}
+
+/// Restores the persisted ticker opacity only where the native implementation exists.
+fn restore_ticker_opacity<R: Runtime>(window: &tauri::WebviewWindow<R>, db: &Database) {
+    #[cfg(target_os = "windows")]
+    {
+        let ticker_opacity: u32 = db
+            .get_setting("ticker_opacity")
+            .ok()
+            .flatten()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(100);
+        let alpha = ((ticker_opacity as f32 / 100.0) * 255.0).round() as u8;
+        if let Err(error) = apply_ticker_opacity(window, alpha) {
+            log::warn!("透明度恢复失败: {}", error);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (window, db);
 }
 
 /// Holds the currently registered global hotkey (or None if not registered).
@@ -185,15 +204,7 @@ pub fn toggle_ticker_window<R: Runtime>(app: &tauri::AppHandle<R>, db: &Database
         // Re-hide from taskbar after show
         let _ = window.set_skip_taskbar(true);
         apply_tool_window_style(&window);
-        // Re-apply saved opacity after show (layered style may need refresh)
-        let ticker_opacity: u32 = db
-            .get_setting("ticker_opacity")
-            .ok()
-            .flatten()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(100);
-        let alpha = ((ticker_opacity as f32 / 100.0) * 255.0).round() as u8;
-        if let Err(error) = apply_ticker_opacity(&window, alpha) { log::warn!("透明度恢复失败: {}", error); }
+        restore_ticker_opacity(&window, db);
         // Try saved position first, fall back to bottom-right
         let mon = window.primary_monitor().ok().flatten();
         let (mon_w, mon_h) = mon
@@ -753,15 +764,7 @@ pub fn run() {
                 let _ = ticker.set_skip_taskbar(true);
                 apply_tool_window_style(&ticker);
 
-                // Restore ticker opacity from settings (default fully opaque).
-                let ticker_opacity: u32 = db
-                    .get_setting("ticker_opacity")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(100);
-                let alpha = ((ticker_opacity as f32 / 100.0) * 255.0).round() as u8;
-                if let Err(error) = apply_ticker_opacity(&ticker, alpha) { log::warn!("透明度恢复失败: {}", error); }
+                restore_ticker_opacity(&ticker, &db);
 
                 // Restore visibility from last session (config starts hidden).
                 // Default to visible unless the user explicitly hid the ticker.
@@ -777,7 +780,7 @@ pub fn run() {
                     let _ = ticker.show();
                     // 显示原生窗口后重新应用，避免分层窗口样式在首次 show 时被刷新。
                     apply_tool_window_style(&ticker);
-                    if let Err(error) = apply_ticker_opacity(&ticker, alpha) { log::warn!("透明度恢复失败: {}", error); }
+                    restore_ticker_opacity(&ticker, &db);
                 }
             }
 

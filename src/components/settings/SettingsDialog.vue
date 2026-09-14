@@ -47,6 +47,7 @@ const hotkeyError = ref<string | null>(null);
 const opacityDraft = ref(100);
 const intervalDraft = ref(3);
 const intervalAuto = computed(() => settings.refreshInterval === REFRESH_INTERVAL_AUTO);
+const tickerOpacitySupported = typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent);
 
 watch(() => props.show, (open) => {
   if (open) {
@@ -239,7 +240,7 @@ onBeforeUnmount(stopCapture);
             <h3>筛选结果每页条数</h3>
             <p class="card-desc">全市场筛选器结果表的分页大小，范围 1–100 条，默认 20 条。</p>
             <div class="inline-setting">
-              <div><b class="page-size-label">每页显示</b><p>在筛选器工具条上也可以随时改。</p></div>
+              <div><b class="page-size-label">每页显示</b><p>在筛选结果表底部也可以随时改。</p></div>
               <select
                 class="page-size-select"
                 :value="universeStore.pageSize"
@@ -350,7 +351,8 @@ onBeforeUnmount(stopCapture);
             </label>
           </article>
           <article class="setting-card">
-            <div class="slider-block"><div><span>透明度</span><b>{{ opacityDraft }}%</b></div><input type="range" min="5" max="100" step="1" :value="opacityDraft" @input="onOpacityInput" @change="onOpacityCommit" /><p>数值越低，悬浮窗越隐蔽。</p></div>
+            <div v-if="tickerOpacitySupported" class="slider-block"><div><span>透明度</span><b>{{ opacityDraft }}%</b></div><input type="range" min="5" max="100" step="1" :value="opacityDraft" @input="onOpacityInput" @change="onOpacityCommit" /><p>数值越低，悬浮窗越隐蔽。</p></div>
+            <p v-else class="card-desc">当前平台暂不支持悬浮窗整体透明度。</p>
             <div class="inline-setting"><div><h3>单色显示</h3><p>统一文字颜色，代替红涨绿跌。</p></div><button class="switch" :class="{ on: settings.tickerSingleColor }" role="switch" :aria-checked="settings.tickerSingleColor" @click="safelyRun('single-color', () => settings.setTickerSingleColor(!settings.tickerSingleColor))"><span /></button></div>
             <div v-if="settings.tickerSingleColor" class="color-row"><span>字体颜色</span><label><input type="color" :value="settings.tickerTextColor" @change="onColorCommit" /><code>{{ settings.tickerTextColor }}</code></label></div>
           </article>
