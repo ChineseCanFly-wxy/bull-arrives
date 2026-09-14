@@ -7,36 +7,203 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_updater::UpdaterExt;
 
-const AUTO_PROXY_PORTS: &[u16] = &[7890, 10809, 10808, 7891, 1080, 8118, 8080];
+/// 常见本地代理端口的兜底表（顺序即优先级）。
+///
+/// **这只是兜底**，不是主要依据 —— 系统代理设置（`system_proxy_port`）才是用户真在用的值。
+/// 历史上这张表漏掉 7897（Clash Verge Rev 的 mixed 默认端口），导致更新客户端
+/// 一个都探不到、直连 github.com 超时，自动更新静默失效。
+const AUTO_PROXY_PORTS: &[u16] = &[
+    7897, 7890, 7891, // Clash Verge (Rev) / Clash for Windows 的 mixed 端口
+    10809, 10808, // v2rayN：HTTP 10809 / SOCKS 10808
+    1080, 1087, 8889, // 通用 SOCKS / HTTP
+    8118, // Privoxy
+    8080, 8888, 2080, 20171, 10807, 9910, // 其它常见本地端口
+];
+
+/// 探测决策：系统代理优先，失败才退回端口表。
+fn detect_http_proxy_port() -> Option<u16> {
+    if let Some(port) = system_proxy_port() {
+        if probe_connect(port) {
+            log::info!("[updater] 使用系统代理 127.0.0.1:{}", port);
+            return Some(port);
+        }
+        log::warn!(
+            "[updater] 系统代理配的是 127.0.0.1:{}，但 CONNECT 探测未通过，回退到端口表",
+            port
+        );
+    }
+
+    match AUTO_PROXY_PORTS
+        .iter()
+        .copied()
+        .find(|port| probe_connect(*port))
+    {
+        Some(port) => {
+            log::info!("[updater] 端口表命中代理 127.0.0.1:{}", port);
+            Some(port)
+        }
+        None => {
+            log::warn!(
+                "[updater] 未探测到可用代理（已试系统代理与 {:?}）。若更新失败，请设置 HTTPS_PROXY",
+                AUTO_PROXY_PORTS
+            );
+            None
+        }
+    }
+}
 
 /// A listening port is not necessarily an HTTP proxy (8080 is often nginx or
 /// a development server). Probe the CONNECT handshake before using it.
-fn detect_http_proxy_port() -> Option<u16> {
-    AUTO_PROXY_PORTS.iter().copied().find(|port| {
-        let address = SocketAddr::from(([127, 0, 0, 1], *port));
-        let mut stream = match TcpStream::connect_timeout(&address, std::time::Duration::from_millis(75)) {
-            Ok(stream) => stream,
-            Err(_) => return false,
-        };
-        if stream.set_write_timeout(Some(std::time::Duration::from_millis(250))).is_err()
-            || stream.set_read_timeout(Some(std::time::Duration::from_millis(250))).is_err()
+fn probe_connect(port: u16) -> bool {
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = match TcpStream::connect_timeout(&address, std::time::Duration::from_millis(75)) {
+        Ok(stream) => stream,
+        Err(_) => return false,
+    };
+    if stream.set_write_timeout(Some(std::time::Duration::from_millis(250))).is_err()
+        || stream.set_read_timeout(Some(std::time::Duration::from_millis(250))).is_err()
+    {
+        return false;
+    }
+    if stream
+        .write_all(b"CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+
+    let mut response = [0u8; 256];
+    let bytes_read = match stream.read(&mut response) {
+        Ok(bytes_read) => bytes_read,
+        Err(_) => return false,
+    };
+    is_successful_proxy_connect(&response[..bytes_read])
+}
+
+/// 读 Windows「Internet 选项」里的系统代理端口。
+///
+/// 端口表只能靠猜：用户自定义端口、或客户端换了默认端口时就会全线落空。
+/// 系统代理是用户真正在用的值，优先信它。
+/// 非 Windows 平台没有统一的系统代理存储，返回 `None`，由端口表兜底。
+#[cfg(target_os = "windows")]
+fn system_proxy_port() -> Option<u16> {
+    use windows::core::w;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ};
+
+    const INTERNET_SETTINGS: windows::core::PCWSTR =
+        w!("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings");
+
+    unsafe {
+        let mut hkey = HKEY::default();
+        if RegOpenKeyExW(HKEY_CURRENT_USER, INTERNET_SETTINGS, 0, KEY_READ, &mut hkey) != ERROR_SUCCESS
         {
-            return false;
-        }
-        if stream
-            .write_all(b"CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\n")
-            .is_err()
-        {
-            return false;
+            return None;
         }
 
-        let mut response = [0u8; 256];
-        let bytes_read = match stream.read(&mut response) {
-            Ok(bytes_read) => bytes_read,
-            Err(_) => return false,
-        };
-        is_successful_proxy_connect(&response[..bytes_read])
-    })
+        let enabled = reg_read_dword(hkey, w!("ProxyEnable")).unwrap_or(0);
+        let server = reg_read_string(hkey, w!("ProxyServer"));
+        let _ = RegCloseKey(hkey);
+
+        if enabled == 0 {
+            return None;
+        }
+        server.as_deref().and_then(parse_proxy_port)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn system_proxy_port() -> Option<u16> {
+    None
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn reg_read_dword(
+    hkey: windows::Win32::System::Registry::HKEY,
+    name: windows::core::PCWSTR,
+) -> Option<u32> {
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{RegQueryValueExW, REG_DWORD, REG_VALUE_TYPE};
+
+    let mut value: u32 = 0;
+    let mut kind: REG_VALUE_TYPE = REG_DWORD;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    let status = RegQueryValueExW(
+        hkey,
+        name,
+        None,
+        Some(&mut kind),
+        Some(&mut value as *mut u32 as *mut u8),
+        Some(&mut size),
+    );
+    (status == ERROR_SUCCESS && kind == REG_DWORD).then_some(value)
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn reg_read_string(
+    hkey: windows::Win32::System::Registry::HKEY,
+    name: windows::core::PCWSTR,
+) -> Option<String> {
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{RegQueryValueExW, REG_SZ, REG_VALUE_TYPE};
+
+    let mut kind: REG_VALUE_TYPE = REG_SZ;
+    let mut size: u32 = 0;
+    if RegQueryValueExW(hkey, name, None, Some(&mut kind), None, Some(&mut size)) != ERROR_SUCCESS
+        || size == 0
+    {
+        return None;
+    }
+
+    // REG_SZ 的 size 含结尾 NUL，按 UTF-16 码元计算
+    let mut buffer = vec![0u16; size as usize / 2 + 1];
+    if RegQueryValueExW(
+        hkey,
+        name,
+        None,
+        Some(&mut kind),
+        Some(buffer.as_mut_ptr() as *mut u8),
+        Some(&mut size),
+    ) != ERROR_SUCCESS
+    {
+        return None;
+    }
+
+    let end = buffer.iter().position(|unit| *unit == 0).unwrap_or(buffer.len());
+    Some(String::from_utf16_lossy(&buffer[..end]))
+}
+
+/// 解析 `ProxyServer` 的端口。
+///
+/// 取值可能是 `127.0.0.1:7897`，也可能是分协议写法
+/// `http=127.0.0.1:7890;https=127.0.0.1:7897` —— 后者优先取 `https=` 那一项。
+fn parse_proxy_port(spec: &str) -> Option<u16> {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return None;
+    }
+
+    let candidate = spec
+        .split(';')
+        .find_map(|entry| {
+            let entry = entry.trim();
+            entry
+                .strip_prefix("https=")
+                .or_else(|| entry.strip_prefix("HTTPS="))
+        })
+        .or_else(|| spec.split(';').next())
+        .unwrap_or(spec);
+
+    // 容错 `http://127.0.0.1:7897` 与结尾斜杠
+    let candidate = candidate.trim().trim_end_matches('/');
+    let host_port = candidate.rsplit('/').next().unwrap_or(candidate);
+    host_port
+        .rsplit(':')
+        .next()?
+        .trim()
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port != 0)
 }
 
 fn is_successful_proxy_connect(response: &[u8]) -> bool {
@@ -56,26 +223,37 @@ fn is_successful_proxy_connect(response: &[u8]) -> bool {
 
 /// 自动代理仅用于更新客户端，不修改进程环境，也不阻塞行情窗口启动。
 async fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
-    let explicit_proxy = ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "ALL_PROXY", "all_proxy"]
-        .iter().any(|key| std::env::var_os(key).is_some());
     let mut builder = app.updater_builder();
-    if !explicit_proxy {
-        let port = tokio::task::spawn_blocking(detect_http_proxy_port)
-            .await
-            .map_err(|e| format!("更新代理探测失败：{}", e))?;
-        if let Some(port) = port {
-            let proxy = format!("http://127.0.0.1:{}", port).parse()
-                .map_err(|e| format!("更新代理地址无效：{}", e))?;
-            builder = builder.proxy(proxy);
+
+    // 环境变量优先级最高：reqwest 默认就会读 HTTP(S)_PROXY / ALL_PROXY，
+    // 这里只要探测到有，就不要再覆盖用户的显式配置。
+    let explicit_proxy = ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "ALL_PROXY", "all_proxy"]
+        .into_iter()
+        .find(|key| std::env::var_os(key).is_some());
+
+    match explicit_proxy {
+        Some(key) => log::info!("[updater] 使用环境变量 {} 指定的代理", key),
+        None => {
+            let port = tokio::task::spawn_blocking(detect_http_proxy_port)
+                .await
+                .map_err(|e| format!("更新代理探测失败：{}", e))?;
+            if let Some(port) = port {
+                let proxy = format!("http://127.0.0.1:{}", port).parse()
+                    .map_err(|e| format!("更新代理地址无效：{}", e))?;
+                builder = builder.proxy(proxy);
+            } else {
+                log::warn!("[updater] 未配置代理，将尝试直连 —— 国内网络下大概率会超时");
+            }
         }
     }
+
     // updater_builder 保留插件默认的 cleanup_before_exit 回调，不自行退出进程。
     builder.build().map_err(|e| format!("Updater init failed: {}", e))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_successful_proxy_connect;
+    use super::{is_successful_proxy_connect, parse_proxy_port};
 
     #[test]
     fn proxy_probe_requires_successful_connect_response() {
@@ -87,6 +265,32 @@ mod tests {
             b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n"
         ));
         assert!(!is_successful_proxy_connect(b"not an HTTP response"));
+    }
+
+    #[test]
+    fn parses_plain_host_port() {
+        assert_eq!(parse_proxy_port("127.0.0.1:7897"), Some(7897));
+        assert_eq!(parse_proxy_port(" 127.0.0.1:7890 "), Some(7890));
+    }
+
+    #[test]
+    fn prefers_https_entry_in_per_protocol_spec() {
+        assert_eq!(
+            parse_proxy_port("http=127.0.0.1:7890;https=127.0.0.1:7897"),
+            Some(7897)
+        );
+        // 只有 http 时退回第一项
+        assert_eq!(parse_proxy_port("http=127.0.0.1:7890"), Some(7890));
+    }
+
+    #[test]
+    fn tolerates_scheme_prefix_and_rejects_junk() {
+        assert_eq!(parse_proxy_port("http://127.0.0.1:7897/"), Some(7897));
+        assert_eq!(parse_proxy_port(""), None);
+        assert_eq!(parse_proxy_port("   "), None);
+        assert_eq!(parse_proxy_port("127.0.0.1"), None);
+        assert_eq!(parse_proxy_port("127.0.0.1:0"), None);
+        assert_eq!(parse_proxy_port("127.0.0.1:99999"), None);
     }
 }
 
