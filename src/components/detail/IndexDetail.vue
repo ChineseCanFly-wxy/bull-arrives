@@ -140,11 +140,14 @@ const statCards = computed(() => [
   left: 0;
   right: 0;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
   border-top: 1px solid var(--color-border, rgba(255,255,255,0.08));
   background: var(--color-surface-1);
   padding: 12px 16px;
-  max-height: calc(100vh - 140px);
-  overflow-y: auto;
+  height: calc(100vh - var(--header-height) - var(--index-bar-height) - 28px);
+  overflow: hidden;
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
 
@@ -187,7 +190,10 @@ const statCards = computed(() => [
 .detail-body {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
   gap: 12px;
+  overflow: auto;
 }
 
 /* 摘要卡片网格 */
@@ -232,7 +238,10 @@ const statCards = computed(() => [
 .card-value.down { color: var(--color-down); }
 
 .chart-section {
-  min-height: 420px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .chart-toolbar {

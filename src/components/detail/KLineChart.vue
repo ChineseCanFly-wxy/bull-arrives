@@ -57,7 +57,10 @@ watch(() => [props.code, props.market, props.period], async () => {
 @import '@/assets/chart.css';
 
 .kline-chart {
+  display: flex;
+  flex-direction: column;
   flex: 1;
+  height: 100%;
   min-height: 0;
   position: relative;
 }

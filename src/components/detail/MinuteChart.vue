@@ -55,7 +55,10 @@ watch(() => [props.code, props.market], async () => {
 @import '@/assets/chart.css';
 
 .minute-chart {
+  display: flex;
+  flex-direction: column;
   flex: 1;
+  height: 100%;
   min-height: 0;
   position: relative;
 }

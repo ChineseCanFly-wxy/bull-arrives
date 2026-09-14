@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useWatchlistStore } from '@/stores/watchlist';
 import { useQuoteStore } from '@/stores/quote';
 import type { WatchItem } from '@/types';
+import type { StockAnalysis } from '@/types/analysis';
 import { formatPrice, formatVolume, formatCode, cnCategory } from '@/utils/format';
 import AddStockDialog from './AddStockDialog.vue';
 const PriceAlertDialog = defineAsyncComponent(() => import('./PriceAlertDialog.vue'));
@@ -53,6 +54,8 @@ watch(() => watchlist.activeGroupId, () => {
   ctxMenuItem.value = null;
   showCtxMenu.value = false;
   showDeleteConfirm.value = false;
+  scoreSortActive.value = false;
+  scoreById.value = new Map();
 });
 
 const indexDetailCoord = inject<{
@@ -75,6 +78,54 @@ const showCtxMenu = ref(false);
 
 // Detail panel state
 const selectedRow = ref<WatchItem | null>(null);
+
+const SCORE_CONCURRENCY = 3;
+const scoreById = ref<Map<number, number | null>>(new Map());
+const scoreSortActive = ref(false);
+const scoring = ref(false);
+const scoreProgress = ref({ done: 0, total: 0, failed: 0 });
+
+function scoreOf(row: WatchItem): number {
+  return scoreById.value.get(row.id) ?? -1;
+}
+
+const displayedItems = computed(() => {
+  const items = [...watchlist.items];
+  if (!scoreSortActive.value) return items;
+  return items.sort((a, b) => scoreOf(b) - scoreOf(a) || a.id - b.id);
+});
+
+async function scoreAndSort() {
+  const items = [...watchlist.items];
+  if (!items.length || scoring.value) return;
+
+  scoring.value = true;
+  scoreSortActive.value = true;
+  scoreProgress.value = { done: 0, total: items.length, failed: 0 };
+  const next = new Map<number, number | null>();
+
+  const scoreItem = async (item: WatchItem) => {
+    try {
+      const analysis = await invoke<StockAnalysis>('analyze_stock', { symbol: item.code });
+      next.set(item.id, analysis.total_score);
+    } catch (error) {
+      console.warn(`[watchlist] 量化评分失败 ${item.code}:`, error);
+      next.set(item.id, null);
+      scoreProgress.value = { ...scoreProgress.value, failed: scoreProgress.value.failed + 1 };
+    } finally {
+      scoreById.value = new Map(next);
+      scoreProgress.value = { ...scoreProgress.value, done: scoreProgress.value.done + 1 };
+    }
+  };
+
+  try {
+    for (let start = 0; start < items.length; start += SCORE_CONCURRENCY) {
+      await Promise.all(items.slice(start, start + SCORE_CONCURRENCY).map(scoreItem));
+    }
+  } finally {
+    scoring.value = false;
+  }
+}
 
 function cancelPendingRowClick() {
   if (rowClickTimer) {
@@ -284,6 +335,14 @@ const columns: DataTableColumns<WatchItem> = [
     }
   },
   {
+    title: '评分', key: 'quant_score', width: 76,
+    sorter: (a: WatchItem, b: WatchItem) => scoreOf(a) - scoreOf(b),
+    render(row) {
+      const score = scoreById.value.get(row.id);
+      return h('span', { class: ['quant-score', score != null && score >= 60 ? 'up' : score != null && score < 45 ? 'down' : ''] }, score == null ? '--' : score.toFixed(1));
+    }
+  },
+  {
     title: '成本价', key: 'cost_price', width: 95,
     render(row) {
       const holding = holdings.value.get(row.id);
@@ -367,12 +426,17 @@ defineExpose({ clearSelection: () => { selectedRow.value = null; } });
   <div class="watchlist-container">
     <div class="watchlist-header">
       <h2 class="section-title">自选股</h2>
-      <button class="add-btn" @click="showAddDialog = true" aria-label="添加自选股票">
-        <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
-          <path d="M8.75 3.25a.75.75 0 00-1.5 0V7.5H3.25a.75.75 0 000 1.5h4v4.25a.75.75 0 001.5 0V9h4.25a.75.75 0 000-1.5h-4.25V3.25z"/>
-        </svg>
-        添加自选
-      </button>
+      <div class="watchlist-actions">
+        <NButton size="small" secondary :disabled="!watchlist.items.length" :loading="scoring" @click="scoreAndSort">
+          {{ scoring ? `评分 ${scoreProgress.done}/${scoreProgress.total}` : scoreSortActive ? '重新评分排序' : '量化评分排序' }}
+        </NButton>
+        <button class="add-btn" @click="showAddDialog = true" aria-label="添加自选股票">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+            <path d="M8.75 3.25a.75.75 0 00-1.5 0V7.5H3.25a.75.75 0 000 1.5h4v4.25a.75.75 0 000-1.5h-4.25V3.25z"/>
+          </svg>
+          添加自选
+        </button>
+      </div>
     </div>
 
     <GroupToolbar />
@@ -395,8 +459,8 @@ defineExpose({ clearSelection: () => { selectedRow.value = null; } });
     <NDataTable
       v-else
       :columns="columns"
-      :scroll-x="1365"
-      :data="watchlist.items"
+      :scroll-x="1440"
+      :data="displayedItems"
       :bordered="false"
       :single-line="true"
       size="small"
@@ -460,7 +524,7 @@ defineExpose({ clearSelection: () => { selectedRow.value = null; } });
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow: hidden;
   padding: 0 var(--space-4);
 }
 .watchlist-header {
@@ -469,6 +533,11 @@ defineExpose({ clearSelection: () => { selectedRow.value = null; } });
   align-items: center;
   padding: var(--space-3) 0;
   flex-shrink: 0;
+}
+.watchlist-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 .section-title {
   font-size: var(--text-md);
@@ -527,12 +596,14 @@ defineExpose({ clearSelection: () => { selectedRow.value = null; } });
 }
 
 :deep(.watchlist-table) {
-  flex: 1;
+  flex: 1 1 44%;
+  min-height: 160px;
 }
 /* P&L color classes (used via render functions) */
 :deep(.pct-col) { font-weight: 500; }
 :deep(.pct-col.up) { color: var(--color-up); }
 :deep(.pct-col.down) { color: var(--color-down); }
+:deep(.quant-score) { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 /* 列渲染内容由 NDataTable 挂载，scoped 样式需用 :deep() 才能生效 */
 :deep(.code-text) {
   font-family: var(--font-mono);
