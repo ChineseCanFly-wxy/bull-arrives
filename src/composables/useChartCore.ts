@@ -26,6 +26,10 @@ export function useChartCore(options: {
   const currentPeriod = ref<PeriodType>('minute');
   let resizeObserver: ResizeObserver | null = null;
 
+  function resizeChart() {
+    requestAnimationFrame(() => chart.value?.resize());
+  }
+
   // ---- 主题颜色 ----
 
   function themeColors() {
@@ -240,8 +244,10 @@ export function useChartCore(options: {
         return false;
       }
       resizeObserver?.disconnect();
-      resizeObserver = new ResizeObserver(() => chart.value?.resize());
+      resizeObserver = new ResizeObserver(resizeChart);
       resizeObserver.observe(options.chartRef.value);
+      // 详情面板作为 flex 子项挂载时，首次 init 可能早于最终尺寸计算。
+      resizeChart();
     }
 
     if (!chart.value) return false;

@@ -27,6 +27,13 @@ defineEmits<{
   retry: [];
   dismissAppError: [];
 }>();
+
+function dismissStockDetailOnBlank(event: MouseEvent) {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (target.closest('button, input, textarea, select, option, a, [role="button"], tr, th, td, .stock-detail')) return;
+  clearStockDetailFn.value?.();
+}
 </script>
 
 <template>
@@ -73,7 +80,7 @@ defineEmits<{
 
     <TopBar />
     <IndexBar />
-    <main class="main-content">
+    <main class="main-content" @click="dismissStockDetailOnBlank">
       <WatchlistTable />
     </main>
     <StatusBar />
