@@ -34,6 +34,7 @@ import {
   toFullSymbol,
   toYi,
   type SnapshotRow,
+  type UniverseResponse,
 } from '@/types/universe';
 
 const props = defineProps<{ show: boolean }>();
@@ -67,6 +68,10 @@ const scoreByRow = ref<Map<string, number | null>>(new Map());
 const scoreSortActive = ref(false);
 const scoring = ref(false);
 const scoreProgress = ref({ done: 0, total: 0 });
+const scoreError = ref<string | null>(null);
+const rankedRows = ref<SnapshotRow[] | null>(null);
+const rankedPage = ref(1);
+const rankedPageSize = ref(20);
 let scoreRun = 0;
 
 function scoreKey(row: SnapshotRow): string {
@@ -77,10 +82,19 @@ function scoreOf(row: SnapshotRow): number {
   return scoreByRow.value.get(scoreKey(row)) ?? -1;
 }
 
-const displayedRows = computed(() => {
-  const rows = [...universe.rows];
+const globalScoreActive = computed(() => rankedRows.value !== null);
+
+const sortedRows = computed(() => {
+  const rows = [...(rankedRows.value ?? universe.rows)];
   if (!scoreSortActive.value) return rows;
   return rows.sort((a, b) => scoreOf(b) - scoreOf(a) || a.code.localeCompare(b.code));
+});
+
+const displayedRows = computed(() => {
+  const rows = sortedRows.value;
+  if (!globalScoreActive.value) return rows;
+  const start = (rankedPage.value - 1) * rankedPageSize.value;
+  return rows.slice(start, start + rankedPageSize.value);
 });
 
 watch(() => universe.rows, () => {
@@ -88,54 +102,98 @@ watch(() => universe.rows, () => {
   scoreByRow.value = new Map();
   scoreSortActive.value = false;
   scoring.value = false;
+  scoreError.value = null;
+  rankedRows.value = null;
+  rankedPage.value = 1;
 });
 
-async function scoreAndSort() {
-  const rows = [...universe.rows];
-  if (!rows.length || scoring.value) return;
+async function scoreAllAndSort() {
+  if (!universe.totalMatched || scoring.value) return;
 
   const run = ++scoreRun;
   const next = new Map<string, number | null>();
   scoring.value = true;
-  scoreSortActive.value = true;
-  scoreProgress.value = { done: 0, total: rows.length };
-
-  const scoreRow = async (row: SnapshotRow) => {
-    try {
-      const analysis = await invoke<StockAnalysis>('analyze_stock', { symbol: toFullSymbol(row.code, row.board) });
-      next.set(scoreKey(row), analysis.total_score);
-    } catch (error) {
-      console.warn(`[universe] 量化评分失败 ${row.code}:`, error);
-      next.set(scoreKey(row), null);
-    } finally {
-      if (run !== scoreRun) return;
-      scoreByRow.value = new Map(next);
-      scoreProgress.value = { ...scoreProgress.value, done: scoreProgress.value.done + 1 };
-    }
-  };
+  scoreSortActive.value = false;
+  scoreError.value = null;
+  scoreByRow.value = new Map();
+  rankedRows.value = null;
+  scoreProgress.value = { done: 0, total: universe.totalMatched };
 
   try {
-    for (let start = 0; start < rows.length; start += SCORE_CONCURRENCY) {
-      await Promise.all(rows.slice(start, start + SCORE_CONCURRENCY).map(scoreRow));
+    // 仅在用户主动要求全量评分时绕过默认 500 行截断；复用当前快照保证结果一致。
+    const response = await invoke<UniverseResponse>('get_market_universe', {
+      filter: universe.filter,
+      limit: universe.totalMatched,
+      reuseSnapshot: true,
+      source: universe.sourceMode,
+    });
+    if (run !== scoreRun) return;
+
+    const rows = response.rows;
+    rankedRows.value = rows;
+    rankedPage.value = 1;
+    rankedPageSize.value = universe.pageSize;
+    scoreProgress.value = { done: 0, total: rows.length };
+
+    const scoreRow = async (row: SnapshotRow) => {
+      try {
+        const analysis = await invoke<StockAnalysis>('analyze_stock', { symbol: toFullSymbol(row.code, row.board) });
+        next.set(scoreKey(row), analysis.total_score);
+      } catch (error) {
+        console.warn(`[universe] 量化评分失败 ${row.code}:`, error);
+        next.set(scoreKey(row), null);
+      } finally {
+        if (run !== scoreRun) return;
+        scoreByRow.value = new Map(next);
+        scoreProgress.value = { ...scoreProgress.value, done: scoreProgress.value.done + 1 };
+      }
+    };
+
+    try {
+      for (let start = 0; start < rows.length; start += SCORE_CONCURRENCY) {
+        if (run !== scoreRun) return;
+        await Promise.all(rows.slice(start, start + SCORE_CONCURRENCY).map(scoreRow));
+      }
+    } catch (error) {
+      if (run === scoreRun) scoreError.value = `全量评分失败：${error}`;
     }
+  } catch (error) {
+    if (run === scoreRun) scoreError.value = `读取全部筛选结果失败：${error}`;
   } finally {
-    if (run === scoreRun) scoring.value = false;
+    if (run === scoreRun) {
+      scoreSortActive.value = rankedRows.value !== null;
+      scoring.value = false;
+    }
   }
 }
 
 // ── 结果表分页 ──
-// 服务端分页：表格里只放当前页，翻页时向后端取数（后端稳定排序，不会重复/漏行）
-const pagination = computed(() => ({
-  page: universe.page,
-  pageSize: universe.pageSize,
-  pageSizes: [20, 50, 100],
-  showSizePicker: true,
-  itemCount: universe.totalMatched,
-  prefix: (info: { startIndex: number; endIndex: number; itemCount?: number }) =>
-    `第 ${info.startIndex + 1}–${info.endIndex + 1} 条 · 共 ${info.itemCount ?? universe.totalMatched} 条`,
-  onChange: (value: number) => { void universe.fetchPage(value); },
-  onPageSizeChange: (size: number) => { void universe.setPageSize(size); },
-}));
+// 普通筛选走服务端分页；全量评分后改为已排序结果的本地分页。
+const pagination = computed(() => {
+  const global = globalScoreActive.value;
+  const itemCount = global ? rankedRows.value!.length : universe.totalMatched;
+  return {
+    page: global ? rankedPage.value : universe.page,
+    pageSize: global ? rankedPageSize.value : universe.pageSize,
+    pageSizes: [20, 50, 100],
+    showSizePicker: true,
+    itemCount,
+    prefix: (info: { startIndex: number; endIndex: number; itemCount?: number }) =>
+      `第 ${info.startIndex + 1}–${info.endIndex + 1} 条 · 共 ${info.itemCount ?? itemCount} 条`,
+    onChange: (value: number) => {
+      if (global) rankedPage.value = value;
+      else void universe.fetchPage(value);
+    },
+    onPageSizeChange: (size: number) => {
+      if (global) {
+        rankedPageSize.value = size;
+        rankedPage.value = 1;
+      } else {
+        void universe.setPageSize(size);
+      }
+    },
+  };
+});
 
 // 每次打开都先恢复上次的条件；首次（或缓存已失效）时再自动拉一次
 /**
@@ -480,14 +538,17 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
           {{ universe.resultsVisible ? '收起明细' : `展示数据（${universe.totalMatched} 只）` }}
         </n-button>
         <n-button
-          v-if="universe.resultsVisible && universe.rows.length"
+          v-if="universe.resultsVisible && universe.totalMatched > 0"
           size="small"
           secondary
           :loading="scoring"
-          @click="scoreAndSort"
+          @click="scoreAllAndSort"
         >
-          {{ scoring ? `评分 ${scoreProgress.done}/${scoreProgress.total}` : scoreSortActive ? '重新评分排序' : '本页量化评分排序' }}
+          {{ scoring ? `评分 ${scoreProgress.done}/${scoreProgress.total}` : globalScoreActive ? '重新全量评分排序' : '全部量化评分排序' }}
         </n-button>
+        <n-tag v-if="globalScoreActive && !scoring" type="success" size="small" :bordered="false">
+          全部 {{ rankedRows?.length }} 只已按评分分页
+        </n-tag>
 
         <n-tag v-if="universe.stale" type="warning" size="small" :bordered="false">
           刷新失败，显示的是旧数据
@@ -502,6 +563,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
       </div>
 
       <div v-if="universe.error" class="error-line">{{ universe.error }}</div>
+      <div v-if="scoreError" class="error-line">{{ scoreError }}</div>
 
       <!-- 结果表：筛完先只显示统计，点「展示数据」才出现 -->
       <div v-if="universe.resultsVisible" class="table-wrap">
