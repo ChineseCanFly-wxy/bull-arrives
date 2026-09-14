@@ -7,7 +7,8 @@
 // - 快照在 Rust 侧带 60 秒缓存，重复点击「筛选」不会打爆数据源
 // - 结果表支持本地排序；「加自选」会自动把 6 位代码转成 sh/sz/bj 前缀的完整符号
 
-import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { invoke } from '@tauri-apps/api/core';
 import {
   NButton,
   NCheckbox,
@@ -23,6 +24,7 @@ import { useUniverseStore } from '@/stores/universe';
 import { useWatchlistStore } from '@/stores/watchlist';
 import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
 import RankDialog from '@/components/rank/RankDialog.vue';
+import type { StockAnalysis } from '@/types/analysis';
 import {
   BOARD_LABELS,
   SELECTABLE_BOARDS,
@@ -59,6 +61,67 @@ const visible = computed({
   get: () => props.show,
   set: value => emit('update:show', value),
 });
+
+const SCORE_CONCURRENCY = 3;
+const scoreByRow = ref<Map<string, number | null>>(new Map());
+const scoreSortActive = ref(false);
+const scoring = ref(false);
+const scoreProgress = ref({ done: 0, total: 0 });
+let scoreRun = 0;
+
+function scoreKey(row: SnapshotRow): string {
+  return `${row.board}:${row.code}`;
+}
+
+function scoreOf(row: SnapshotRow): number {
+  return scoreByRow.value.get(scoreKey(row)) ?? -1;
+}
+
+const displayedRows = computed(() => {
+  const rows = [...universe.rows];
+  if (!scoreSortActive.value) return rows;
+  return rows.sort((a, b) => scoreOf(b) - scoreOf(a) || a.code.localeCompare(b.code));
+});
+
+watch(() => universe.rows, () => {
+  scoreRun += 1;
+  scoreByRow.value = new Map();
+  scoreSortActive.value = false;
+  scoring.value = false;
+});
+
+async function scoreAndSort() {
+  const rows = [...universe.rows];
+  if (!rows.length || scoring.value) return;
+
+  const run = ++scoreRun;
+  const next = new Map<string, number | null>();
+  scoring.value = true;
+  scoreSortActive.value = true;
+  scoreProgress.value = { done: 0, total: rows.length };
+
+  const scoreRow = async (row: SnapshotRow) => {
+    try {
+      const analysis = await invoke<StockAnalysis>('analyze_stock', { symbol: toFullSymbol(row.code, row.board) });
+      next.set(scoreKey(row), analysis.total_score);
+    } catch (error) {
+      console.warn(`[universe] 量化评分失败 ${row.code}:`, error);
+      next.set(scoreKey(row), null);
+    } finally {
+      if (run !== scoreRun) return;
+      scoreByRow.value = new Map(next);
+      scoreProgress.value = { ...scoreProgress.value, done: scoreProgress.value.done + 1 };
+    }
+  };
+
+  try {
+    for (let start = 0; start < rows.length; start += SCORE_CONCURRENCY) {
+      await Promise.all(rows.slice(start, start + SCORE_CONCURRENCY).map(scoreRow));
+    }
+  } finally {
+    if (run === scoreRun) scoring.value = false;
+  }
+}
 
 // ── 结果表分页 ──
 // 服务端分页：表格里只放当前页，翻页时向后端取数（后端稳定排序，不会重复/漏行）
@@ -164,6 +227,16 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     sorter: 'default',
     render: row =>
       h('span', { class: ['num mono', changeClass(row.change_pct)] }, formatPct(row.change_pct)),
+  },
+  {
+    title: scoreSortActive.value ? '评分 ↓' : '评分',
+    key: 'quant_score',
+    width: 76,
+    align: 'right',
+    render: row => {
+      const score = scoreByRow.value.get(scoreKey(row));
+      return h('span', { class: ['num mono', score != null ? changeClass(score - 50) : 'muted'] }, score == null ? '--' : score.toFixed(1));
+    },
   },
   {
     title: '量比',
@@ -406,6 +479,15 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
         >
           {{ universe.resultsVisible ? '收起明细' : `展示数据（${universe.totalMatched} 只）` }}
         </n-button>
+        <n-button
+          v-if="universe.resultsVisible && universe.rows.length"
+          size="small"
+          secondary
+          :loading="scoring"
+          @click="scoreAndSort"
+        >
+          {{ scoring ? `评分 ${scoreProgress.done}/${scoreProgress.total}` : scoreSortActive ? '重新评分排序' : '本页量化评分排序' }}
+        </n-button>
 
         <n-tag v-if="universe.stale" type="warning" size="small" :bordered="false">
           刷新失败，显示的是旧数据
@@ -431,13 +513,13 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
         -->
         <n-data-table
           :columns="columns"
-          :data="universe.rows"
+          :data="displayedRows"
           :loading="universe.loading || universe.pageLoading"
           :row-key="rowKey"
           size="small"
           :remote="true"
           :max-height="'min(420px, 40vh)'"
-          :scroll-x="960"
+          :scroll-x="1128"
           :pagination="pagination"
         />
         <div

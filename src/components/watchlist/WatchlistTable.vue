@@ -66,6 +66,7 @@ const indexDetailCoord = inject<{
 onMounted(() => {
   void loadHoldings();
   indexDetailCoord?.registerClearStockFn?.(() => {
+    cancelPendingRowClick();
     selectedRow.value = null;
   });
 });
@@ -419,7 +420,7 @@ const columns: DataTableColumns<WatchItem> = [
   },
 ];
 
-defineExpose({ clearSelection: () => { selectedRow.value = null; } });
+defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.value = null; } });
 </script>
 
 <template>
