@@ -93,6 +93,9 @@ async function handleAdd(row: RankItem) {
   }
 }
 
+// 弹窗内容区高 84vh − 96px；扣掉工具条 / 提示行后，表格高度随窗口自适应（vh 随窗口实时变化）
+const tableMaxHeight = 'calc(84vh - 220px)';
+
 const columns = computed<DataTableColumns<RankItem>>(() => [
   {
     title: '#',
@@ -208,15 +211,15 @@ const columns = computed<DataTableColumns<RankItem>>(() => [
       <div v-if="rank.error" class="error-line">{{ rank.error }}</div>
 
       <div class="table-wrap">
-        <!-- flex-height 填满弹窗剩余空间，窗口拉高/拉矮时表格随 .rank（84vh）自适应。
-             早年「flex-height 行不渲染」是 NModal 未导入导致没有真实高度上下文，已修复。 -->
+        <!-- 注意：本弹窗里 flex-height 会导致表体一行都不渲染（实测复现），
+             所以用随视口高度变化的 max-height 实现自适应，而不是 flex-height。 -->
         <n-data-table
           :columns="columns"
           :data="rank.result?.items ?? []"
           :loading="rank.loading"
           :row-key="rowKey"
           size="small"
-          flex-height
+          :max-height="tableMaxHeight"
           :scroll-x="840"
         />
         <div
