@@ -839,8 +839,17 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
         <n-button size="small" quaternary :disabled="universe.loading" @click="universe.reset()">
           重置条件
         </n-button>
-        <n-button size="small" type="warning" secondary :disabled="universe.loading" @click="openRank">
-          生成推荐榜
+        <!-- 推荐榜走独立的数据获取与加载状态：不受筛选器快照加载（universe.loading）影响，
+             只在榜单自身生成期间禁用并显示进度。 -->
+        <n-button
+          size="small"
+          type="warning"
+          secondary
+          :loading="rank.loading"
+          :disabled="rank.loading"
+          @click="openRank"
+        >
+          {{ rank.loading ? '正在生成推荐榜…' : '生成推荐榜' }}
         </n-button>
 
         <span v-if="universe.hasLoaded" class="stats">
