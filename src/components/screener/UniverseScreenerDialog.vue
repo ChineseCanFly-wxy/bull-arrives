@@ -85,6 +85,16 @@ function openAnalysis(row: SnapshotRow) {
 
 // 推荐榜对话框状态
 const showRank = ref(false);
+let rankOpenTimer: ReturnType<typeof setTimeout> | null = null;
+
+function openRank() {
+  if (rankOpenTimer) clearTimeout(rankOpenTimer);
+  // 等当前按钮的 click 事件传播结束，再挂载模态层，避免它把这次点击当作遮罩点击关闭。
+  rankOpenTimer = setTimeout(() => {
+    rankOpenTimer = null;
+    showRank.value = true;
+  }, 0);
+}
 
 // ── 策略（预设）管理 ──────────────────────────────────────────────
 // 内置策略只读（随版本维护），用户的自建策略支持重命名 / 覆盖条件 / 删除。
@@ -440,6 +450,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   // 关闭对话框时立即落盘：防抖的 400ms 可能在用户直接退出程序时被带走
   universe.flushPersist();
+  if (rankOpenTimer) clearTimeout(rankOpenTimer);
 });
 
 const activeDesc = computed(
@@ -828,7 +839,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
         <n-button size="small" quaternary :disabled="universe.loading" @click="universe.reset()">
           重置条件
         </n-button>
-        <n-button size="small" type="warning" secondary :disabled="universe.loading" @click="showRank = true">
+        <n-button size="small" type="warning" secondary :disabled="universe.loading" @click="openRank">
           生成推荐榜
         </n-button>
 
