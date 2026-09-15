@@ -128,7 +128,12 @@ function openSector() {
     <UniverseScreenerDialog v-if="showScreener" v-model:show="showScreener" />
     <MonitorDialog v-if="showMonitor" v-model:show="showMonitor" />
     <SectorDialog v-if="showSector" v-model:show="showSector" />
-    <RankDialog v-if="rank.visible && rank.activeFilter" v-model:show="rank.visible" :filter="rank.activeFilter" />
+    <RankDialog
+      v-if="rank.visible && rank.activeFilter"
+      :show="rank.visible"
+      :filter="rank.activeFilter"
+      @update:show="rank.setVisible"
+    />
   </header>
 </template>
 

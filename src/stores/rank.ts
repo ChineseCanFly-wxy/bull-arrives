@@ -13,6 +13,8 @@ export const useRankStore = defineStore('rank', () => {
   const error = ref<string | null>(null);
   const visible = ref(false);
   const activeFilter = ref<MarketFilter | null>(null);
+  let opening = false;
+  let openingTimer: ReturnType<typeof setTimeout> | null = null;
 
   // 竞态保护
   let generation = 0;
@@ -47,8 +49,22 @@ export const useRankStore = defineStore('rank', () => {
   function open(filter: MarketFilter) {
     // 保留点击时的条件快照，避免用户随后改筛选条件影响正在生成的榜单。
     activeFilter.value = { ...filter, boards: [...filter.boards] };
+    result.value = null;
+    error.value = null;
+    loading.value = true;
+    opening = true;
     visible.value = true;
+    if (openingTimer) clearTimeout(openingTimer);
+    openingTimer = setTimeout(() => {
+      opening = false;
+      openingTimer = null;
+    }, 250);
   }
 
-  return { result, loading, error, visible, activeFilter, scan, reset, open };
+  function setVisible(next: boolean) {
+    if (!next && opening) return;
+    visible.value = next;
+  }
+
+  return { result, loading, error, visible, activeFilter, scan, reset, open, setVisible };
 });
