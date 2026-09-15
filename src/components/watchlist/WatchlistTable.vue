@@ -62,6 +62,9 @@ function holdingMetric(row: WatchItem) {
 const alertDialogItem = ref<WatchItem | null>(null);
 const showDeleteConfirm = ref(false);
 const deleting = ref(false);
+const selectedRowKeys = ref<number[]>([]);
+const pendingDeleteItems = ref<WatchItem[]>([]);
+const pendingDeleteGroupId = ref(0);
 let rowClickTimer: ReturnType<typeof setTimeout> | null = null;
 
 watch(() => watchlist.activeGroupId, () => {
@@ -70,8 +73,16 @@ watch(() => watchlist.activeGroupId, () => {
   ctxMenuItem.value = null;
   showCtxMenu.value = false;
   showDeleteConfirm.value = false;
+  selectedRowKeys.value = [];
+  pendingDeleteItems.value = [];
+  pendingDeleteGroupId.value = 0;
   scoreSortActive.value = false;
   scoreById.value = new Map();
+});
+
+watch(() => watchlist.items, items => {
+  const visibleIds = new Set(items.map(item => item.id));
+  selectedRowKeys.value = selectedRowKeys.value.filter(id => visibleIds.has(id));
 });
 
 const indexDetailCoord = inject<{
@@ -124,6 +135,19 @@ const displayedItems = computed(() => {
   if (!scoreSortActive.value) return items;
   return items.sort((a, b) => scoreOf(b) - scoreOf(a) || a.id - b.id);
 });
+
+const selectedItems = computed(() => {
+  const selected = new Set(selectedRowKeys.value);
+  return displayedItems.value.filter(item => selected.has(item.id));
+});
+
+function updateSelectedRowKeys(keys: Array<string | number>) {
+  selectedRowKeys.value = keys.map(Number).filter(Number.isInteger);
+}
+
+function rowKey(row: WatchItem): number {
+  return row.id;
+}
 
 async function scoreAndSort() {
   const items = [...watchlist.items];
@@ -196,6 +220,10 @@ function handleRowKeydown(event: KeyboardEvent, row: WatchItem) {
   }
 }
 
+function isSelectionEvent(event: Event): boolean {
+  return event.target instanceof Element && event.target.closest('[role="checkbox"]') !== null;
+}
+
 onBeforeUnmount(cancelPendingRowClick);
 
 function handleContextMenu(e: MouseEvent, row: WatchItem) {
@@ -211,8 +239,22 @@ function handleContextMenu(e: MouseEvent, row: WatchItem) {
 
 function requestDelete() {
   showCtxMenu.value = false;
-  if (!ctxMenuItem.value) return;
-  if (watchlist.activeGroupId === 0) {
+  const item = ctxMenuItem.value;
+  if (!item) return;
+  pendingDeleteItems.value = [item];
+  pendingDeleteGroupId.value = watchlist.activeGroupId;
+  if (pendingDeleteGroupId.value === 0) {
+    showDeleteConfirm.value = true;
+  } else {
+    void confirmDelete();
+  }
+}
+
+function requestBulkDelete() {
+  if (!selectedItems.value.length || deleting.value) return;
+  pendingDeleteItems.value = [...selectedItems.value];
+  pendingDeleteGroupId.value = watchlist.activeGroupId;
+  if (pendingDeleteGroupId.value === 0) {
     showDeleteConfirm.value = true;
   } else {
     void confirmDelete();
@@ -220,19 +262,32 @@ function requestDelete() {
 }
 
 async function confirmDelete() {
-  const item = ctxMenuItem.value;
-  if (!item || deleting.value) return;
+  const items = pendingDeleteItems.value;
+  const groupId = pendingDeleteGroupId.value;
+  if (!items.length || deleting.value) return;
   deleting.value = true;
   try {
-    await watchlist.removeStock(item.code, item.market);
+    await watchlist.removeStocks(items, groupId);
     selectedRow.value = null;
     showDeleteConfirm.value = false;
+    selectedRowKeys.value = [];
+    pendingDeleteItems.value = [];
   } catch (e) {
-    console.error('removeStock failed:', e);
+    console.error('removeStocks failed:', e);
   } finally {
     deleting.value = false;
   }
 }
+
+const deleteDialogTitle = computed(() => pendingDeleteGroupId.value === 0 ? '从全部自选删除' : '从当前分组移出');
+const deleteDialogContent = computed(() => {
+  const count = pendingDeleteItems.value.length;
+  const subject = count === 1 ? `“${pendingDeleteItems.value[0]?.name ?? ''}”` : `所选 ${count} 只股票`;
+  if (pendingDeleteGroupId.value === 0) {
+    return `删除${subject}将同时清除关联的持仓与行情提醒，且无法撤销。确定继续吗？`;
+  }
+  return `从当前分组移出${subject}；股票仍保留在“全部”自选、其他分组、持仓和提醒中。确定继续吗？`;
+});
 
 async function handleMoveTop() {
   if (!ctxMenuItem.value) return;
@@ -318,6 +373,7 @@ function handleCtxSelect(key: string) {
 }
 
 const columns: DataTableColumns<WatchItem> = [
+  { type: 'selection' },
   {
     title: '代码', key: 'code', width: 72,
     render(row) {
@@ -475,6 +531,16 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
     <div class="watchlist-header">
       <h2 class="section-title">自选股</h2>
       <div class="watchlist-actions">
+        <NButton
+          v-if="selectedRowKeys.length"
+          size="small"
+          type="error"
+          secondary
+          :loading="deleting"
+          @click="requestBulkDelete"
+        >
+          {{ watchlist.activeGroupId === 0 ? '删除' : '移出' }}所选 ({{ selectedRowKeys.length }})
+        </NButton>
         <NButton size="small" secondary :disabled="!watchlist.items.length" :loading="scoring" @click="scoreAndSort">
           {{ scoring ? `评分 ${scoreProgress.done}/${scoreProgress.total}` : scoreSortActive ? '重新评分排序' : '量化评分排序' }}
         </NButton>
@@ -518,10 +584,13 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
         title: '单击查看详情；双击或按 Enter 设置提醒',
         'aria-label': `${row.name} ${formatCode(row.code)}，单击查看详情，双击或按 Enter 设置提醒`,
         onContextmenu: (e: MouseEvent) => handleContextMenu(e, row),
-        onDblclick: () => openAlertSettings(row),
-        onClick: () => handleRowClick(row),
-        onKeydown: (e: KeyboardEvent) => handleRowKeydown(e, row),
+        onDblclick: (e: MouseEvent) => { if (!isSelectionEvent(e)) openAlertSettings(row); },
+        onClick: (e: MouseEvent) => { if (!isSelectionEvent(e)) handleRowClick(row); },
+        onKeydown: (e: KeyboardEvent) => { if (!isSelectionEvent(e)) handleRowKeydown(e, row); },
       })"
+      :row-key="rowKey"
+      :checked-row-keys="selectedRowKeys"
+      @update:checked-row-keys="updateSelectedRowKeys"
       flex-height
       class="watchlist-table"
     />
@@ -550,14 +619,14 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
     <NModal
       v-model:show="showDeleteConfirm"
       preset="dialog"
-      title="从全部自选删除"
+      :title="deleteDialogTitle"
       positive-text="确认删除"
       negative-text="取消"
       :loading="deleting"
       :mask-closable="!deleting"
       @positive-click="confirmDelete"
     >
-      删除“{{ ctxMenuItem?.name }}”将同时清除与该股票关联的持仓与行情提醒，且无法撤销。确定继续吗？
+      {{ deleteDialogContent }}
     </NModal>
 
     <NDropdown
