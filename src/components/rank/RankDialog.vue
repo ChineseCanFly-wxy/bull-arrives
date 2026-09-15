@@ -208,14 +208,15 @@ const columns = computed<DataTableColumns<RankItem>>(() => [
       <div v-if="rank.error" class="error-line">{{ rank.error }}</div>
 
       <div class="table-wrap">
-        <!-- 同筛选器：不用 flex-height / virtual-scroll，避免布局依赖导致行不渲染 -->
+        <!-- flex-height 填满弹窗剩余空间，窗口拉高/拉矮时表格随 .rank（84vh）自适应。
+             早年「flex-height 行不渲染」是 NModal 未导入导致没有真实高度上下文，已修复。 -->
         <n-data-table
           :columns="columns"
           :data="rank.result?.items ?? []"
           :loading="rank.loading"
           :row-key="rowKey"
           size="small"
-          :max-height="420"
+          flex-height
           :scroll-x="840"
         />
         <div

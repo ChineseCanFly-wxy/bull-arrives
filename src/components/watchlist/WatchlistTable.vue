@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, h, inject, onBeforeUnmount, onMounted, watch, defineAsyncComponent } from 'vue';
-import { NButton, NDataTable, NDropdown, NModal } from 'naive-ui';
+import { NButton, NDataTable, NDropdown, NModal, NTag } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { invoke } from '@tauri-apps/api/core';
 import { useWatchlistStore } from '@/stores/watchlist';
+import { useMonitorStore } from '@/stores/monitor';
+import type { Monitor } from '@/types/monitor';
 import { useQuoteStore } from '@/stores/quote';
 import type { WatchItem } from '@/types';
 import type { StockAnalysis } from '@/types/analysis';
@@ -20,6 +22,7 @@ import { CLEAR_INDEX_DETAIL_KEY, OPEN_STOCK_DETAIL_KEY, type StockDetailCoordina
 
 const watchlist = useWatchlistStore();
 const quoteStore = useQuoteStore();
+const monitorStore = useMonitorStore();
 const showAddDialog = ref(false);
 const showAlertDialog = ref(false);
 const showHoldingDialog = ref(false);
@@ -59,6 +62,11 @@ function holdingMetric(row: WatchItem) {
   catch { return null; }
 }
 
+/** 该自选股对应的监控规则（未开启为 undefined） */
+function monitorOf(row: WatchItem): Monitor | undefined {
+  return monitorStore.monitors.find(m => m.code === row.code && m.market === row.market);
+}
+
 const alertDialogItem = ref<WatchItem | null>(null);
 const showDeleteConfirm = ref(false);
 const deleting = ref(false);
@@ -93,6 +101,8 @@ const stockDetailCoord = inject<StockDetailCoordinator | undefined>(OPEN_STOCK_D
 
 onMounted(() => {
   void loadHoldings();
+  // 监控列表只在监控面板打开时才会拉取；主表要显示监控状态列，启动时先拉一次
+  if (!monitorStore.hasLoaded) void monitorStore.fetchMonitors();
   indexDetailCoord?.registerClearStockFn?.(() => {
     cancelPendingRowClick();
     selectedRow.value = null;
@@ -429,6 +439,36 @@ const columns: DataTableColumns<WatchItem> = [
     }
   },
   {
+    // 智能监控状态：不开监控面板也能一眼看到哪只票在监控、是否已触发；
+    // 悬停显示参考价 / 止损 / 止盈和相对现价的距离。
+    title: '监控', key: 'monitor', width: 88, align: 'center',
+    sorter: (a: WatchItem, b: WatchItem) => Number(monitorOf(b) != null) - Number(monitorOf(a) != null),
+    render(row) {
+      const m = monitorOf(row);
+      if (!m) return h('span', { class: 'monitor-none' }, '--');
+      const q = quoteStore.getQuote(row.code, row.market);
+      const tipLines = [
+        `参考价 ${m.reference_price.toFixed(2)}`,
+        `止损 ${m.stop_price.toFixed(2)}`,
+        `止盈 ${m.take_price.toFixed(2)}`,
+      ];
+      if (q && q.price > 0) {
+        tipLines.push(
+          `距止损 ${((q.price - m.stop_price) / q.price * 100).toFixed(1)}%`,
+          `距止盈 ${((m.take_price - q.price) / q.price * 100).toFixed(1)}%`,
+        );
+      }
+      const tip = tipLines.join('\n');
+      if (m.last_triggered === 'stop_loss') {
+        return h(NTag, { type: 'error', size: 'small', bordered: false, title: tip }, { default: () => '已止损' });
+      }
+      if (m.last_triggered === 'take_profit') {
+        return h(NTag, { type: 'success', size: 'small', bordered: false, title: tip }, { default: () => '已止盈' });
+      }
+      return h(NTag, { type: 'default', size: 'small', bordered: false, title: tip }, { default: () => '监控中' });
+    }
+  },
+  {
     title: '成本价', key: 'cost_price', width: 95,
     render(row) {
       const holding = holdings.value.get(row.id);
@@ -573,7 +613,7 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
     <NDataTable
       v-else
       :columns="columns"
-      :scroll-x="1440"
+      :scroll-x="1528"
       :data="displayedItems"
       :bordered="false"
       :single-line="true"
@@ -728,6 +768,7 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
 :deep(.pct-col.up) { color: var(--color-up); }
 :deep(.pct-col.down) { color: var(--color-down); }
 :deep(.quant-score) { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+:deep(.monitor-none) { color: var(--color-text-tertiary); }
 /* 列渲染内容由 NDataTable 挂载，scoped 样式需用 :deep() 才能生效 */
 :deep(.code-text) {
   font-family: var(--font-mono);
