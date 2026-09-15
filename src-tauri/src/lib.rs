@@ -828,6 +828,8 @@ pub fn run() {
             commands::quote::get_kline,
             commands::universe::get_market_universe,
             commands::universe::get_filter_presets,
+            commands::universe::save_filter_preset,
+            commands::universe::delete_filter_preset,
             commands::analysis::analyze_stock,
             commands::rank::scan_and_rank,
             commands::monitor::get_monitors,

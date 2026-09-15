@@ -14,25 +14,34 @@ import {
   NCheckbox,
   NCheckboxGroup,
   NDataTable,
+  NDropdown,
+  NInput,
   NInputNumber,
   NModal,
   NSelect,
   NTag,
   type DataTableColumns,
+  type DropdownOption,
 } from 'naive-ui';
 import { useUniverseStore } from '@/stores/universe';
 import { useWatchlistStore } from '@/stores/watchlist';
 import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
 import RankDialog from '@/components/rank/RankDialog.vue';
 import type { StockAnalysis } from '@/types/analysis';
+import { TRADE_RULE_OPTIONS, tradeRuleLabel, type TradeRuleId } from '@/types/analysis';
 import {
   BOARD_LABELS,
   SELECTABLE_BOARDS,
   SOURCE_OPTIONS,
+  createDefaultFilter,
   formatAmount,
   formatPct,
+  summarizeFilter,
+  summarizeFilterParts,
   toFullSymbol,
   toYi,
+  type MarketFilter,
+  type PresetInfo,
   type SnapshotRow,
   type UniverseResponse,
 } from '@/types/universe';
@@ -48,14 +57,232 @@ const addError = ref<string | null>(null);
 
 // 分析对话框状态
 const showAnalysis = ref(false);
-const analysisTarget = ref<{ symbol: string; name: string }>({ symbol: '', name: '' });
+const analysisTarget = ref<{ symbol: string; name: string; rule: string }>({
+  symbol: '',
+  name: '',
+  rule: 'trend_follow',
+});
+
+/**
+ * 当前策略配套的交易规则。
+ *
+ * 打开个股分析时用它算买点/止损/止盈 —— 否则会出现
+ * 「用超跌反弹策略选出来、却按趋势规则给买点」这种错配。
+ */
+const activeRule = computed(() => {
+  const preset = universe.presets.find(p => p.id === universe.activePresetId);
+  return preset?.rule || 'trend_follow';
+});
+
+function openAnalysis(row: SnapshotRow) {
+  analysisTarget.value = {
+    symbol: toFullSymbol(row.code, row.board),
+    name: row.name,
+    rule: activeRule.value,
+  };
+  showAnalysis.value = true;
+}
 
 // 推荐榜对话框状态
 const showRank = ref(false);
 
-function openAnalysis(row: SnapshotRow) {
-  analysisTarget.value = { symbol: toFullSymbol(row.code, row.board), name: row.name };
-  showAnalysis.value = true;
+// ── 策略（预设）管理 ──────────────────────────────────────────────
+// 内置策略只读（随版本维护），用户的自建策略支持重命名 / 覆盖条件 / 删除。
+// 想让内置策略「按自己口味来」的标准路径是「另存为我的策略」——
+// 这样版本升级时新的内置方案还能继续拿到，用户改的那份也不受版本影响。
+
+/** 与后端 `MAX_LABEL_CHARS` / `MAX_DESCRIPTION_CHARS` 保持一致 */
+const STRATEGY_LABEL_MAX = 16;
+const STRATEGY_DESC_MAX = 80;
+
+/** 弹窗在做哪件事 —— 只影响标题与提示文案 */
+type StrategyAction = 'create' | 'duplicate' | 'rename' | 'overwrite';
+
+const strategyDialog = ref(false);
+const strategyAction = ref<StrategyAction>('create');
+/** 被编辑的自建策略 id；为空表示新建 */
+const strategyTargetId = ref<string | null>(null);
+const strategyLabel = ref('');
+const strategyDescription = ref('');
+/** 弹窗里将要保存的条件（新建/覆盖用当前条件，重命名沿用原条件） */
+const strategyFilter = ref<MarketFilter>(createDefaultFilter());
+/** 策略配套的交易规则 —— 打开个股分析时按它算买点/止损/止盈 */
+const strategyRule = ref<TradeRuleId>('trend_follow');
+const strategyBusy = ref(false);
+const strategyError = ref<string | null>(null);
+/** 操作成功后的即时反馈（保存/删除都往这里写，由模板展示） */
+const strategyNotice = ref<string | null>(null);
+
+const deleteDialog = ref(false);
+const deleteTarget = ref<PresetInfo | null>(null);
+const deleteBusy = ref(false);
+
+/** 请求删除：先记住目标，再开确认框（删错了没法恢复，必须问一句） */
+function askDeleteStrategy(preset: PresetInfo) {
+  deleteTarget.value = preset;
+  deleteDialog.value = true;
+}
+
+function cancelDeleteStrategy() {
+  deleteDialog.value = false;
+  deleteTarget.value = null;
+}
+
+function cloneFilterLocal(source: MarketFilter): MarketFilter {
+  return { ...source, boards: [...source.boards] };
+}
+
+const strategyTitle = computed(() => {
+  switch (strategyAction.value) {
+    case 'duplicate': return '另存为我的策略';
+    case 'rename': return '重命名策略';
+    case 'overwrite': return '用当前条件覆盖策略';
+    default: return '新建策略';
+  }
+});
+
+/** 若按当前条件保存，筛出来会是什么 —— 直接摊开给用户看，避免存下一个自己都忘了内容的策略 */
+const strategySummary = computed(() => summarizeFilterParts(strategyFilter.value));
+
+/** 只有「重命名」不改筛选条件，其余动作都会把弹窗里的条件写进去 */
+const strategyChangesFilter = computed(() => strategyAction.value !== 'rename');
+
+/** 当前选中规则的说明，让用户在保存前就知道这条规则的性格（胜率 / 盈亏比） */
+const strategyRuleHint = computed(
+  () => TRADE_RULE_OPTIONS.find(o => o.value === strategyRule.value)?.hint ?? '',
+);
+
+function openCreateStrategy() {
+  strategyAction.value = 'create';
+  strategyTargetId.value = null;
+  strategyLabel.value = '';
+  strategyDescription.value = '';
+  strategyFilter.value = cloneFilterLocal(universe.filter);
+  // 新建时继承当前策略的规则 —— 用户通常是在延续同一种打法
+  strategyRule.value = activeRule.value as TradeRuleId;
+  strategyError.value = null;
+  strategyDialog.value = true;
+}
+
+function openRenameStrategy(preset: PresetInfo) {
+  strategyAction.value = 'rename';
+  strategyTargetId.value = preset.id;
+  strategyLabel.value = preset.label;
+  strategyDescription.value = preset.description;
+  strategyFilter.value = cloneFilterLocal(preset.filter);
+  strategyRule.value = (preset.rule || 'trend_follow') as TradeRuleId;
+  strategyError.value = null;
+  strategyDialog.value = true;
+}
+
+function openOverwriteStrategy(preset: PresetInfo) {
+  strategyAction.value = 'overwrite';
+  strategyTargetId.value = preset.id;
+  strategyLabel.value = preset.label;
+  strategyDescription.value = preset.description;
+  // 覆盖：条件取「当前界面上的条件」，名称、说明与规则沿用原策略
+  strategyFilter.value = cloneFilterLocal(universe.filter);
+  strategyRule.value = (preset.rule || 'trend_follow') as TradeRuleId;
+  strategyError.value = null;
+  strategyDialog.value = true;
+}
+
+function openDuplicateStrategy(preset: PresetInfo) {
+  strategyAction.value = 'duplicate';
+  strategyTargetId.value = null;
+  strategyLabel.value = `${preset.label} 副本`;
+  strategyDescription.value = preset.description;
+  strategyFilter.value = cloneFilterLocal(preset.filter);
+  strategyRule.value = (preset.rule || 'trend_follow') as TradeRuleId;
+  strategyError.value = null;
+  strategyDialog.value = true;
+}
+
+/** 每个策略的「⋯」菜单。内置策略只给「另存为」，自建策略才有改名与删除 */
+function strategyMenu(preset: PresetInfo): DropdownOption[] {
+  if (preset.builtin) {
+    return [{ label: '另存为我的策略', key: 'duplicate' }];
+  }
+  return [
+    { label: '重命名 / 改说明', key: 'rename' },
+    { label: '用当前条件覆盖', key: 'overwrite' },
+    { label: '另存为副本', key: 'duplicate' },
+    { type: 'divider', key: 'divider' },
+    { label: '删除', key: 'delete' },
+  ];
+}
+
+function onStrategyMenu(key: string, preset: PresetInfo) {
+  switch (key) {
+    case 'rename': openRenameStrategy(preset); break;
+    case 'overwrite': openOverwriteStrategy(preset); break;
+    case 'duplicate': openDuplicateStrategy(preset); break;
+    case 'delete': askDeleteStrategy(preset); break;
+    default: break;
+  }
+}
+
+async function submitStrategy() {
+  const label = strategyLabel.value.trim();
+  if (!label) {
+    strategyError.value = '策略名称不能为空';
+    return;
+  }
+  if (label.length > STRATEGY_LABEL_MAX) {
+    strategyError.value = `策略名称最多 ${STRATEGY_LABEL_MAX} 个字，当前 ${label.length} 个`;
+    return;
+  }
+  const description = strategyDescription.value.trim();
+  if (description.length > STRATEGY_DESC_MAX) {
+    strategyError.value = `策略说明最多 ${STRATEGY_DESC_MAX} 个字，当前 ${description.length} 个`;
+    return;
+  }
+  // 本地先拦一道，用户不用等一次往返才知道重名
+  const clash = universe.presetNameTaken(label, strategyTargetId.value ?? undefined);
+  if (clash) {
+    strategyError.value = `已有同名策略「${clash}」，换个名字吧`;
+    return;
+  }
+
+  strategyBusy.value = true;
+  strategyError.value = null;
+  try {
+    const saved = await universe.savePreset({
+      id: strategyTargetId.value ?? undefined,
+      label,
+      description,
+      rule: strategyRule.value,
+      filter: strategyFilter.value,
+    });
+    strategyDialog.value = false;
+    strategyNotice.value = `已保存策略「${saved.label}」`;
+  } catch (e) {
+    // 后端的校验信息（重名、超长、内置不可改）直接透给用户，不要吞掉
+    strategyError.value = `保存失败：${e}`;
+  } finally {
+    strategyBusy.value = false;
+  }
+}
+
+async function confirmDeleteStrategy() {
+  const target = deleteTarget.value;
+  if (!target) {
+    deleteDialog.value = false;
+    return;
+  }
+  deleteBusy.value = true;
+  try {
+    await universe.deletePreset(target.id);
+    strategyNotice.value = `已删除策略「${target.label}」`;
+    deleteDialog.value = false;
+  } catch (e) {
+    // 删除失败也把确认框收掉，错误走统一提示区，避免弹窗卡住
+    strategyError.value = `删除失败：${e}`;
+    deleteDialog.value = false;
+  } finally {
+    deleteBusy.value = false;
+    deleteTarget.value = null;
+  }
 }
 
 const visible = computed({
@@ -220,6 +447,14 @@ const activeDesc = computed(
     universe.presets.find(p => p.id === universe.activePresetId)?.description ??
     '自定义条件：不套用预设，完全按下方勾选与数值区间筛选',
 );
+
+/**
+ * 当前**实际生效**的条件摘要。
+ *
+ * 策略名只有四个字，光看名字根本不知道它筛什么；手动微调之后更是没处对照。
+ * 所以这里始终展示实时条件，用户随时能确认「我现在到底在筛什么」。
+ */
+const conditionSummary = computed(() => summarizeFilter(universe.filter));
 
 /** 涨跌配色：A 股习惯 —— 红涨绿跌 */
 function changeClass(value: number): string {
@@ -388,19 +623,37 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     size="small"
   >
     <div class="screener">
-      <!-- 预设方案 -->
+      <!-- 策略条：内置策略只读，自建策略可改名 / 覆盖 / 删除 -->
       <div class="preset-bar">
         <div class="chips">
-          <button
+          <div
             v-for="preset in universe.presets"
             :key="preset.id"
-            class="chip"
-            :class="{ active: universe.activePresetId === preset.id }"
-            :title="preset.description"
-            @click="universe.applyPreset(preset.id)"
+            class="preset-chip"
+            :class="{ active: universe.activePresetId === preset.id, mine: !preset.builtin }"
+            :title="`${preset.description}\n\n条件：${summarizeFilter(preset.filter)}\n交易规则：${tradeRuleLabel(preset.rule)}`"
           >
-            {{ preset.label }}
+            <button class="preset-chip-label" @click="universe.applyPreset(preset.id)">
+              {{ preset.label }}
+            </button>
+            <n-dropdown
+              trigger="click"
+              size="small"
+              :options="strategyMenu(preset)"
+              @select="key => onStrategyMenu(String(key), preset)"
+            >
+              <button class="preset-chip-more" :title="`管理「${preset.label}」`">⋯</button>
+            </n-dropdown>
+          </div>
+
+          <button
+            class="chip chip-add"
+            title="把当前条件存成一个自己的策略，下次一键切回来"
+            @click="openCreateStrategy"
+          >
+            ＋ 新建策略
           </button>
+
           <button
             class="chip"
             :class="{ active: universe.activePresetId === 'custom' }"
@@ -427,7 +680,19 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
             上次条件恢复失败，点击重试
           </button>
         </div>
-        <span class="preset-desc">{{ activeDesc }}</span>
+        <div class="preset-meta">
+          <span class="preset-desc">{{ activeDesc }}</span>
+          <span class="preset-cond" :title="`${conditionSummary}`">
+            当前条件：{{ conditionSummary }}
+            <em class="preset-rule">· 买卖点按「{{ tradeRuleLabel(activeRule) }}」规则计算</em>
+          </span>
+        </div>
+      </div>
+
+      <!-- 策略操作反馈：成败都要说出来，不能静默 -->
+      <div v-if="strategyNotice" class="notice-line notice-ok">
+        {{ strategyNotice }}
+        <button class="link-btn" @click="strategyNotice = null">知道了</button>
       </div>
 
       <!-- 筛选条件 -->
@@ -478,6 +743,47 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
             <n-input-number v-model:value="universe.filter.change_pct_max" size="small" :show-button="false" placeholder="不限" clearable @update:value="universe.markCustom" />
           </div>
 
+          <!-- 60 日涨跌幅：趋势 / 反转类策略的核心维度，只有东财通道提供 -->
+          <div class="range">
+            <span
+              class="range-label"
+              title="近 60 个交易日的涨跌幅。趋势与反转类策略的依据，仅东方财富通道提供；新浪通道下该条件会被自动忽略"
+            >60日涨跌幅(%)</span>
+            <n-input-number
+              v-model:value="universe.filter.change_60d_min"
+              size="small"
+              :show-button="false"
+              :disabled="!universe.change60dSupported"
+              :placeholder="universe.change60dSupported ? '不限' : '数据源不支持'"
+              clearable
+              @update:value="universe.markCustom"
+            />
+            <span class="tilde">~</span>
+            <n-input-number
+              v-model:value="universe.filter.change_60d_max"
+              size="small"
+              :show-button="false"
+              :disabled="!universe.change60dSupported"
+              :placeholder="universe.change60dSupported ? '不限' : '数据源不支持'"
+              clearable
+              @update:value="universe.markCustom"
+            />
+          </div>
+
+          <div class="range">
+            <span class="range-label" title="动态市盈率。下限填 0.01 即「只要盈利股」——亏损股该值为 0 或负">市盈率(动)</span>
+            <n-input-number v-model:value="universe.filter.pe_min" size="small" :show-button="false" placeholder="不限" clearable @update:value="universe.markCustom" />
+            <span class="tilde">~</span>
+            <n-input-number v-model:value="universe.filter.pe_max" size="small" :show-button="false" placeholder="不限" clearable @update:value="universe.markCustom" />
+          </div>
+
+          <div class="range">
+            <span class="range-label" title="市净率。A 股实证里 PB 是最稳健的估值因子 —— 低 PB 长期胜率高于低 PE">市净率</span>
+            <n-input-number v-model:value="universe.filter.pb_min" size="small" :show-button="false" placeholder="不限" clearable @update:value="universe.markCustom" />
+            <span class="tilde">~</span>
+            <n-input-number v-model:value="universe.filter.pb_max" size="small" :show-button="false" placeholder="不限" clearable @update:value="universe.markCustom" />
+          </div>
+
           <div class="range">
             <span class="range-label">量比 ≥</span>
             <n-input-number
@@ -489,6 +795,11 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
               clearable
               @update:value="universe.markCustom"
             />
+          </div>
+
+          <div class="range">
+            <span class="range-label" title="当日振幅，作为波动率的粗略代理（不是 60 日波动率）">振幅 ≤(%)</span>
+            <n-input-number v-model:value="universe.filter.amplitude_max" size="small" :show-button="false" placeholder="不限" clearable @update:value="universe.markCustom" />
           </div>
 
           <div class="range">
@@ -604,9 +915,96 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     v-model:show="showAnalysis"
     :symbol="analysisTarget.symbol"
     :name="analysisTarget.name"
+    :rule="analysisTarget.rule"
   />
 
   <RankDialog v-model:show="showRank" :filter="universe.filter" />
+
+  <!-- 策略命名 / 覆盖：新建、另存为、重命名、覆盖条件共用这一个弹窗 -->
+  <n-modal
+    v-model:show="strategyDialog"
+    preset="card"
+    :title="strategyTitle"
+    :style="{ width: 'min(520px, calc(100vw - 24px))' }"
+    :bordered="false"
+    size="small"
+  >
+    <div class="strategy-form">
+      <label class="form-row">
+        <span class="form-label">名称</span>
+        <n-input
+          v-model:value="strategyLabel"
+          size="small"
+          :maxlength="STRATEGY_LABEL_MAX"
+          show-count
+          clearable
+          placeholder="例如：我的低估值池"
+          @keyup.enter="submitStrategy"
+        />
+      </label>
+
+      <label class="form-row">
+        <span class="form-label">说明</span>
+        <n-input
+          v-model:value="strategyDescription"
+          size="small"
+          :maxlength="STRATEGY_DESC_MAX"
+          show-count
+          clearable
+          placeholder="选填。写一句这条策略想选什么，以后一眼就认得出来"
+        />
+      </label>
+
+      <div class="form-row form-block">
+        <span class="form-label">交易规则</span>
+        <n-select
+          v-model:value="strategyRule"
+          size="small"
+          :options="TRADE_RULE_OPTIONS.map(o => ({ label: o.label, value: o.value }))"
+        />
+        <span class="form-hint">{{ strategyRuleHint }}</span>
+      </div>
+
+      <div class="form-row form-block">
+        <span class="form-label">{{ strategyChangesFilter ? '将保存的条件' : '条件（重命名不改动）' }}</span>
+        <div class="summary-box">
+          <span v-for="(part, index) in strategySummary" :key="index" class="summary-item">{{ part }}</span>
+        </div>
+        <span v-if="strategyChangesFilter && strategyAction === 'create'" class="form-hint">
+          取自当前界面上的条件；若最小值填得比最大值大，保存时会自动交换过来。
+        </span>
+        <span v-else-if="strategyAction === 'overwrite'" class="form-hint">
+          会用当前界面上的条件替换这条策略原来的条件，名称、说明与交易规则保持不变。
+        </span>
+        <span v-else class="form-hint">
+          只改名称、说明与交易规则，筛选条件保持原样。
+        </span>
+      </div>
+
+      <div v-if="strategyError" class="error-line">{{ strategyError }}</div>
+    </div>
+
+    <template #footer>
+      <div class="modal-footer">
+        <n-button size="small" quaternary :disabled="strategyBusy" @click="strategyDialog = false">取消</n-button>
+        <n-button size="small" type="primary" :loading="strategyBusy" @click="submitStrategy">保存</n-button>
+      </div>
+    </template>
+  </n-modal>
+
+  <!-- 删除确认：自建策略删掉就没了，必须问一句 -->
+  <n-modal
+    v-model:show="deleteDialog"
+    preset="dialog"
+    type="warning"
+    title="删除策略"
+    :content="deleteTarget ? `确定删除策略「${deleteTarget.label}」吗？删除后无法恢复。内置策略不受影响。` : ''"
+    positive-text="删除"
+    negative-text="取消"
+    :loading="deleteBusy"
+    @positive-click="confirmDeleteStrategy"
+    @negative-click="cancelDeleteStrategy"
+  />
 </template>
 
 <style scoped>
@@ -654,6 +1052,148 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 .preset-desc {
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
+}
+.preset-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+/* 实时条件摘要：光看策略名不知道筛什么，这一行把条件摊开 */
+.preset-cond {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.preset-rule {
+  color: var(--color-accent);
+  font-style: normal;
+}
+
+/* ── 策略 chip：主体点击切换，右侧「⋯」开管理菜单 ── */
+.preset-chip {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--color-border-0);
+  border-radius: var(--radius-full);
+  background: transparent;
+  overflow: hidden;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+.preset-chip:hover {
+  border-color: var(--color-accent-dim);
+}
+.preset-chip.active {
+  background: var(--color-accent-dim);
+  border-color: var(--color-accent);
+}
+.preset-chip-label,
+.preset-chip-more {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  padding: 3px 2px 3px 10px;
+  transition: color var(--transition-fast);
+}
+.preset-chip-more {
+  /* 常驻但弱化：悬停才点亮，保证「有菜单」这件事是可发现的，
+     同时键盘 / 触摸也能直接点到（不用先 hover） */
+  padding: 3px 8px 3px 4px;
+  opacity: 0.35;
+  line-height: 1;
+}
+.preset-chip:hover .preset-chip-more,
+.preset-chip-more:focus-visible {
+  opacity: 1;
+}
+.preset-chip-label:hover,
+.preset-chip-more:hover {
+  color: var(--color-accent);
+}
+.preset-chip.active .preset-chip-label,
+.preset-chip.active .preset-chip-more {
+  color: var(--color-accent);
+}
+/* 自建策略加一个小圆点，和内置策略区分开 */
+.preset-chip.mine .preset-chip-label::after {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  vertical-align: middle;
+  opacity: 0.7;
+}
+.chip-add {
+  border-style: dashed;
+}
+
+/* ── 策略弹窗 ── */
+.strategy-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.form-block {
+  flex-direction: column;
+  align-items: stretch;
+}
+.form-label {
+  flex-shrink: 0;
+  width: 42px;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+.summary-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-0);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-card);
+}
+.summary-item {
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-dim);
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+}
+.form-hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.notice-ok {
+  border-left: 3px solid var(--color-accent);
+}
+.link-btn {
+  margin-left: var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: 0;
 }
 
 /* ── 筛选面板 ── */

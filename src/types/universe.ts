@@ -77,6 +77,20 @@ export interface MarketFilter {
   change_pct_max: number | null;
   /** 成交额下限（万元） */
   amount_min_wan: number | null;
+  /**
+   * 60 日涨跌幅 % 区间 —— 趋势 / 反转类策略的主要依据。
+   * ⚠️ 仅东方财富通道提供；新浪通道下该条件会被自动忽略并在界面提示。
+   */
+  change_60d_min: number | null;
+  change_60d_max: number | null;
+  /** 市盈率（动态）。下限设 0.01 即「只要盈利股」 */
+  pe_min: number | null;
+  pe_max: number | null;
+  /** 市净率 */
+  pb_min: number | null;
+  pb_max: number | null;
+  /** 振幅上限 %（当日振幅，作为波动率代理） */
+  amplitude_max: number | null;
 }
 
 /** 板块分布项 */
@@ -110,6 +124,13 @@ export function createDefaultFilter(): MarketFilter {
     change_pct_min: null,
     change_pct_max: null,
     amount_min_wan: null,
+    change_60d_min: null,
+    change_60d_max: null,
+    pe_min: null,
+    pe_max: null,
+    pb_min: null,
+    pb_max: null,
+    amplitude_max: null,
   };
 }
 
@@ -119,6 +140,15 @@ export interface PresetInfo {
   label: string;
   description: string;
   filter: MarketFilter;
+  /**
+   * 配套的交易规则 id（`trend_follow` / `mean_reversion` / `breakout`）。
+   *
+   * 策略只负责粗筛（单日快照能表达的字段），精确买点/止损/止盈要靠日 K 算，
+   * 这个字段是两者的纽带：打开个股分析时用它决定用哪套规则。
+   */
+  rule: string;
+  /** 内置策略随版本维护，不允许改名 / 删除，只能「另存为」自己的副本 */
+  builtin: boolean;
 }
 
 /** `get_market_universe` 的返回 */
@@ -136,6 +166,8 @@ export interface UniverseResponse {
   source_label: string;
   /** 当前通道是否提供「量比」；false 时前端应禁用并说明 */
   volume_ratio_supported: boolean;
+  /** 当前通道是否提供「60 日涨跌幅」；false 时依赖它的策略条件会被跳过 */
+  change_60d_supported: boolean;
   /** 因数据源不支持而被自动忽略的条件名（如 ["量比"]） */
   skipped_conditions: string[];
   board_counts: BoardCount[];
@@ -215,4 +247,75 @@ export function formatPct(value: number, digits = 2): string {
   if (!Number.isFinite(value)) return '-';
   const sign = value > 0 ? '+' : '';
   return `${sign}${value.toFixed(digits)}%`;
+}
+
+/** 数值区间的可读描述：只填一边就说「≥ / ≤」，两边都填说「a–b」 */
+function rangeText(
+  label: string,
+  min: number | null,
+  max: number | null,
+  unit: string,
+  signed = false,
+): string | null {
+  if (min == null && max == null) return null;
+  const fmt = (value: number) => {
+    const text = Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4)));
+    return signed && value > 0 ? `+${text}` : text;
+  };
+  if (min != null && max != null) return `${label} ${fmt(min)}–${fmt(max)}${unit}`;
+  if (min != null) return `${label} ≥ ${fmt(min)}${unit}`;
+  return `${label} ≤ ${fmt(max as number)}${unit}`;
+}
+
+/** 万元 → 友好文本 */
+function wanText(wan: number): string {
+  if (wan >= 10000) {
+    const yi = wan / 10000;
+    return `${Number.isInteger(yi) ? yi : yi.toFixed(2)} 亿`;
+  }
+  return `${wan} 万`;
+}
+
+/**
+ * 把筛选条件拆成可读片段。
+ *
+ * 用途：策略名只有四个字，用户根本记不住它到底筛什么 ——
+ * 「稳健趋势」和「低波动稳健」的差别只有点开才看得见。
+ * 保存策略时把这份摘要一并展示，用户能一眼确认自己存下来的到底是什么条件。
+ */
+export function summarizeFilterParts(filter: MarketFilter): string[] {
+  const parts: string[] = [];
+
+  const chosen = SELECTABLE_BOARDS.filter(board => filter.boards.includes(board));
+  if (chosen.length === SELECTABLE_BOARDS.length) parts.push('全部板块');
+  else if (chosen.length === 0) parts.push('未选板块');
+  else parts.push(chosen.map(board => BOARD_LABELS[board]).join('/'));
+
+  const excludes: string[] = [];
+  if (filter.exclude_st) excludes.push('ST');
+  if (filter.exclude_delisting) excludes.push('退市');
+  if (filter.exclude_suspended) excludes.push('停牌');
+  if (filter.exclude_limit_locked) excludes.push('一字板');
+  parts.push(excludes.length ? `排除 ${excludes.join('/')}` : '不做排除');
+
+  const ranges = [
+    rangeText('价格', filter.price_min, filter.price_max, ' 元'),
+    rangeText('市值', filter.market_cap_min_yi, filter.market_cap_max_yi, ' 亿'),
+    rangeText('换手率', filter.turnover_min, filter.turnover_max, '%'),
+    rangeText('涨跌幅', filter.change_pct_min, filter.change_pct_max, '%', true),
+    rangeText('60日涨跌幅', filter.change_60d_min, filter.change_60d_max, '%', true),
+    rangeText('市盈率', filter.pe_min, filter.pe_max, ''),
+    rangeText('市净率', filter.pb_min, filter.pb_max, ''),
+    filter.volume_ratio_min == null ? null : `量比 ≥ ${filter.volume_ratio_min}`,
+    filter.amplitude_max == null ? null : `振幅 ≤ ${filter.amplitude_max}%`,
+    filter.amount_min_wan == null ? null : `成交额 ≥ ${wanText(filter.amount_min_wan)}`,
+  ].filter((item): item is string => item !== null);
+  parts.push(...(ranges.length ? ranges : ['不限数值区间']));
+
+  return parts;
+}
+
+/** 单行摘要，用于 tooltip */
+export function summarizeFilter(filter: MarketFilter): string {
+  return summarizeFilterParts(filter).join(' · ');
 }

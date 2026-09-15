@@ -50,6 +50,15 @@ pub struct StockAnalysis {
     pub momentum60: Option<f64>,
     /// 量比（今日量 / 过去 5 日均量）
     pub volume_ratio: Option<f64>,
+    /// 操作计划（买点 / 止损 / 止盈 / 仓位）。
+    ///
+    /// ⚠️ 由 `analyze_stock` 命令在评分之后补上 —— 评分本身只吃 K 线，
+    /// 不知道用户当前用的是哪条策略。缺省为 `None`（只做纯评分时）。
+    #[serde(default)]
+    pub trade_plan: Option<super::playbook::TradePlan>,
+    /// 该规则在这只股票自身历史上的回测结果。缺省为 `None`。
+    #[serde(default)]
+    pub backtest: Option<super::backtest::BacktestStats>,
 }
 
 /// 至少需要多少根日 K 才能输出完整评分（MA60 需要 60 根）
@@ -259,6 +268,10 @@ pub fn analyze(klines: &[KLineData]) -> Option<StockAnalysis> {
         momentum20: Some(mom20),
         momentum60: mom60,
         volume_ratio: vr,
+        // 评分只吃 K 线，派生不出「用户当前用哪条策略」；
+        // 操作计划与回测由 analyze_stock 命令按策略补上（见 commands/analysis.rs）
+        trade_plan: None,
+        backtest: None,
     })
 }
 

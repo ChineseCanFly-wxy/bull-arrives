@@ -5,12 +5,14 @@
 import { computed, watch } from 'vue';
 import { NModal, NTag, NSpin } from 'naive-ui';
 import { useAnalysisStore } from '@/stores/analysis';
-import { verdictTone } from '@/types/analysis';
+import { evaluateBacktest, tradeRuleLabel, verdictTone } from '@/types/analysis';
 
 const props = defineProps<{
   show: boolean;
   symbol: string;
   name: string;
+  /** 用哪套交易规则算买卖点。缺省趋势跟随；筛选器会把当前策略配套的规则传进来 */
+  rule?: string;
 }>();
 const emit = defineEmits<{ 'update:show': [value: boolean] }>();
 
@@ -21,13 +23,17 @@ const visible = computed({
   set: value => emit('update:show', value),
 });
 
-// 打开且符号变化时自动分析
+// 打开、换股票、换规则时都要重新分析 —— 规则会改变买点/止损/止盈与回测结果
 watch(
-  () => [props.show, props.symbol] as const,
-  ([open, sym]) => {
-    if (open && sym) void store.analyze(sym);
+  () => [props.show, props.symbol, props.rule] as const,
+  ([open, sym, rule]) => {
+    if (open && sym) void store.analyze(sym, rule);
   },
 );
+
+const plan = computed(() => store.analysis?.trade_plan ?? null);
+const backtest = computed(() => store.analysis?.backtest ?? null);
+const backtestVerdict = computed(() => (backtest.value ? evaluateBacktest(backtest.value) : null));
 
 /** 分数条形颜色：高分偏红（看多），低分偏绿（看空） */
 function barClass(score: number): string {
@@ -52,6 +58,22 @@ function momentum(v: number | null): string {
   const sign = v > 0 ? '+' : '';
   return `${sign}${(v * 100).toFixed(1)}%`;
 }
+
+/** 价格：统一两位小数，便于和行情软件对照 */
+function price(v: number): string {
+  return Number.isFinite(v) ? v.toFixed(2) : '-';
+}
+
+/** 带符号的数值（期望、累计收益等） */
+function signed(v: number, digits = 2): string {
+  if (!Number.isFinite(v)) return '-';
+  const sign = v > 0 ? '+' : '';
+  return `${sign}${v.toFixed(digits)}`;
+}
+
+function rate(v: number): string {
+  return Number.isFinite(v) ? `${(v * 100).toFixed(0)}%` : '-';
+}
 </script>
 
 <template>
@@ -59,7 +81,8 @@ function momentum(v: number | null): string {
     v-model:show="visible"
     preset="card"
     title="个股技术分析"
-    :style="{ width: '640px' }"
+    :style="{ width: 'min(760px, calc(100vw - 24px))' }"
+    :content-style="{ maxHeight: 'calc(100vh - 120px)', overflow: 'auto' }"
     :bordered="false"
     size="small"
   >
@@ -85,6 +108,98 @@ function momentum(v: number | null): string {
               <span class="muted">综合评分（0–100）</span>
             </div>
           </div>
+
+          <!-- 操作计划：把「选出来」变成「照着做」 -->
+          <div class="section-title plan-title">
+            <span>操作计划</span>
+            <span class="rule-tag">{{ plan ? plan.rule_label : tradeRuleLabel(store.ruleUsed) }}</span>
+            <span v-if="plan" class="ready-tag" :class="plan.ready ? 'ok' : 'wait'">
+              {{ plan.ready ? '当前满足入场条件' : '当前未触发' }}
+            </span>
+          </div>
+
+          <div v-if="plan" class="plan" :class="{ 'plan-wait': !plan.ready }">
+            <div class="plan-levels">
+              <div class="level">
+                <span class="level-k">买入区间</span>
+                <span class="level-v mono">{{ price(plan.buy_low) }} – {{ price(plan.buy_high) }}</span>
+              </div>
+              <div class="level">
+                <span class="level-k">止损</span>
+                <span class="level-v mono down">
+                  {{ price(plan.stop_loss) }}<small>（-{{ plan.stop_pct.toFixed(1) }}%）</small>
+                </span>
+              </div>
+              <div class="level">
+                <span class="level-k">止盈</span>
+                <span class="level-v mono up">{{ price(plan.take_profit) }}</span>
+              </div>
+              <div class="level">
+                <span class="level-k">盈亏比</span>
+                <span class="level-v mono">1 : {{ plan.risk_reward.toFixed(1) }}</span>
+              </div>
+              <div class="level">
+                <span class="level-k">仓位上限</span>
+                <span class="level-v mono">{{ plan.position_pct.toFixed(0) }}%</span>
+              </div>
+              <div class="level">
+                <span class="level-k">参考价</span>
+                <span class="level-v mono">{{ price(plan.reference_price) }}</span>
+              </div>
+            </div>
+
+            <div v-if="!plan.ready && plan.waiting_for" class="plan-waiting">
+              还没到买点：{{ plan.waiting_for }}
+            </div>
+
+            <div class="plan-profile">{{ plan.rule_profile }}</div>
+
+            <ul class="plan-notes">
+              <li v-for="(note, index) in plan.notes" :key="index">{{ note }}</li>
+            </ul>
+          </div>
+          <div v-else-if="store.analysis" class="muted plan-missing">
+            拿不到操作计划：日 K 不足（至少需要 15 根才能算出 ATR）或价格数据异常。宁可不给价位，也不编一个。
+          </div>
+
+          <!-- 规则回测：让「胜率」落到这只股票自己的历史上 -->
+          <template v-if="backtest">
+            <div class="section-title plan-title">
+              <span>规则历史回测</span>
+              <span class="rule-tag">{{ backtest.rule_label }}</span>
+              <span class="muted">过去 {{ backtest.bars }} 根日 K</span>
+            </div>
+
+            <div class="backtest" :class="`bt-${backtestVerdict?.tone ?? 'warn'}`">
+              <div class="grid">
+                <div class="cell"><span class="k">触发次数</span><span class="v mono">{{ backtest.trades }}</span></div>
+                <div class="cell"><span class="k">胜率</span><span class="v mono">{{ rate(backtest.win_rate) }}</span></div>
+                <div class="cell"><span class="k">盈亏比</span><span class="v mono">{{ backtest.payoff_ratio.toFixed(2) }}</span></div>
+                <div class="cell">
+                  <span class="k">每笔期望</span>
+                  <span class="v mono" :class="backtest.expectancy_pct > 0 ? 'up' : 'down'">
+                    {{ signed(backtest.expectancy_pct) }}%
+                  </span>
+                </div>
+                <div class="cell"><span class="k">平均盈利</span><span class="v mono up">+{{ backtest.avg_win_pct.toFixed(2) }}%</span></div>
+                <div class="cell"><span class="k">平均亏损</span><span class="v mono down">-{{ backtest.avg_loss_pct.toFixed(2) }}%</span></div>
+                <div class="cell">
+                  <span class="k">累计</span>
+                  <span class="v mono" :class="backtest.total_return_pct > 0 ? 'up' : 'down'">
+                    {{ signed(backtest.total_return_pct) }}%
+                  </span>
+                </div>
+                <div class="cell"><span class="k">最大回撤</span><span class="v mono down">-{{ backtest.max_drawdown_pct.toFixed(1) }}%</span></div>
+                <div class="cell"><span class="k">平均持仓</span><span class="v mono">{{ backtest.avg_hold_days.toFixed(1) }} 天</span></div>
+              </div>
+
+              <div class="bt-verdict">{{ backtestVerdict?.text }}</div>
+              <div class="bt-caveat">
+                只看胜率会误判：高胜率配低盈亏比照样亏钱。上面这几项要一起看，尤其是「每笔期望」。
+              </div>
+              <div class="bt-note muted">{{ backtest.note }}</div>
+            </div>
+          </template>
 
           <!-- 因子明细 -->
           <div class="section-title">因子明细</div>
@@ -187,6 +302,138 @@ function momentum(v: number | null): string {
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-secondary);
   margin-bottom: var(--space-1);
+}
+
+/* ── 操作计划 ── */
+.plan-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.rule-tag {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-dim);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-normal);
+}
+.ready-tag {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  font-weight: var(--font-weight-normal);
+}
+/* 「可入场」用品牌蓝而不是红/绿 —— 红绿在本项目里表示涨跌，借用会误导 */
+.ready-tag.ok {
+  background: var(--color-accent-dim);
+  color: var(--color-accent);
+}
+.ready-tag.wait {
+  background: var(--color-bg-hover);
+  color: var(--color-text-tertiary);
+}
+.plan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-0);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-card);
+}
+.plan-wait {
+  border-left-color: var(--color-warning);
+}
+.plan-levels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0 var(--space-4);
+}
+.level {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 3px 0;
+  border-bottom: 1px dashed var(--color-border-0);
+}
+.level-k {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+.level-v {
+  font-size: var(--text-sm);
+}
+.level-v small {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+.plan-waiting {
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+.plan-profile {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+.plan-notes {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.plan-notes li {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.6;
+}
+.plan-missing {
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-card);
+  line-height: 1.6;
+}
+
+/* ── 规则回测 ── */
+.backtest {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-0);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-card);
+}
+.bt-good {
+  border-left-color: var(--color-accent);
+}
+.bt-warn {
+  border-left-color: var(--color-warning);
+}
+.bt-bad {
+  border-left-color: var(--color-error);
+}
+.bt-verdict {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+.bt-caveat {
+  font-size: var(--text-xs);
+  color: var(--color-warning);
+  line-height: 1.6;
+}
+.bt-note {
+  line-height: 1.6;
 }
 
 .factors {

@@ -51,34 +51,55 @@ function logToBackend(level: 'info' | 'warn' | 'error', message: string): void {
  * ⚠️ Rust 侧 `eastmoney_universe::FilterPreset` 才是唯一权威来源；这份副本**只在后端
  * 命令失败时**用来保证 UI 不至于一个标签都没有（否则用户会以为功能坏了）。
  * 若改了 Rust 侧的数值，请同步这里。数值必须与 `FilterPreset::build()` 一致。
+ *
+ * 兜底列表**不含用户自建策略**（它们存在后端 settings 里，读不到就是读不到）。
  */
 const FALLBACK_PRESETS: PresetInfo[] = (() => {
-  const entry = (id: string, label: string, description: string, patch: Partial<MarketFilter>) => ({
+  const entry = (
+    id: string,
+    label: string,
+    description: string,
+    rule: string,
+    patch: Partial<MarketFilter>,
+  ) => ({
     id,
     label,
     description,
+    rule,
     filter: { ...createDefaultFilter(), ...patch },
+    builtin: true,
   });
   return [
-    entry('all', '全部', '仅做基础排除（ST/退市/停牌/一字板/B股），不限数值区间', {}),
-    entry('steady_trend', '稳健趋势', '中大盘、温和放量、温和上涨 —— 适合中线持有', {
+    entry('all', '全部', '仅做基础排除（ST/退市/停牌/一字板/B股），不限数值区间', 'trend_follow', {}),
+    entry('steady_trend', '稳健趋势', '中大盘 · 近 60 日不弱 · 温和放量上涨 —— 趋势确认，不追高', 'trend_follow', {
       market_cap_min_yi: 100, market_cap_max_yi: 3000,
       turnover_min: 1, turnover_max: 8, volume_ratio_min: 1,
       change_pct_min: -2, change_pct_max: 5,
       amount_min_wan: 10000, price_min: 5,
+      change_60d_min: 0,
     }),
-    entry('strong_breakout', '强势突破', '明显放量且涨幅靠前 —— 适合突破跟进', {
+    entry('strong_breakout', '强势突破', '当日明显放量且涨幅靠前 —— 资金驱动型选池，注意追高风险', 'breakout', {
       volume_ratio_min: 2, change_pct_min: 3, change_pct_max: 9,
       turnover_min: 3, turnover_max: 20, amount_min_wan: 20000,
     }),
-    entry('short_term_active', '短线活跃', '中小市值、高换手、有资金关注 —— 适合短线', {
+    entry('short_term_active', '短线活跃', '中小市值 · 高换手 —— 活跃度筛选，用于短线选池，非收益预期', 'breakout', {
       market_cap_min_yi: 20, market_cap_max_yi: 300,
       turnover_min: 5, turnover_max: 25, volume_ratio_min: 1.5,
       change_pct_min: -3, change_pct_max: 9, amount_min_wan: 8000,
     }),
-    entry('oversold_rebound', '超跌反弹', '当日走弱但换手不低 —— 博超跌反弹', {
-      change_pct_min: -9, change_pct_max: 0, turnover_min: 2,
-      volume_ratio_min: 1.2, amount_min_wan: 8000, price_min: 3,
+    entry('oversold_rebound', '超跌反弹', '近 60 日跌超 15% 且今日仍弱 —— A 股短期反转效应，跌多的更易反弹', 'mean_reversion', {
+      change_60d_max: -15, change_pct_min: -9, change_pct_max: 0,
+      turnover_min: 2, volume_ratio_min: 1,
+      amount_min_wan: 5000, price_min: 3,
+    }),
+    entry('low_valuation', '低估值价值', '低市净率 + 正盈利 —— 价值因子，低 PB 是 A 股最稳健的估值因子', 'trend_follow', {
+      pb_min: 0.01, pb_max: 2, pe_min: 0.01, pe_max: 30,
+      market_cap_min_yi: 50, amount_min_wan: 5000, price_min: 3,
+    }),
+    entry('low_volatility', '低波动稳健', '低振幅 · 中大盘 —— 低波动因子，波动大的股票长期收益反而更差', 'trend_follow', {
+      amplitude_max: 4, market_cap_min_yi: 100,
+      turnover_min: 0.5, turnover_max: 5,
+      amount_min_wan: 5000, price_min: 5,
     }),
   ];
 })();
@@ -117,6 +138,13 @@ function safeParseFilter(raw: string): MarketFilter | null {
       change_pct_min: numOrNull(obj.change_pct_min),
       change_pct_max: numOrNull(obj.change_pct_max),
       amount_min_wan: numOrNull(obj.amount_min_wan),
+      change_60d_min: numOrNull(obj.change_60d_min),
+      change_60d_max: numOrNull(obj.change_60d_max),
+      pe_min: numOrNull(obj.pe_min),
+      pe_max: numOrNull(obj.pe_max),
+      pb_min: numOrNull(obj.pb_min),
+      pb_max: numOrNull(obj.pb_max),
+      amplitude_max: numOrNull(obj.amplitude_max),
     };
   } catch {
     return null;
@@ -145,6 +173,8 @@ export const useUniverseStore = defineStore('universe', () => {
   const sourceLabel = ref('');
   /** 当前通道是否提供「量比」。false 时 UI 必须禁用该条件并说明原因 */
   const volumeRatioSupported = ref(true);
+  /** 当前通道是否提供「60 日涨跌幅」。false 时趋势/反转类策略的条件会被跳过 */
+  const change60dSupported = ref(true);
   /** 被数据源不支持而自动忽略的条件名 */
   const skippedConditions = ref<string[]>([]);
   /** 用户选择的取数通道（持久化在 settings） */
@@ -169,36 +199,52 @@ export const useUniverseStore = defineStore('universe', () => {
     () => presets.value.find(p => p.id === activePresetId.value)?.label ?? '自定义',
   );
 
-  /** 拉取预设（幂等，只需一次）。
+  /** 拉取策略列表（内置 + 自建）。
    *
-   * ⚠️ 失败会抛出，但**绝不缓存失败状态** —— 由调用方决定是否重试。
+   * `force` 为 true 时忽略缓存 —— 增删改之后必须强制重拉，否则界面上看不到变化。
+   *
+   * ⚠️ 失败会抛出（仅 force 模式），但**绝不缓存失败状态** —— 由调用方决定是否重试。
    * 之前这里一失败就把整个 hydrate 永久卡死，表现为「预设标签只剩自定义、
    * 点开始筛选也永远没结果」，就是这个原因。
    */
-  async function ensurePresets() {
-    if (presets.value.length) return;
+  async function fetchPresets(force: boolean) {
+    if (presets.value.length && !force) return;
     presetsLoading.value = true;
     presetsError.value = null;
     try {
       const list = await invoke<PresetInfo[]>('get_filter_presets');
       presets.value = list;
       presetsError.value = null;
-      logToBackend('info', `预设加载成功：${list.map(p => p.id).join(',')}`);
+      logToBackend(
+        'info',
+        `策略加载成功：内置 ${list.filter(p => p.builtin).length} 个，自建 ${list.filter(p => !p.builtin).length} 个`,
+      );
     } catch (e) {
-      // 兜底：后端失败也给出预设标签，保证筛选器可用；同时明确提示用户这是降级状态
+      // 兜底：后端失败也给出内置策略标签，保证筛选器可用；同时明确提示用户这是降级状态
       presetsError.value = String(e);
       presets.value = FALLBACK_PRESETS;
       logToBackend('error', `get_filter_presets 失败，已用内置兜底：${String(e)}`);
-      console.error('[universe] 加载预设失败，已使用内置兜底预设:', e);
+      console.error('[universe] 加载策略失败，已使用内置兜底:', e);
+      if (force) throw e;
     } finally {
       presetsLoading.value = false;
     }
-    // 预设加载完成后立刻对齐到当前选中项，覆盖占位默认值。
+    // 策略加载完成后立刻对齐到当前选中项，覆盖占位默认值。
     // 注意：custom 表示「手动改过条件」，此时不能套用任何预设，否则会覆盖掉已恢复的条件。
     if (activePresetId.value !== CUSTOM_PRESET_ID) {
       const initial = presets.value.find(p => p.id === activePresetId.value) ?? presets.value[0];
       if (initial) filter.value = cloneFilter(initial.filter);
     }
+  }
+
+  /** 首次加载：已有缓存就不重复请求 */
+  async function ensurePresets() {
+    await fetchPresets(false);
+  }
+
+  /** 强制重拉策略列表（保存 / 删除之后调用） */
+  async function reloadPresets() {
+    await fetchPresets(true);
   }
 
   /** 预设加载失败后的手动重试入口 */
@@ -211,17 +257,96 @@ export const useUniverseStore = defineStore('universe', () => {
     }
   }
 
+  /** 内置策略：随版本维护，界面上只给「另存为」入口 */
+  const builtinPresets = computed(() => presets.value.filter(p => p.builtin));
+  /** 用户自建策略：可重命名、可用当前条件覆盖、可删除 */
+  const customPresets = computed(() => presets.value.filter(p => !p.builtin));
+
+  /** 指定 id 是否为用户自建策略（决定界面上要不要给改名/删除入口） */
+  function isCustomPreset(id: string): boolean {
+    return presets.value.some(p => p.id === id && !p.builtin);
+  }
+
+  /**
+   * 名称是否已被别的策略占用。
+   *
+   * 本地预检只为了**即时反馈**（用户还没点保存就能看到红字），
+   * 真正的裁决在后端 —— 那里会把内置策略一起纳入比对。
+   */
+  function presetNameTaken(label: string, exceptId?: string): string | null {
+    const trimmed = label.trim();
+    if (!trimmed) return null;
+    return presets.value.some(p => p.label === trimmed && p.id !== exceptId) ? trimmed : null;
+  }
+
+  /**
+   * 保存策略：**新建 / 重命名 / 用当前条件覆盖**三种动作共用一个命令。
+   *
+   * - 不传 `id`：以 `filter`（缺省为当前条件）新建一条
+   * - 传已有自建策略的 `id`：覆盖它的名称、说明与条件
+   *
+   * 保存后立即选中，并把 `filter` 对齐成**后端规范化之后**的结果 ——
+   * 若条件里有「最小值 > 最大值」这种填反的写法，后端会交换过来，
+   * 用户马上就能在界面上看到修正后的样子，而不是存下一个筛不出东西的策略。
+   */
+  async function savePreset(options: {
+    id?: string;
+    label: string;
+    description?: string;
+    /** 交易规则 id；缺省即趋势跟随 */
+    rule?: string;
+    filter?: MarketFilter;
+  }): Promise<PresetInfo> {
+    const saved = await invoke<PresetInfo>('save_filter_preset', {
+      id: options.id ?? null,
+      label: options.label,
+      description: options.description ?? '',
+      rule: options.rule ?? 'trend_follow',
+      filter: options.filter ?? filter.value,
+    });
+    await reloadPresets();
+    filter.value = cloneFilter(saved.filter);
+    activePresetId.value = saved.id;
+    await persist();
+    logToBackend('info', `策略已保存：${saved.id}「${saved.label}」`);
+    return saved;
+  }
+
+  /**
+   * 删除一条自建策略。
+   *
+   * 若删掉的正是当前选中项，回落到「全部」—— 否则界面会高亮一个不存在的策略，
+   * 且下次筛选用的还是它残留的条件。
+   */
+  async function deletePreset(id: string): Promise<void> {
+    await invoke('delete_filter_preset', { id });
+    await reloadPresets();
+    if (activePresetId.value === id) {
+      const fallback = presets.value.find(p => p.id === 'all') ?? presets.value[0];
+      if (fallback) {
+        filter.value = cloneFilter(fallback.filter);
+        activePresetId.value = fallback.id;
+      }
+    }
+    await persist();
+    logToBackend('info', `策略已删除：${id}`);
+  }
+
   /** 用户手动改过条件 → 标记为「自定义」 */
   function markCustom() {
     activePresetId.value = CUSTOM_PRESET_ID;
   }
 
   /**
-   * 切换预设：整体替换数值区间，但**保留用户自己设置的板块与排除项**。
+   * 切换策略。
    *
+   * **内置预设**：整体替换数值区间，但**保留用户自己设置的板块与排除项**。
    * 板块（沪/深/创/科/北）和排除规则（ST/退市/停牌/一字板）是「我的选股范围」，
-   * 而预设描述的是「在这些范围里找什么形态的股票」。之前切预设会把板块一起重置，
+   * 而内置预设描述的是「在这些范围里找什么形态的股票」。之前切预设会把板块一起重置，
    * 用户每切一次就得重新勾一遍，所以这里显式保留。
+   *
+   * **自建策略**：整份还原，**不保留**当前板块与排除项。
+   * 用户存下来的是一整套条件（含板块与排除），切回来却对不上就失去意义了。
    */
   function applyPreset(id: string) {
     if (id === CUSTOM_PRESET_ID) {
@@ -233,12 +358,14 @@ export const useUniverseStore = defineStore('universe', () => {
     const preset = presets.value.find(p => p.id === id);
     if (!preset) return;
     const next = cloneFilter(preset.filter);
-    const current = filter.value;
-    next.boards = [...current.boards];
-    next.exclude_st = current.exclude_st;
-    next.exclude_delisting = current.exclude_delisting;
-    next.exclude_suspended = current.exclude_suspended;
-    next.exclude_limit_locked = current.exclude_limit_locked;
+    if (preset.builtin) {
+      const current = filter.value;
+      next.boards = [...current.boards];
+      next.exclude_st = current.exclude_st;
+      next.exclude_delisting = current.exclude_delisting;
+      next.exclude_suspended = current.exclude_suspended;
+      next.exclude_limit_locked = current.exclude_limit_locked;
+    }
     filter.value = next;
     activePresetId.value = id;
     void persist();
@@ -521,11 +648,14 @@ export const useUniverseStore = defineStore('universe', () => {
     source.value = response.source;
     sourceLabel.value = response.source_label;
     volumeRatioSupported.value = response.volume_ratio_supported;
+    change60dSupported.value = response.change_60d_supported;
     skippedConditions.value = response.skipped_conditions;
   }
 
   return {
     presets,
+    builtinPresets,
+    customPresets,
     activePresetId,
     activePresetLabel,
     filter,
@@ -538,6 +668,7 @@ export const useUniverseStore = defineStore('universe', () => {
     source,
     sourceLabel,
     volumeRatioSupported,
+    change60dSupported,
     skippedConditions,
     sourceMode,
     pageSize,
@@ -550,7 +681,12 @@ export const useUniverseStore = defineStore('universe', () => {
     loading,
     error,
     ensurePresets,
+    reloadPresets,
     retryPresets,
+    isCustomPreset,
+    presetNameTaken,
+    savePreset,
+    deletePreset,
     setSourceMode,
     setPageSize,
     fetchPage,

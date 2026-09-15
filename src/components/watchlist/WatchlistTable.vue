@@ -15,6 +15,7 @@ const HoldingDialog = defineAsyncComponent(() => import('./HoldingDialog.vue'));
 import { calculateHoldingMetrics, scaledPriceToDecimal, type Holding } from '@/utils/holdings';
 import MarketTag from './MarketTag.vue';
 import StockDetail from '@/components/detail/StockDetail.vue';
+import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
 import { CLEAR_INDEX_DETAIL_KEY } from '@/utils/keys';
 
 const watchlist = useWatchlistStore();
@@ -34,6 +35,21 @@ function openHolding(row: WatchItem) {
   cancelPendingRowClick();
   holdingItem.value = row;
   showHoldingDialog.value = true;
+}
+
+/**
+ * 打开个股量化分析（含操作计划：买点 / 止损 / 止盈 / 仓位 + 规则历史回测）。
+ *
+ * 自选股此前只能「整表评分排序」，看不到单只股票为什么是这个分、更看不到买卖点 ——
+ * 这里补上逐只的分析入口。规则用默认的趋势跟随：自选股不属于任何筛选策略，
+ * 不存在「策略配套规则」可继承。
+ */
+const showAnalysisDialog = ref(false);
+const analysisRow = ref<WatchItem | null>(null);
+function openAnalysis(row: WatchItem) {
+  cancelPendingRowClick();
+  analysisRow.value = row;
+  showAnalysisDialog.value = true;
 }
 function holdingMetric(row: WatchItem) {
   const holding = holdings.value.get(row.id);
@@ -418,6 +434,24 @@ const columns: DataTableColumns<WatchItem> = [
       return h('span', `${q.turnover_rate.toFixed(2)}%`);
     }
   },
+  {
+    title: '操作', key: 'action', width: 76, align: 'center',
+    render(row) {
+      return h(
+        NButton,
+        {
+          size: 'tiny',
+          tertiary: true,
+          // 行上的单击/双击另有含义（看详情 / 设提醒），必须阻止冒泡
+          onClick: (event: MouseEvent) => {
+            event.stopPropagation();
+            openAnalysis(row);
+          },
+        },
+        { default: () => '分析' },
+      );
+    }
+  },
 ];
 
 defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.value = null; } });
@@ -483,6 +517,13 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
       v-if="selectedRow"
       :item="selectedRow"
       @close="selectedRow = null"
+    />
+
+    <AnalysisDialog
+      v-if="analysisRow"
+      v-model:show="showAnalysisDialog"
+      :symbol="analysisRow.code"
+      :name="analysisRow.name"
     />
 
     <HoldingDialog v-if="showHoldingDialog" v-model:show="showHoldingDialog" :item="holdingItem" @saved="loadHoldings" />
