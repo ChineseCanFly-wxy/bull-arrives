@@ -83,6 +83,30 @@ export function tradeRuleLabel(rule: string): string {
   return TRADE_RULE_OPTIONS.find(o => o.value === rule)?.label ?? '趋势跟随';
 }
 
+/**
+ * 筛选器结果表用的「轻量状态」—— `batch_stock_status` 命令的返回项。
+ *
+ * 与 `StockAnalysis` 的区别：这里只带**表格列需要的那几个字段**。
+ * 一页最多 100 只，把完整分析（因子明细 / 回测）全传回来纯属浪费。
+ */
+export interface StockStatusItem {
+  /** 完整符号（sh600519），前端用它回填到对应行 */
+  symbol: string;
+  /** 量化评分；拉 K 线失败或数据不足时为 null */
+  score: number | null;
+  /** 当前是否已满足入场条件；无计划（K 线不足 / 价格异常）时为 null */
+  ready: boolean | null;
+  /** 未满足时缺什么条件 */
+  waiting_for: string | null;
+  buy_low: number | null;
+  buy_high: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  risk_reward: number | null;
+  /** 失败原因；成功时为 null */
+  error: string | null;
+}
+
 /** 一只股票在某条规则下的操作计划 */
 export interface TradePlan {
   rule: TradeRuleId;

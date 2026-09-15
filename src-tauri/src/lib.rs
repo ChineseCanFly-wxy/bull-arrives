@@ -831,6 +831,7 @@ pub fn run() {
             commands::universe::save_filter_preset,
             commands::universe::delete_filter_preset,
             commands::analysis::analyze_stock,
+            commands::analysis::batch_stock_status,
             commands::rank::scan_and_rank,
             commands::monitor::get_monitors,
             commands::monitor::save_monitor,

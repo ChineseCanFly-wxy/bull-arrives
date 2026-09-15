@@ -7,7 +7,7 @@
 // - 快照在 Rust 侧带 60 秒缓存，重复点击「筛选」不会打爆数据源
 // - 结果表支持本地排序；「加自选」会自动把 6 位代码转成 sh/sz/bj 前缀的完整符号
 
-import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import {
   NButton,
@@ -27,7 +27,7 @@ import { useUniverseStore } from '@/stores/universe';
 import { useWatchlistStore } from '@/stores/watchlist';
 import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
 import RankDialog from '@/components/rank/RankDialog.vue';
-import type { StockAnalysis } from '@/types/analysis';
+import type { StockAnalysis, StockStatusItem } from '@/types/analysis';
 import { TRADE_RULE_OPTIONS, tradeRuleLabel, type TradeRuleId } from '@/types/analysis';
 import {
   BOARD_LABELS,
@@ -301,13 +301,240 @@ const rankedPage = ref(1);
 const rankedPageSize = ref(20);
 let scoreRun = 0;
 
+/**
+ * 表格行的唯一键。
+ *
+ * 用**完整符号**（sh600519）而不是 `board:code`：后端 `batch_stock_status` 回传的
+ * 就是这个形式的 symbol，两边对齐就不用再做一次映射。
+ */
 function scoreKey(row: SnapshotRow): string {
-  return `${row.board}:${row.code}`;
+  return toFullSymbol(row.code, row.board);
 }
 
 function scoreOf(row: SnapshotRow): number {
   return scoreByRow.value.get(scoreKey(row)) ?? -1;
 }
+
+// ── 当前页「评分 + 入场」批量状态 ────────────────────────────────
+// 「入场」列要直接展示「当前是否满足入场条件」，不能让用户逐只点开分析才知道。
+// 一页最多 100 只，若前端逐只调 `analyze_stock` 就要发 100 次 IPC；
+// 交给 Rust 侧并发拉日 K（见 commands/analysis.rs 的 batch_stock_status），一次调用搞定。
+const statusByRow = ref<Map<string, StockStatusItem>>(new Map());
+const statusLoading = ref(false);
+const statusError = ref<string | null>(null);
+let statusRun = 0;
+let statusTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** 本页还没算过状态的股票 */
+function pendingStatusRows(): SnapshotRow[] {
+  return displayedRows.value.filter(row => !statusByRow.value.has(scoreKey(row)));
+}
+
+/**
+ * 算当前页的评分与入场状态。
+ *
+ * 规则（`activeRule`）必须与当前策略配套，否则会出现「用超跌反弹策略选出来、
+ * 却按趋势规则判断入场」的错配 —— 与打开个股分析时的处理一致。
+ */
+async function scanPageStatus() {
+  const rows = pendingStatusRows();
+  if (!rows.length) return;
+
+  const run = ++statusRun;
+  const rule = activeRule.value;
+  statusLoading.value = true;
+  statusError.value = null;
+
+  try {
+    const items = await invoke<StockStatusItem[]>('batch_stock_status', {
+      symbols: rows.map(row => scoreKey(row)),
+      rule,
+    });
+    // 换页 / 换策略 / 重新筛选都会让这一批作废，直接丢弃即可
+    if (run !== statusRun || rule !== activeRule.value) return;
+
+    const bySymbol = new Map(items.map(item => [item.symbol, item]));
+    const nextScore = new Map(scoreByRow.value);
+    const nextStatus = new Map(statusByRow.value);
+    let failed = 0;
+    for (const row of rows) {
+      const key = scoreKey(row);
+      const item = bySymbol.get(key);
+      if (!item) continue;
+      nextStatus.set(key, item);
+      if (item.score != null) nextScore.set(key, item.score);
+      if (item.error) failed += 1;
+    }
+    scoreByRow.value = nextScore;
+    statusByRow.value = nextStatus;
+    // 部分失败不静默：K 线不足 / 限流都可能只影响几只，说清楚比让人以为「全都没机会」好
+    if (failed) {
+      statusError.value = `${rows.length} 只里有 ${failed} 只没算出入场状态（多为上市时间短、K 线不足或数据源限流）`;
+    }
+  } catch (e) {
+    if (run === statusRun) {
+      statusError.value = `计算入场状态失败：${e}`;
+      console.error('[universe] batch_stock_status failed:', e);
+    }
+  } finally {
+    if (run === statusRun) statusLoading.value = false;
+  }
+}
+
+/** 防抖：快速翻页时只算最后停下来的那一页 */
+function scheduleStatusScan(delay = 250) {
+  if (statusTimer) clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => {
+    statusTimer = undefined;
+    void scanPageStatus();
+  }, delay);
+}
+
+// ── 弹窗尺寸：可拖拽缩放 + 自动记忆 + 跟随窗口 ───────────────────
+// 固定尺寸看不下更多行，所以宽高放开给用户拖；拖完存进 settings（与筛选条件同一套 KV）。
+// 窗口变小时弹窗必须跟着收敛，否则会有一部分跑到屏幕外、连关闭按钮都点不到。
+const SIZE_SETTING_KEY = 'universe_dialog_size';
+/** 缩放下限。低于这个尺寸筛选面板会挤成一团，不如不许拖 */
+const MIN_PANEL_W = 640;
+const MIN_PANEL_H = 400;
+/** 视口留白：四周留一点，保证遮罩可见、卡片不至于贴边 */
+const VIEWPORT_GUTTER_W = 24;
+const VIEWPORT_GUTTER_H = 56;
+
+/** 用户设定的尺寸（px）。null = 还没定过，用视口默认值 */
+const prefWidth = ref<number | null>(null);
+const prefHeight = ref<number | null>(null);
+/** 视口尺寸，随 window.resize 更新 */
+const viewport = ref({ w: window.innerWidth, h: window.innerHeight });
+const resizing = ref(false);
+
+const sizeLimits = computed(() => {
+  const maxW = Math.max(320, viewport.value.w - VIEWPORT_GUTTER_W);
+  const maxH = Math.max(280, viewport.value.h - VIEWPORT_GUTTER_H);
+  return {
+    // 下限也要收敛进视口：窗口比下限还小时，否则会算出「min > max」的死锁
+    minW: Math.min(MIN_PANEL_W, maxW),
+    minH: Math.min(MIN_PANEL_H, maxH),
+    maxW,
+    maxH,
+  };
+});
+
+const panelWidth = computed(() => {
+  const l = sizeLimits.value;
+  const want = prefWidth.value ?? Math.min(1120, l.maxW);
+  return Math.round(Math.min(Math.max(want, l.minW), l.maxW));
+});
+
+const panelHeight = computed(() => {
+  const l = sizeLimits.value;
+  // 默认高度取视口的 86% —— 够大，又不会顶到屏幕边缘
+  const want = prefHeight.value ?? Math.min(Math.round(viewport.value.h * 0.86), l.maxH);
+  return Math.round(Math.min(Math.max(want, l.minH), l.maxH));
+});
+
+const modalStyle = computed(() => ({
+  width: `${panelWidth.value}px`,
+  height: `${panelHeight.value}px`,
+}));
+
+/**
+ * 右下角缩放柄：pointerdown 时记下起点，拖动期间实时改 `prefWidth/prefHeight`。
+ *
+ * 注意这里拖的是**用户意愿值**，显示时再按视口 clamp（见 panelWidth/panelHeight）。
+ * 这样窗口临时变小不会把用户的设定改小，窗口恢复后尺寸也跟着回来。
+ */
+function startResize(event: PointerEvent) {
+  if (event.button !== 0) return;
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const startW = panelWidth.value;
+  const startH = panelHeight.value;
+  resizing.value = true;
+
+  const onMove = (e: PointerEvent) => {
+    const l = sizeLimits.value;
+    prefWidth.value = Math.min(Math.max(startW + (e.clientX - startX), l.minW), l.maxW);
+    prefHeight.value = Math.min(Math.max(startH + (e.clientY - startY), l.minH), l.maxH);
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    resizing.value = false;
+    void persistSize();
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
+
+async function persistSize() {
+  if (prefWidth.value === null && prefHeight.value === null) return;
+  try {
+    await invoke('set_setting', {
+      key: SIZE_SETTING_KEY,
+      value: JSON.stringify({ width: prefWidth.value, height: prefHeight.value }),
+    });
+  } catch (e) {
+    // 存不下只是下次打开回到默认尺寸，不影响本次使用，记一笔就够了
+    console.warn('[universe] 保存筛选器尺寸失败:', e);
+  }
+}
+
+async function loadSize() {
+  try {
+    const all = await invoke<Record<string, string>>('get_settings');
+    const raw = all[SIZE_SETTING_KEY];
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as { width?: unknown; height?: unknown };
+    // 宽松解析：脏数据不能把弹窗变成 0 尺寸
+    if (typeof parsed.width === 'number' && Number.isFinite(parsed.width)) {
+      prefWidth.value = parsed.width;
+    }
+    if (typeof parsed.height === 'number' && Number.isFinite(parsed.height)) {
+      prefHeight.value = parsed.height;
+    }
+  } catch (e) {
+    console.warn('[universe] 恢复筛选器尺寸失败:', e);
+  }
+}
+
+function handleViewportChange() {
+  viewport.value = { w: window.innerWidth, h: window.innerHeight };
+}
+
+// ── 结果表高度：跟着弹窗长高，而不是写死 420px ───────────────────
+// ⚠️ 这里用 ResizeObserver 量出实际可用高度，再喂给 data-table 的 max-height。
+// 不用 virtual-scroll / flex-height：那两个都要求外层高度被正确算出来，
+// 一旦算出 0 表格就是一片空白（这个坑踩过，见表格处的注释）。
+const tableWrapRef = ref<HTMLElement | null>(null);
+const tableMaxHeight = ref(420);
+let tableObserver: ResizeObserver | null = null;
+
+function observeTableWrap() {
+  tableObserver?.disconnect();
+  tableObserver = null;
+  const el = tableWrapRef.value;
+  if (!el || typeof ResizeObserver === 'undefined') return;
+  tableObserver = new ResizeObserver(entries => {
+    const height = entries[0]?.contentRect.height ?? 0;
+    // 最小 180px 兜底：算出 0 会让整个表格渲染成空白
+    if (height > 0) tableMaxHeight.value = Math.max(180, Math.round(height));
+  });
+  tableObserver.observe(el);
+}
+
+watch(
+  () => universe.resultsVisible,
+  async visible => {
+    if (!visible) {
+      tableObserver?.disconnect();
+      tableObserver = null;
+      return;
+    }
+    await nextTick();
+    observeTableWrap();
+  },
+);
 
 const globalScoreActive = computed(() => rankedRows.value !== null);
 
@@ -324,6 +551,29 @@ const displayedRows = computed(() => {
   return rows.slice(start, start + rankedPageSize.value);
 });
 
+// 表格可见、页面内容变化、策略规则变化 —— 这三种情况都需要重新判断入场。
+// ⚠️ 必须放在 `displayedRows` 之后：watch 建立时会先跑一次 getter 收集依赖，
+// 提前定义会撞上 const 的暂存死区。
+watch(
+  () => [
+    universe.resultsVisible,
+    displayedRows.value.map(row => scoreKey(row)).join('|'),
+    activeRule.value,
+  ],
+  () => {
+    if (!universe.resultsVisible) return;
+    scheduleStatusScan();
+  },
+);
+
+// 换策略：入场是按规则算的，评分与入场状态全部作废
+watch(activeRule, () => {
+  statusRun += 1;
+  statusByRow.value = new Map();
+  statusLoading.value = false;
+  statusError.value = null;
+});
+
 watch(() => universe.rows, () => {
   scoreRun += 1;
   scoreByRow.value = new Map();
@@ -332,6 +582,11 @@ watch(() => universe.rows, () => {
   scoreError.value = null;
   rankedRows.value = null;
   rankedPage.value = 1;
+  // 换了一批筛选结果，上一批的评分与入场状态一律作废
+  statusRun += 1;
+  statusByRow.value = new Map();
+  statusLoading.value = false;
+  statusError.value = null;
 });
 
 async function scoreAllAndSort() {
@@ -435,11 +690,21 @@ const pagination = computed(() => {
  */
 onMounted(() => {
   void universe.hydrate();
+  // 恢复上次拖出来的弹窗尺寸。与筛选条件分开读：尺寸坏了不该拖累条件恢复
+  void loadSize();
+  window.addEventListener('resize', handleViewportChange);
 });
 
 onBeforeUnmount(() => {
   // 关闭对话框时立即落盘：防抖的 400ms 可能在用户直接退出程序时被带走
   universe.flushPersist();
+  window.removeEventListener('resize', handleViewportChange);
+  if (statusTimer) {
+    clearTimeout(statusTimer);
+    statusTimer = undefined;
+  }
+  tableObserver?.disconnect();
+  tableObserver = null;
 });
 
 const activeDesc = computed(
@@ -532,6 +797,47 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     },
   },
   {
+    // 「当前是否满足入场条件」直接摊在列表里 —— 不用逐只点开分析才知道。
+    // 判断用的是当前策略配套的规则（与打开个股分析时同一条规则）。
+    title: '入场',
+    key: 'entry',
+    width: 96,
+    align: 'center',
+    render: row => {
+      const item = statusByRow.value.get(scoreKey(row));
+      if (!item) {
+        // 还没轮到它算：给个「计算中」而不是装作没有这回事
+        return h('span', { class: 'muted' }, statusLoading.value ? '计算中' : '--');
+      }
+      if (item.ready === true) {
+        const range =
+          item.buy_low != null && item.buy_high != null
+            ? `，买入区间 ${num(item.buy_low)}–${num(item.buy_high)}`
+            : '';
+        return h(
+          'span',
+          {
+            class: 'entry-ok',
+            title: `当前满足「${tradeRuleLabel(activeRule.value)}」的入场条件${range}`,
+          },
+          '满足',
+        );
+      }
+      if (item.ready === false) {
+        return h(
+          'span',
+          {
+            class: 'entry-no',
+            title: item.waiting_for ? `当前未触发：${item.waiting_for}` : '当前未触发',
+          },
+          '未触发',
+        );
+      }
+      // ready === null：K 线不足 / 数据源失败，算不出就是算不出
+      return h('span', { class: 'muted', title: item.error ?? '数据不足，无法判断' }, '--');
+    },
+  },
+  {
     title: '量比',
     key: 'volume_ratio',
     width: 66,
@@ -617,12 +923,20 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     v-model:show="visible"
     preset="card"
     title="全市场筛选器"
-    :style="{ width: 'min(1120px, calc(100vw - 24px))' }"
-    :content-style="{ maxHeight: 'calc(100vh - 120px)', overflow: 'auto' }"
+    :class="['universe-screener-modal', { 'is-resizing': resizing }]"
+    :style="modalStyle"
+    :content-style="{ position: 'relative', display: 'flex', flexDirection: 'column', overflow: 'hidden' }"
     :bordered="false"
     size="small"
   >
-    <div class="screener">
+    <!--
+      两层 div 是刻意的：
+      - `.screener-scroll` 是唯一的滚动区（筛选面板高时整体可滚）
+      - `.screener` 负责内部 flex 布局，让表格吃掉剩余高度
+      缩放柄要相对弹窗卡片定位（见下面 .size-grip），所以它必须是滚动区的**兄弟**，
+      否则内容一滚就跟着滚走了。
+    -->
+    <div class="screener-scroll"><div class="screener">
       <!-- 策略条：内置策略只读，自建策略可改名 / 覆盖 / 删除 -->
       <div class="preset-bar">
         <div class="chips">
@@ -861,6 +1175,11 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
           全部 {{ rankedRows?.length }} 只已按评分分页
         </n-tag>
 
+        <!-- 入场状态是逐只拉日 K 算的，说一声「还在算」，别让用户以为列坏了 -->
+        <n-tag v-if="universe.resultsVisible && statusLoading" size="small" :bordered="false">
+          正在判断本页入场条件…
+        </n-tag>
+
         <n-tag v-if="universe.stale" type="warning" size="small" :bordered="false">
           刷新失败，显示的是旧数据
         </n-tag>
@@ -873,16 +1192,22 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
         该条件已自动忽略。需要它请把左上角数据源切到「东方财富」。
       </div>
 
+      <div v-if="statusError" class="notice-line">{{ statusError }}</div>
+
       <div v-if="universe.error" class="error-line">{{ universe.error }}</div>
       <div v-if="scoreError" class="error-line">{{ scoreError }}</div>
 
       <!-- 结果表：筛完先只显示统计，点「展示数据」才出现 -->
-      <div v-if="universe.resultsVisible" class="table-wrap">
+      <div v-if="universe.resultsVisible" ref="tableWrapRef" class="table-wrap">
         <!--
           这里刻意**不用 virtual-scroll**：虚拟滚动要求外层容器有确定高度，
           一旦布局计算出 0 高度，表格会渲染成一片空白 —— 表现就是「点了筛选什么都没有」。
           也不用 flex-height：同属"依赖外层高度"的方案（曾导致行不渲染）。
           服务端分页每页最多 100 行，用固定 max-height + 内部滚动最稳。
+
+          max-height 现在是个**具体数值**（tableMaxHeight），由 ResizeObserver 量出
+          这块区域的实际高度得到 —— 弹窗拖大，表格跟着变大；仍然不是 CSS 百分比，
+          所以不会退化成上面那两种「依赖外层高度」的写法。
         -->
         <n-data-table
           :columns="columns"
@@ -891,8 +1216,8 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
           :row-key="rowKey"
           size="small"
           :remote="true"
-          :max-height="'min(420px, 40vh)'"
-          :scroll-x="1128"
+          :max-height="tableMaxHeight"
+          :scroll-x="1224"
           :pagination="pagination"
         />
         <div
@@ -908,7 +1233,15 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
       <div v-else-if="!universe.loading" class="preview-line">
         点「开始筛选」从全市场匹配股票 —— 先显示命中数量，需要时再展开明细
       </div>
-    </div>
+    </div></div>
+
+    <!-- 右下角缩放柄：拖动改宽高，松手自动记住 -->
+    <div
+      class="size-grip"
+      :class="{ active: resizing }"
+      title="拖动调整窗口大小（会自动记住）"
+      @pointerdown.prevent="startResize"
+    />
   </n-modal>
 
   <AnalysisDialog
@@ -1008,11 +1341,53 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 </template>
 
 <style scoped>
+/* 唯一滚动区。筛选面板在窄窗口下会变很高，这时整体滚动；
+   表格区另有自己的内部滚动（max-height 由 ResizeObserver 喂）。 */
+.screener-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+}
+
 .screener {
   display: flex;
   flex-direction: column;
+  /* 撑满滚动区，表格区才能分到剩余空间 */
+  min-height: 100%;
   min-width: 0;
   gap: var(--space-2);
+}
+
+/* ── 右下角缩放柄 ── */
+.size-grip {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 18px;
+  height: 18px;
+  z-index: 2;
+  cursor: nwse-resize;
+  /* 触摸设备上别把拖动手势让给页面滚动 */
+  touch-action: none;
+}
+.size-grip::before {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--color-border-0);
+  border-bottom: 2px solid var(--color-border-0);
+  border-radius: 0 0 2px 0;
+  opacity: 0.7;
+  transition: border-color var(--transition-fast), opacity var(--transition-fast);
+}
+.size-grip:hover::before,
+.size-grip.active::before {
+  border-color: var(--color-accent);
+  opacity: 1;
 }
 
 /* ── 预设条 ── */
@@ -1327,12 +1702,25 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 /* ── 结果表 ── */
 .table-wrap {
   flex: 1;
-  min-height: 0;
+  /* 下限保证表格不会被压没；空间不够时由 .screener-scroll 整体滚动 */
+  min-height: 240px;
   min-width: 0;
+  overflow: hidden;
 }
 .table-wrap :deep(.mono) {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+.table-wrap :deep(.muted) {
+  color: var(--color-text-tertiary);
+}
+/* 「可入场」用品牌蓝而不是红/绿 —— 红绿在本项目里表示涨跌，借用会误导 */
+.table-wrap :deep(.entry-ok) {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-semibold);
+}
+.table-wrap :deep(.entry-no) {
+  color: var(--color-text-tertiary);
 }
 .table-wrap :deep(.num) {
   display: inline-block;
@@ -1387,5 +1775,31 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     min-width: 0;
     width: 0;
   }
+}
+</style>
+
+<style>
+/*
+ * 可缩放弹窗的骨架 —— 不能写成 scoped：
+ * `class` 会经由 NModal 的 $attrs 落到 NCard 根元素（即 .n-modal 本身），
+ * 那个元素不在本组件的模板里，拿不到 scoped 的 data 属性。
+ *
+ * 为什么必须让卡片成为纵向 flex：内容区要 flex:1 撑满卡片高度，
+ * 内部的「表格区 flex:1」才有剩余空间可分 —— 否则拖大弹窗只有外框变大。
+ */
+.universe-screener-modal.n-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.universe-screener-modal.n-card > .n-card-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+/* 拖动缩放时别顺手选中面板里的文字 */
+.universe-screener-modal.is-resizing,
+.universe-screener-modal.is-resizing * {
+  user-select: none;
 }
 </style>
