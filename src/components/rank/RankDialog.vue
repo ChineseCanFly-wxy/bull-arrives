@@ -3,7 +3,11 @@
 // 推荐榜对话框：对筛选结果里最活跃的 N 只批量评分，按总分排序展示。
 
 import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
-import { NButton, NDataTable, NTag, type DataTableColumns } from 'naive-ui';
+// 注意：本项目没有全局注册 naive-ui，模板里用到的每个组件都必须显式 import。
+// 漏掉 NModal 时 <n-modal> 会被当作原生未知标签：插槽内容直接内联渲染，
+// 没有遮罩/卡片/定位，表现为「透明错位、被主界面盖住」——此前多轮 z-index /
+// 挂载位置修复都是在治标，根因就是这个缺失的 import。
+import { NButton, NDataTable, NModal, NTag, type DataTableColumns } from 'naive-ui';
 import { useRankStore } from '@/stores/rank';
 import { useWatchlistStore } from '@/stores/watchlist';
 import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
