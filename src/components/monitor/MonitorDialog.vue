@@ -36,6 +36,7 @@ const visible = computed({
 const selectedCode = ref<string | null>(null);
 const enabling = ref(false);
 const formError = ref<string | null>(null);
+const formNotice = ref<string | null>(null);
 
 const stockOptions = computed(() =>
   watchlist.items.map(item => ({
@@ -58,15 +59,24 @@ watch(
 
 async function handleEnable() {
   formError.value = null;
+  formNotice.value = null;
   const item = watchlist.items.find(i => i.code === selectedCode.value);
   if (!item) {
     formError.value = '请选择自选股（先在自选股里添加）';
     return;
   }
   enabling.value = true;
-  const ok = await monitorStore.save(item.code, item.market, item.name);
-  enabling.value = false;
-  if (ok) selectedCode.value = null;
+  try {
+    const monitor = await monitorStore.save(item.code, item.market, item.name);
+    if (!monitor) {
+      formError.value = monitorStore.error ?? '开启监控失败，请重试';
+      return;
+    }
+    selectedCode.value = null;
+    formNotice.value = `已开启“${item.name}”：止损 ${fmt(monitor.stop_price)}，止盈 ${fmt(monitor.take_price)}`;
+  } finally {
+    enabling.value = false;
+  }
 }
 
 function fmt(v: number): string {
@@ -149,6 +159,7 @@ function rowKey(row: Monitor): string {
           </n-button>
         </div>
         <div v-if="formError" class="form-error">{{ formError }}</div>
+        <div v-if="formNotice" class="form-notice">{{ formNotice }}</div>
         <div class="hint muted">
           止损/止盈位由量化模型自动计算（ATR 波动止损：止损 = 参考价 − 2×ATR14，止盈 = 参考价 + 3×ATR14），无需手动设置
         </div>
@@ -199,6 +210,10 @@ function rowKey(row: Monitor): string {
 .form-error {
   font-size: var(--text-xs);
   color: var(--color-error);
+}
+.form-notice {
+  font-size: var(--text-xs);
+  color: var(--color-up);
 }
 .hint {
   font-size: var(--text-xs);

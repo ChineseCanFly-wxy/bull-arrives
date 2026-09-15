@@ -4,26 +4,34 @@
 //! 为每个板块追加请求。字段按板块接口的 f-code 解析，而不是依赖返回数组顺序。
 
 use crate::datasource::eastmoney_universe::universe_client;
+use crate::datasource::headers::with_browser_headers;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-const HOSTS: [&str; 3] = [
+/// `push2delay` 在部分网络出口比标准 push2 域名稳定；其余主机作为兜底。
+const HOSTS: [&str; 5] = [
+    "https://push2delay.eastmoney.com",
+    "https://push2.eastmoney.com",
+    "https://82.push2.eastmoney.com",
     "https://17.push2.eastmoney.com",
     "https://79.push2.eastmoney.com",
-    "https://push2.eastmoney.com",
 ];
-const MEMBER_HOSTS: [&str; 4] = [
+const MEMBER_HOSTS: [&str; 6] = [
+    "https://push2delay.eastmoney.com",
     "https://29.push2.eastmoney.com",
     "https://17.push2.eastmoney.com",
     "https://79.push2.eastmoney.com",
     "https://push2.eastmoney.com",
+    "https://82.push2.eastmoney.com",
 ];
 const UT_TOKEN: &str = "bd1d9ddb04089700cf9c27f6f7426281";
 const PAGE_SIZE: u32 = 100;
 const MAX_PAGES: u32 = 20;
+const RETRY_ROUNDS: usize = 2;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 pub const SUMMARY_TTL: Duration = Duration::from_secs(60);
 pub const MEMBER_TTL: Duration = Duration::from_secs(30);
 
@@ -51,66 +59,7 @@ impl SectorKind {
     }
 
     fn rank_field(self) -> &'static str {
-        match self {
-            Self::Industry => "f3",
-            Self::Concept => "f12",
-        }
-    }
-
-    fn preferred_rank_fields(self) -> &'static [&'static str] {
-        match self {
-            Self::Industry => &["f1", "f2"],
-            Self::Concept => &["f2", "f1"],
-        }
-    }
-
-    fn preferred_code_fields(self) -> &'static [&'static str] {
-        match self {
-            Self::Industry => &["f14", "f15"],
-            Self::Concept => &["f15", "f14"],
-        }
-    }
-
-    fn preferred_change_amount_fields(self) -> &'static [&'static str] {
-        match self {
-            Self::Industry => &["f5", "f8"],
-            Self::Concept => &["f8", "f5"],
-        }
-    }
-
-    fn preferred_turnover_fields(self) -> &'static [&'static str] {
-        match self {
-            Self::Industry => &["f9", "f12"],
-            Self::Concept => &["f12", "f9"],
-        }
-    }
-
-    fn preferred_market_cap_fields(self) -> &'static [&'static str] {
-        match self {
-            Self::Industry => &["f23", "f24"],
-            Self::Concept => &["f24", "f23"],
-        }
-    }
-
-    fn preferred_up_fields(self) -> &'static [&'static str] {
-        match self {
-            Self::Industry => &["f136", "f124"],
-            Self::Concept => &["f124", "f136"],
-        }
-    }
-
-    fn preferred_down_fields(self) -> &'static [&'static str] {
-        match self {
-            Self::Industry => &["f115", "f107"],
-            Self::Concept => &["f107", "f115"],
-        }
-    }
-
-    fn preferred_leader_fields(self) -> &'static [&'static str] {
-        match self {
-            Self::Industry => &["f104", "f136"],
-            Self::Concept => &["f136", "f104"],
-        }
+        "f3"
     }
 }
 
@@ -231,39 +180,43 @@ fn parse_summary(
     row: &serde_json::Value,
     fallback_rank: usize,
 ) -> Option<SectorSummary> {
-    let code = text_at(row, kind.preferred_code_fields())?;
+    // 行业和概念接口当前都使用标准 clist 字段：f12/f14/f2/f3。
+    // 不沿用旧版按数组位置或行业/概念分支字段的映射，接口更新后会把名称当代码。
+    let code = text_at(row, &["f12"])?;
     if !code.starts_with("BK") {
         return None;
     }
-    let name = text_at(row, &["f16", "f14"])?;
-    let rank = number_at(row, kind.preferred_rank_fields())
-        .filter(|value| *value >= 1.0)
-        .map(|value| value.round() as u32)
-        .unwrap_or(fallback_rank as u32);
+    let name = text_at(row, &["f14"])?;
 
     Some(SectorSummary {
         kind,
         code,
         name,
-        rank,
-        latest: number_at(row, &["f3"]),
-        change_amount: number_at(row, kind.preferred_change_amount_fields()),
-        change_pct: number_at(row, &["f4"]),
+        rank: fallback_rank as u32,
+        latest: number_at(row, &["f2"]),
+        change_amount: number_at(row, &["f4"]),
+        change_pct: number_at(row, &["f3"]),
         amount: number_at(row, &["f6"]),
-        market_cap: number_at(row, kind.preferred_market_cap_fields()),
-        turnover_rate: number_at(row, kind.preferred_turnover_fields()),
-        up_count: count_at(row, kind.preferred_up_fields()),
-        down_count: count_at(row, kind.preferred_down_fields()),
-        leader_name: text_at(row, kind.preferred_leader_fields()),
-        leader_change_pct: number_at(row, &["f141", "f128"]),
+        market_cap: number_at(row, &["f20"]),
+        turnover_rate: number_at(row, &["f8"]),
+        up_count: count_at(row, &["f104"]),
+        down_count: count_at(row, &["f105"]),
+        leader_name: text_at(row, &["f128"]),
+        leader_change_pct: number_at(row, &["f136"]),
     })
 }
 
+fn values_from_diff(diff: Option<serde_json::Value>) -> Vec<serde_json::Value> {
+    match diff {
+        Some(serde_json::Value::Array(rows)) => rows,
+        Some(serde_json::Value::Object(rows)) => rows.into_values().collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn diff_rows(kind: SectorKind, diff: Option<serde_json::Value>) -> Vec<SectorSummary> {
-    let Some(serde_json::Value::Array(rows)) = diff else {
-        return Vec::new();
-    };
-    rows.iter()
+    values_from_diff(diff)
+        .iter()
         .enumerate()
         .filter_map(|(index, row)| parse_summary(kind, row, index + 1))
         .collect()
@@ -305,10 +258,10 @@ fn parse_member(row: &serde_json::Value) -> Option<SectorMember> {
 }
 
 fn diff_members(diff: Option<serde_json::Value>) -> Vec<SectorMember> {
-    let Some(serde_json::Value::Array(rows)) = diff else {
-        return Vec::new();
-    };
-    rows.iter().filter_map(parse_member).collect()
+    values_from_diff(diff)
+        .iter()
+        .filter_map(parse_member)
+        .collect()
 }
 
 async fn fetch_page_uncached(
@@ -317,8 +270,7 @@ async fn fetch_page_uncached(
     page_size: u32,
 ) -> Result<(Vec<SectorSummary>, usize), SectorError> {
     let client = universe_client();
-    let fields =
-        "f1,f2,f3,f4,f5,f6,f8,f9,f12,f14,f15,f16,f23,f24,f104,f107,f115,f124,f128,f136,f141";
+    let fields = "f1,f2,f3,f4,f5,f6,f8,f9,f12,f14,f20,f23,f104,f105,f128,f136";
     let params = [
         ("pn", page.to_string()),
         ("pz", page_size.to_string()),
@@ -333,41 +285,45 @@ async fn fetch_page_uncached(
     ];
     let mut last_error = None;
 
-    for host in HOSTS {
-        let url = format!("{host}/api/qt/clist/get");
-        let response = client
-            .get(&url)
-            .header("Referer", "https://quote.eastmoney.com/")
-            .query(&params)
-            .send()
-            .await;
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => {
-                last_error = Some(SectorError::Http(error));
-                continue;
-            }
-        };
-        if !response.status().is_success() {
-            last_error = Some(SectorError::Status(response.status().as_u16()));
-            continue;
-        }
-
-        match response.json::<ClistResponse>().await {
-            Ok(payload) => {
-                let Some(data) = payload.data else {
-                    last_error = Some(SectorError::Empty);
-                    continue;
-                };
-                let total = data.total.unwrap_or(0) as usize;
-                let rows = diff_rows(kind, data.diff);
-                if rows.is_empty() {
-                    last_error = Some(SectorError::Empty);
+    for round in 0..RETRY_ROUNDS {
+        for host in HOSTS {
+            let url = format!("{host}/api/qt/clist/get");
+            let response = with_browser_headers(client.get(&url), "https://quote.eastmoney.com/")
+                .query(&params)
+                .timeout(REQUEST_TIMEOUT)
+                .send()
+                .await;
+            let response = match response {
+                Ok(response) => response,
+                Err(error) => {
+                    last_error = Some(SectorError::Http(error));
                     continue;
                 }
-                return Ok((rows, total));
+            };
+            if !response.status().is_success() {
+                last_error = Some(SectorError::Status(response.status().as_u16()));
+                continue;
             }
-            Err(error) => last_error = Some(SectorError::Http(error)),
+
+            match response.json::<ClistResponse>().await {
+                Ok(payload) => {
+                    let Some(data) = payload.data else {
+                        last_error = Some(SectorError::Empty);
+                        continue;
+                    };
+                    let total = data.total.unwrap_or(0) as usize;
+                    let rows = diff_rows(kind, data.diff);
+                    if rows.is_empty() {
+                        last_error = Some(SectorError::Empty);
+                        continue;
+                    }
+                    return Ok((rows, total));
+                }
+                Err(error) => last_error = Some(SectorError::Http(error)),
+            }
+        }
+        if round + 1 < RETRY_ROUNDS {
+            tokio::time::sleep(Duration::from_millis(300 * (round as u64 + 1))).await;
         }
     }
 
@@ -400,41 +356,46 @@ async fn fetch_member_page_uncached(
     ];
     let mut last_error = None;
 
-    for host in MEMBER_HOSTS {
-        let url = format!("{host}/api/qt/clist/get");
-        let response = match client
-            .get(&url)
-            .header("Referer", "https://quote.eastmoney.com/")
-            .query(&params)
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                last_error = Some(SectorError::Http(error));
+    for round in 0..RETRY_ROUNDS {
+        for host in MEMBER_HOSTS {
+            let url = format!("{host}/api/qt/clist/get");
+            let response =
+                match with_browser_headers(client.get(&url), "https://quote.eastmoney.com/")
+                    .query(&params)
+                    .timeout(REQUEST_TIMEOUT)
+                    .send()
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(error) => {
+                        last_error = Some(SectorError::Http(error));
+                        continue;
+                    }
+                };
+            if !response.status().is_success() {
+                last_error = Some(SectorError::Status(response.status().as_u16()));
                 continue;
             }
-        };
-        if !response.status().is_success() {
-            last_error = Some(SectorError::Status(response.status().as_u16()));
-            continue;
-        }
 
-        match response.json::<ClistResponse>().await {
-            Ok(payload) => {
-                let Some(data) = payload.data else {
-                    last_error = Some(SectorError::Empty);
-                    continue;
-                };
-                let total = data.total.unwrap_or(0) as usize;
-                let rows = diff_members(data.diff);
-                if rows.is_empty() {
-                    last_error = Some(SectorError::Empty);
-                    continue;
+            match response.json::<ClistResponse>().await {
+                Ok(payload) => {
+                    let Some(data) = payload.data else {
+                        last_error = Some(SectorError::Empty);
+                        continue;
+                    };
+                    let total = data.total.unwrap_or(0) as usize;
+                    let rows = diff_members(data.diff);
+                    if rows.is_empty() {
+                        last_error = Some(SectorError::Empty);
+                        continue;
+                    }
+                    return Ok((rows, total));
                 }
-                return Ok((rows, total));
+                Err(error) => last_error = Some(SectorError::Http(error)),
             }
-            Err(error) => last_error = Some(SectorError::Http(error)),
+        }
+        if round + 1 < RETRY_ROUNDS {
+            tokio::time::sleep(Duration::from_millis(300 * (round as u64 + 1))).await;
         }
     }
 
@@ -677,43 +638,58 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn parses_industry_summary_by_field_name() {
+    fn parses_current_clist_summary_by_field_name() {
         let row = json!({
-            "f1": 3, "f3": 1234.56, "f4": 2.5, "f5": 30.12, "f6": 900000000,
-            "f9": 1.8, "f14": "BK1001", "f16": "半导体", "f23": 1200000000000_i64,
-            "f104": "示例科技", "f115": 4, "f136": 18, "f141": 9.9
+            "f1": 2, "f2": 8423.96, "f3": 5.88, "f4": 467.83,
+            "f6": 12945516510_i64, "f8": 6.27, "f12": "BK1625", "f14": "钨",
+            "f20": 264683053000_i64, "f104": 4, "f105": 0,
+            "f128": "翔鹭钨业", "f136": 9.06
         });
         let parsed = parse_summary(SectorKind::Industry, &row, 1).unwrap();
-        assert_eq!(parsed.code, "BK1001");
-        assert_eq!(parsed.name, "半导体");
-        assert_eq!(parsed.rank, 3);
-        assert_eq!(parsed.change_pct, Some(2.5));
-        assert_eq!(parsed.up_count, Some(18));
-        assert_eq!(parsed.down_count, Some(4));
-        assert_eq!(parsed.leader_name.as_deref(), Some("示例科技"));
+        assert_eq!(parsed.code, "BK1625");
+        assert_eq!(parsed.name, "钨");
+        assert_eq!(parsed.rank, 1);
+        assert_eq!(parsed.latest, Some(8423.96));
+        assert_eq!(parsed.change_pct, Some(5.88));
+        assert_eq!(parsed.up_count, Some(4));
+        assert_eq!(parsed.down_count, Some(0));
+        assert_eq!(parsed.leader_name.as_deref(), Some("翔鹭钨业"));
+        assert_eq!(parsed.leader_change_pct, Some(9.06));
     }
 
     #[test]
-    fn parses_concept_summary_with_concept_field_layout() {
+    fn parses_concept_summary_with_same_clist_layout() {
         let row = json!({
-            "f2": 1, "f3": 888.0, "f4": -1.2, "f8": -10.0, "f12": 3.2,
-            "f15": "BK2002", "f16": "机器人", "f24": 800000000000_i64,
-            "f107": 12, "f124": 8, "f136": "领涨机器人"
+            "f2": 1730750.0, "f3": -1.03, "f4": -180.68, "f6": 99038984169_i64,
+            "f8": 1.67, "f12": "BK0493", "f14": "新能源", "f20": 1000000000000_i64,
+            "f104": 47, "f105": 80, "f128": "天顺风能", "f136": 10.0
         });
         let parsed = parse_summary(SectorKind::Concept, &row, 1).unwrap();
-        assert_eq!(parsed.code, "BK2002");
-        assert_eq!(parsed.change_amount, Some(-10.0));
-        assert_eq!(parsed.turnover_rate, Some(3.2));
-        assert_eq!(parsed.up_count, Some(8));
-        assert_eq!(parsed.down_count, Some(12));
-        assert_eq!(parsed.leader_name.as_deref(), Some("领涨机器人"));
+        assert_eq!(parsed.code, "BK0493");
+        assert_eq!(parsed.change_amount, Some(-180.68));
+        assert_eq!(parsed.turnover_rate, Some(1.67));
+        assert_eq!(parsed.up_count, Some(47));
+        assert_eq!(parsed.down_count, Some(80));
+        assert_eq!(parsed.leader_name.as_deref(), Some("天顺风能"));
+    }
+
+    #[test]
+    fn parses_object_shaped_diff_from_legacy_gateway() {
+        let rows = diff_rows(
+            SectorKind::Industry,
+            Some(json!({
+                "0": {"f2": 1.0, "f3": 1.0, "f12": "BK1001", "f14": "示例板块"}
+            })),
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].code, "BK1001");
     }
 
     #[test]
     fn rejects_non_sector_rows_and_empty_pages() {
         assert!(parse_summary(
             SectorKind::Industry,
-            &json!({"f14":"600000","f16":"股票"}),
+            &json!({"f12":"600000","f14":"股票"}),
             1
         )
         .is_none());

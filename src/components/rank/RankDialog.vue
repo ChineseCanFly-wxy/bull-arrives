@@ -2,7 +2,7 @@
 // src/components/rank/RankDialog.vue
 // 推荐榜对话框：对筛选结果里最活跃的 N 只批量评分，按总分排序展示。
 
-import { computed, h, ref, watch } from 'vue';
+import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
 import { NButton, NDataTable, NTag, type DataTableColumns } from 'naive-ui';
 import { useRankStore } from '@/stores/rank';
 import { useWatchlistStore } from '@/stores/watchlist';
@@ -37,17 +37,31 @@ const addError = ref<string | null>(null);
 // 分析详情
 const showAnalysis = ref(false);
 const analysisTarget = ref<{ symbol: string; name: string }>({ symbol: '', name: '' });
+let scanFrame: number | null = null;
 
 watch(
   () => props.show,
   open => {
-    if (open) {
-      addedSymbols.value = new Set();
-      addError.value = null;
-      void rank.scan(props.filter);
+    if (!open) {
+      if (scanFrame != null) cancelAnimationFrame(scanFrame);
+      scanFrame = null;
+      return;
     }
+    addedSymbols.value = new Set();
+    addError.value = null;
+    rank.reset();
+    // 先渲染加载中的弹窗，再开始可能需要数十秒的联网评分。
+    scanFrame = requestAnimationFrame(() => {
+      scanFrame = null;
+      void rank.scan(props.filter);
+    });
   },
+  { flush: 'post' },
 );
+
+onBeforeUnmount(() => {
+  if (scanFrame != null) cancelAnimationFrame(scanFrame);
+});
 
 function changeClass(value: number): string {
   if (value > 0) return 'up';
@@ -176,6 +190,10 @@ const columns = computed<DataTableColumns<RankItem>>(() => [
         </span>
         <n-tag v-if="rank.result?.stale" type="warning" size="small" :bordered="false">快照陈旧，结果可能滞后</n-tag>
         <span v-if="addError" class="add-error">{{ addError }}</span>
+      </div>
+
+      <div v-if="rank.loading" class="notice-line" role="status">
+        正在扫描活跃股并计算推荐榜，通常需要十几秒。
       </div>
 
       <div v-if="rank.result?.skipped_conditions?.length" class="notice-line">
