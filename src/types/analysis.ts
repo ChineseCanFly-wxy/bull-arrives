@@ -45,6 +45,93 @@ export interface StockAnalysis {
   trade_plan: TradePlan | null;
   /** 该规则在这只股票自身历史上的回测结果 */
   backtest: BacktestStats | null;
+  /** 筹码分布**估算**（获利盘 / 平均成本 / 成本区间 / 筹码峰）。数据不足时为 null */
+  chips: ChipDistribution | null;
+  /** 支撑位与压力位，**已按当前交易规则加权排序**（压力由近到远，然后支撑由近到远） */
+  levels: PriceLevel[];
+}
+
+/** 换手率的数据来源。精度不同，UI 上必须如实说明，不能混着当"真实筹码"讲 */
+export type ChipRateBasis = 'turnover' | 'circulating_shares' | 'volume_only';
+
+export const CHIP_RATE_BASIS_LABEL: Record<ChipRateBasis, string> = {
+  turnover: '数据源直接提供每日换手率',
+  circulating_shares: '换手率由「成交量 ÷ 流通股本」反推',
+  volume_only: '拿不到换手率，退化为成交量累加（老筹码不会消失，只能看密集区）',
+};
+
+/** 单个价格档位上的筹码占比 */
+export interface ChipBin {
+  price: number;
+  ratio: number;
+}
+
+/** 一个筹码峰（成本分布的局部密集区） */
+export interface ChipPeak {
+  price: number;
+  low: number;
+  high: number;
+  /** 该区间内的筹码占比 0–1 */
+  ratio: number;
+}
+
+/**
+ * 筹码分布（持仓成本分布）的**估算**结果。
+ *
+ * ⚠️ A 股没有公开的筹码原始数据，各家软件都是模型算的，互相之间也对不上。
+ * 展示时必须标明是估算，不能包装成"真实持仓"或"主力成本"。
+ */
+export interface ChipDistribution {
+  /** 归一化的成本分布直方图（价格升序） */
+  bins: ChipBin[];
+  /** 获利盘比例 0–1：现价之下的筹码占比 */
+  profit_ratio: number;
+  /** 加权平均成本 */
+  avg_cost: number;
+  /** 90% 筹码所在区间 */
+  cost_90_low: number;
+  cost_90_high: number;
+  /** 集中度 %（区间宽度 ÷ 区间中枢，越小越集中） */
+  concentration_90: number;
+  concentration_70: number;
+  /** 筹码峰，按占比降序 */
+  peaks: ChipPeak[];
+  /** 参与计算的 K 线根数 */
+  bars: number;
+  /** 换手率来源 */
+  rate_basis: ChipRateBasis;
+}
+
+/** 位在现价上方还是下方 */
+export type LevelKind = 'support' | 'resistance';
+
+/** 这个价位是从哪来的 */
+export type LevelSource =
+  | 'ma20'
+  | 'ma60'
+  | 'ma120'
+  | 'boll_lower'
+  | 'boll_upper'
+  | 'swing_low'
+  | 'swing_high'
+  | 'chip_peak'
+  | 'prior_low20'
+  | 'prior_high20';
+
+/** 一条支撑位 / 压力位 */
+export interface PriceLevel {
+  price: number;
+  kind: LevelKind;
+  /** 强度最高的那个来源 */
+  source: LevelSource;
+  /** 中文来源说明，可能由多个来源共振而成（如 "MA20 + 筹码密集区"） */
+  label: string;
+  /** 为什么这个位置值得看 */
+  note: string;
+  /** 参考强度 0–100（已按当前策略加权，不是"必守/必破"的概率） */
+  strength: number;
+  /** 距现价的百分比（正数） */
+  distance_pct: number;
 }
 
 /** 交易规则族。与 Rust `quant::playbook::TradeRule` 一一对应。 */
@@ -60,23 +147,33 @@ export const TRADE_RULE_OPTIONS: Array<{
   label: string;
   value: TradeRuleId;
   hint: string;
+  /** 这套规则最该盯哪一类价位 —— 支撑/压力位的权重就是按这个定的（见 Rust `quant/levels.rs`） */
+  focus: string;
 }> = [
   {
     label: '趋势跟随',
     value: 'trend_follow',
     hint: '胜率通常只有四成上下，但盈亏比能过 2 —— 靠少数大行情赚钱，多数交易小亏出局。回踩 MA20 买入，2×ATR 止损。',
+    focus: '看均线：MA20 是回踩买点，跌破收不回就先离场',
   },
   {
     label: '均值回归',
     value: 'mean_reversion',
     hint: '胜率能到六成以上，但盈亏比普遍不足 1.5 —— 赚多次小钱，怕的是单边下跌里一路接飞刀。布林下轨附近买入，短持仓。',
+    focus: '看布林轨道：下轨附近买、上轨附近走，均线只作参考',
   },
   {
     label: '放量突破',
     value: 'breakout',
     hint: '胜率中等偏上，盈亏比约 1.5 —— 关键是量能确认，缺了量的突破假信号率很高。突破前 20 日高点买入。',
+    focus: '看前高与上方筹码：前高是触发位，上方套牢盘少才走得动',
   },
 ];
+
+/** 规则 id → 该规则最该盯哪类价位 */
+export function tradeRuleFocus(rule: string): string {
+  return TRADE_RULE_OPTIONS.find(o => o.value === rule)?.focus ?? '';
+}
 
 /** 规则 id → 中文名（兜底；后端也会回传 label） */
 export function tradeRuleLabel(rule: string): string {

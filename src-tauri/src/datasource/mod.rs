@@ -377,5 +377,6 @@ pub mod eastmoney_universe;
 pub mod eastmoney_kline;
 pub mod sina_universe;
 pub mod kline;
+pub mod profile;
 #[cfg(test)]
 mod network_smoke;

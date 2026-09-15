@@ -5,7 +5,8 @@
 import { computed, watch } from 'vue';
 import { NModal, NTag, NSpin } from 'naive-ui';
 import { useAnalysisStore } from '@/stores/analysis';
-import { evaluateBacktest, tradeRuleLabel, verdictTone } from '@/types/analysis';
+import { evaluateBacktest, tradeRuleFocus, tradeRuleLabel, verdictTone } from '@/types/analysis';
+import PriceLevelChart from '@/components/analysis/PriceLevelChart.vue';
 
 const props = defineProps<{
   show: boolean;
@@ -34,6 +35,12 @@ watch(
 const plan = computed(() => store.analysis?.trade_plan ?? null);
 const backtest = computed(() => store.analysis?.backtest ?? null);
 const backtestVerdict = computed(() => (backtest.value ? evaluateBacktest(backtest.value) : null));
+
+/** 筹码分布与支撑/压力位（后端已按当前规则加权排序） */
+const chips = computed(() => store.analysis?.chips ?? null);
+const levels = computed(() => store.analysis?.levels ?? []);
+/** 当前规则最该盯哪类价位 —— 免得用户面对一堆价位不知道看重哪个 */
+const ruleFocus = computed(() => tradeRuleFocus(store.ruleUsed));
 
 /** 分数条形颜色：高分偏红（看多），低分偏绿（看空） */
 function barClass(score: number): string {
@@ -161,6 +168,16 @@ function rate(v: number): string {
           <div v-else-if="store.analysis" class="muted plan-missing">
             拿不到操作计划：日 K 不足（至少需要 15 根才能算出 ATR）或价格数据异常。宁可不给价位，也不编一个。
           </div>
+
+          <!-- 价格位：筹码分布 + 支撑/压力位，权重随当前策略变 -->
+          <template v-if="levels.length || chips">
+            <div class="section-title plan-title">
+              <span>价格位</span>
+              <span class="rule-tag">{{ tradeRuleLabel(store.ruleUsed) }}</span>
+              <span class="muted focus-hint">{{ ruleFocus }}</span>
+            </div>
+            <PriceLevelChart :close="store.analysis.close" :levels="levels" :chips="chips" />
+          </template>
 
           <!-- 规则回测：让「胜率」落到这只股票自己的历史上 -->
           <template v-if="backtest">
@@ -331,6 +348,11 @@ function rate(v: number): string {
 .ready-tag.wait {
   background: var(--color-bg-hover);
   color: var(--color-text-tertiary);
+}
+/* 当前规则最该盯哪类价位：比普通 muted 再弱一点，别抢标题 */
+.focus-hint {
+  font-weight: var(--font-weight-normal);
+  opacity: 0.9;
 }
 .plan {
   display: flex;
