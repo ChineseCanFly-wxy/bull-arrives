@@ -25,8 +25,8 @@ import {
 } from 'naive-ui';
 import { useUniverseStore } from '@/stores/universe';
 import { useWatchlistStore } from '@/stores/watchlist';
+import { useRankStore } from '@/stores/rank';
 import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
-import RankDialog from '@/components/rank/RankDialog.vue';
 import type { StockAnalysis } from '@/types/analysis';
 import { TRADE_RULE_OPTIONS, tradeRuleLabel, type TradeRuleId } from '@/types/analysis';
 import {
@@ -51,6 +51,7 @@ const emit = defineEmits<{ 'update:show': [value: boolean] }>();
 
 const universe = useUniverseStore();
 const watchlist = useWatchlistStore();
+const rank = useRankStore();
 
 const addedSymbols = ref<Set<string>>(new Set());
 const addError = ref<string | null>(null);
@@ -84,7 +85,6 @@ function openAnalysis(row: SnapshotRow) {
 }
 
 // 推荐榜对话框状态
-const showRank = ref(false);
 let rankOpenTimer: ReturnType<typeof setTimeout> | null = null;
 
 function openRank() {
@@ -92,7 +92,7 @@ function openRank() {
   // 等当前按钮的 click 事件传播结束，再挂载模态层，避免它把这次点击当作遮罩点击关闭。
   rankOpenTimer = setTimeout(() => {
     rankOpenTimer = null;
-    showRank.value = true;
+    rank.open(universe.filter);
   }, 0);
 }
 
@@ -928,8 +928,6 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     :name="analysisTarget.name"
     :rule="analysisTarget.rule"
   />
-
-  <RankDialog v-if="showRank" v-model:show="showRank" :filter="universe.filter" />
 
   <!-- 策略命名 / 覆盖：新建、另存为、重命名、覆盖条件共用这一个弹窗 -->
   <n-modal
