@@ -75,5 +75,24 @@ export const useWatchlistStore = defineStore('watchlist', () => {
     }
   }
 
-  return { items, groups, activeGroupId, selectGroup, loading, error, fetchWatchlist, addStock, removeStock };
+  async function removeStocks(targets: WatchItem[], groupId = activeGroupId.value) {
+    if (!targets.length) return;
+    error.value = null;
+    try {
+      for (const item of targets) {
+        if (groupId !== 0) {
+          await invoke('set_group_member', { groupId, watchId: item.id, included: false });
+        } else {
+          await invoke('remove_watch', { code: item.code, market: item.market });
+        }
+      }
+      await fetchWatchlist();
+    } catch (e) {
+      error.value = `删除失败: ${e}`;
+      console.error('[watchlist] removeStocks failed:', e);
+      throw e;
+    }
+  }
+
+  return { items, groups, activeGroupId, selectGroup, loading, error, fetchWatchlist, addStock, removeStock, removeStocks };
 });
