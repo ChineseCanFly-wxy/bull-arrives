@@ -176,6 +176,7 @@ const columns = computed<DataTableColumns<RankItem>>(() => [
     preset="card"
     title="今日推荐榜"
     :style="{ width: '92vw' }"
+    :z-index="3000"
     :bordered="false"
     size="small"
   >
