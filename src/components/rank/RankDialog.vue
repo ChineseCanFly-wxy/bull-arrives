@@ -56,7 +56,7 @@ watch(
       void rank.scan(props.filter);
     });
   },
-  { flush: 'post' },
+  { flush: 'post', immediate: true },
 );
 
 onBeforeUnmount(() => {

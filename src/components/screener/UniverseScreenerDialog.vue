@@ -918,7 +918,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     :rule="analysisTarget.rule"
   />
 
-  <RankDialog v-model:show="showRank" :filter="universe.filter" />
+  <RankDialog v-if="showRank" v-model:show="showRank" :filter="universe.filter" />
 
   <!-- 策略命名 / 覆盖：新建、另存为、重命名、覆盖条件共用这一个弹窗 -->
   <n-modal
