@@ -832,6 +832,8 @@ pub fn run() {
             commands::universe::delete_filter_preset,
             commands::analysis::analyze_stock,
             commands::rank::scan_and_rank,
+            commands::sector::get_sector_summaries,
+            commands::sector::get_sector_members,
             commands::monitor::get_monitors,
             commands::monitor::save_monitor,
             commands::monitor::delete_monitor,

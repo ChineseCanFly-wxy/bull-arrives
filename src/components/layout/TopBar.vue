@@ -5,6 +5,7 @@ import { NIcon, NDropdown } from 'naive-ui';
 const SettingsDialog = defineAsyncComponent(() => import('@/components/settings/SettingsDialog.vue'));
 const UniverseScreenerDialog = defineAsyncComponent(() => import('@/components/screener/UniverseScreenerDialog.vue'));
 const MonitorDialog = defineAsyncComponent(() => import('@/components/monitor/MonitorDialog.vue'));
+const SectorDialog = defineAsyncComponent(() => import('@/components/sector/SectorDialog.vue'));
 
 const settings = useSettingsStore();
 
@@ -38,6 +39,11 @@ const showMonitor = ref(false);
 function openMonitor() {
   showMonitor.value = true;
 }
+
+const showSector = ref(false);
+function openSector() {
+  showSector.value = true;
+}
 </script>
 
 <template>
@@ -64,6 +70,20 @@ function openMonitor() {
           </n-icon>
         </span>
       </n-dropdown>
+
+      <button
+        class="cog-btn"
+        aria-label="打开市场板块"
+        title="行业/概念板块"
+        @click="openSector"
+      >
+        <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2.5" y="2.5" width="6" height="6" rx="1" />
+          <rect x="11.5" y="2.5" width="6" height="6" rx="1" />
+          <rect x="2.5" y="11.5" width="6" height="6" rx="1" />
+          <rect x="11.5" y="11.5" width="6" height="6" rx="1" />
+        </svg>
+      </button>
 
       <button
         class="cog-btn"
@@ -104,6 +124,7 @@ function openMonitor() {
     <SettingsDialog v-if="showSettings" v-model:show="showSettings" />
     <UniverseScreenerDialog v-if="showScreener" v-model:show="showScreener" />
     <MonitorDialog v-if="showMonitor" v-model:show="showMonitor" />
+    <SectorDialog v-if="showSector" v-model:show="showSector" />
   </header>
 </template>
 

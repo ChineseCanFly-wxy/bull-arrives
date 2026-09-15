@@ -371,6 +371,7 @@ pub mod sina;
 pub mod tencent;
 pub mod market_clock;
 pub mod market_policy;
+pub mod sector;
 pub mod search;
 pub mod headers;
 pub mod eastmoney_universe;

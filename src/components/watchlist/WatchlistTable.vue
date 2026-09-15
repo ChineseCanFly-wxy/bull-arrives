@@ -16,7 +16,7 @@ import { calculateHoldingMetrics, scaledPriceToDecimal, type Holding } from '@/u
 import MarketTag from './MarketTag.vue';
 import StockDetail from '@/components/detail/StockDetail.vue';
 import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
-import { CLEAR_INDEX_DETAIL_KEY } from '@/utils/keys';
+import { CLEAR_INDEX_DETAIL_KEY, OPEN_STOCK_DETAIL_KEY, type StockDetailCoordinator } from '@/utils/keys';
 
 const watchlist = useWatchlistStore();
 const quoteStore = useQuoteStore();
@@ -78,12 +78,25 @@ const indexDetailCoord = inject<{
   clearIndexDetail: () => void;
   registerClearStockFn?: (fn: () => void) => void;
 } | undefined>(CLEAR_INDEX_DETAIL_KEY);
+const stockDetailCoord = inject<StockDetailCoordinator | undefined>(OPEN_STOCK_DETAIL_KEY);
 
 onMounted(() => {
   void loadHoldings();
   indexDetailCoord?.registerClearStockFn?.(() => {
     cancelPendingRowClick();
     selectedRow.value = null;
+  });
+  stockDetailCoord?.registerOpenStockFn?.(target => {
+    cancelPendingRowClick();
+    indexDetailCoord?.clearIndexDetail();
+    selectedRow.value = {
+      id: -1,
+      code: target.code,
+      market: target.market,
+      name: target.name,
+      sort_order: 0,
+      added_at: '',
+    };
   });
 });
 
