@@ -381,6 +381,218 @@ pub(crate) fn highest_before_last(highs: &[f64], period: usize) -> Option<f64> {
         .fold(None, |acc: Option<f64>, v| Some(acc.map_or(v, |a| a.max(v))))
 }
 
+// ── 为个股自动挑规则 ───────────────────────────────────────────────
+
+/// 一条规则在当前这只股票上的状态。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RuleCandidate {
+    pub rule: TradeRule,
+    pub rule_label: String,
+    /// 当前是否满足该规则的入场条件
+    pub ready: bool,
+    /// 未满足时缺什么
+    pub waiting_for: Option<String>,
+    /// 状态强度 0–100。成立时表示「这种状态有多典型」，未成立时表示「离触发有多近」
+    pub strength: f64,
+    /// 一句话说明这条规则现在怎么看
+    pub note: String,
+}
+
+/// 为这只股票挑一条**当前**最合适的交易规则。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RuleMatch {
+    /// 推荐的规则
+    pub recommended: TradeRule,
+    pub recommended_label: String,
+    /// 推荐依据（说人话）
+    pub reason: String,
+    /// 是否有多条同时成立
+    pub multiple_ready: bool,
+    /// 是否三条都不成立（此时推荐的是「最接近触发」的一条）
+    pub none_ready: bool,
+    /// 三条规则的状态，顺序固定：趋势跟随 / 均值回归 / 放量突破
+    pub candidates: Vec<RuleCandidate>,
+}
+
+/// 按**当前市场状态**为这只股票挑规则。
+///
+/// # 为什么按状态挑，而不是按历史收益挑
+///
+/// 直觉上会想「回测哪条规则在这只股票上赚得最多就用哪条」。实测过，不行：
+/// 20 只股票里，用样本内（前 250 根）挑出的最优规则，到样本外仍保持最优的
+/// **只有 8 只（40%）**，而随机挑是 33%。那本质上是在 3 个噪声里挑最大的，
+/// 把某段行情的特征当成了规律；而且「收益最高」的那条往往只是恰好躲过了那次大跌
+/// （例如均值回归在单边下跌里压根不触发，收益 0%，反倒显得「回撤最小」）。
+///
+/// 正确的依据是**这只股票现在处于什么状态** —— 而三条规则自己的入场条件
+/// 恰好就是状态判据，不必另发明指标：
+/// - 趋势跟随成立 = MA20 上行 + 站上 MA20 + MA5 上穿 → 当前是**趋势状态**
+/// - 均值回归成立 = RSI 超卖或触及布林下轨 → 当前是**超跌状态**
+/// - 放量突破成立 = 已破前 20 日高点 → 当前是**突破状态**
+///
+/// ⚠️ 回测结果只作参考展示，**不参与**这里的判断（见 `backtest::run`）。
+pub fn match_rule(klines: &[KLineData]) -> Option<RuleMatch> {
+    if klines.len() < 30 {
+        return None;
+    }
+    let close = klines.last()?.close;
+    if !close.is_finite() || close <= 0.0 {
+        return None;
+    }
+
+    let closes: Vec<f64> = klines.iter().map(|k| k.close).collect();
+    let highs: Vec<f64> = klines.iter().map(|k| k.high).collect();
+    let volumes: Vec<f64> = klines.iter().map(|k| k.volume as f64).collect();
+
+    let ma20_series = indicators::sma(&closes, 20);
+    let ma20_now = latest_finite(&ma20_series);
+    let ma20_before = ma20_series
+        .iter()
+        .rev()
+        .nth(5)
+        .copied()
+        .filter(|v| v.is_finite());
+    let rsi12 = latest_finite(&indicators::rsi(&closes, 12));
+    let boll_lower = latest_finite(&indicators::boll(&closes, 20, 2.0).lower);
+    let volume_ratio = latest_finite(&indicators::volume_ratio(&volumes, 5));
+    let prior_high = highest_before_last(&highs, 20);
+
+    let mut candidates: Vec<RuleCandidate> = Vec::new();
+    for rule in [
+        TradeRule::TrendFollow,
+        TradeRule::MeanReversion,
+        TradeRule::Breakout,
+    ] {
+        // 复用 plan()：它已经把每条规则的 ready / waiting_for 算好了。
+        // 另写一套判据只会带来「两处判断不一致」的隐患。
+        let p = plan(klines, rule);
+        let ready = p.as_ref().map(|x| x.ready).unwrap_or(false);
+        let waiting_for = p.as_ref().and_then(|x| x.waiting_for.clone());
+        let strength = match rule {
+            TradeRule::TrendFollow => trend_strength(close, ma20_now, ma20_before),
+            TradeRule::MeanReversion => meanrev_strength(close, rsi12, boll_lower),
+            TradeRule::Breakout => breakout_strength(close, prior_high, volume_ratio),
+        };
+        let note = if ready {
+            match rule {
+                TradeRule::TrendFollow => {
+                    "均线呈上升结构且现价站上 MA20 —— 处于趋势状态，回踩均线找买点".to_string()
+                }
+                TradeRule::MeanReversion => "已进入超卖区 —— 具备均值回归的入场条件".to_string(),
+                TradeRule::Breakout => "已突破前 20 日高点 —— 处于突破状态".to_string(),
+            }
+        } else {
+            waiting_for
+                .clone()
+                .unwrap_or_else(|| "入场条件未满足".to_string())
+        };
+        candidates.push(RuleCandidate {
+            rule,
+            rule_label: rule.label().to_string(),
+            ready,
+            waiting_for,
+            strength: (strength * 10.0).round() / 10.0,
+            note,
+        });
+    }
+
+    let ready_count = candidates.iter().filter(|c| c.ready).count();
+    let none_ready = ready_count == 0;
+    // 多条成立 → 取状态最典型的；都不成立 → 取离触发最近的
+    let best = candidates.iter().max_by(|a, b| {
+        a.strength
+            .partial_cmp(&b.strength)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })?;
+    let recommended = best.rule;
+    let multiple_ready = ready_count > 1;
+
+    let reason = if none_ready {
+        let gap = best
+            .waiting_for
+            .clone()
+            .unwrap_or_else(|| "条件尚未满足".to_string());
+        format!(
+            "三条规则的入场条件目前都还没成立。最接近的是「{}」（状态强度 {:.0}）：{}。先等信号。",
+            best.rule_label, best.strength, gap
+        )
+    } else if multiple_ready {
+        let others: Vec<String> = candidates
+            .iter()
+            .filter(|c| c.ready && c.rule != recommended)
+            .map(|c| format!("「{}」", c.rule_label))
+            .collect();
+        format!(
+            "「{}」与 {} 的入场条件同时成立，其中「{}」的状态更典型（强度 {:.0}，另一条 {:.0}），按它执行。",
+            best.rule_label,
+            others.join("、"),
+            best.rule_label,
+            best.strength,
+            candidates
+                .iter()
+                .filter(|c| c.ready && c.rule != recommended)
+                .map(|c| c.strength)
+                .fold(0.0f64, f64::max)
+        )
+    } else {
+        format!(
+            "当前只有「{}」的入场条件成立（状态强度 {:.0}），按它执行。",
+            best.rule_label, best.strength
+        )
+    };
+
+    Some(RuleMatch {
+        recommended,
+        recommended_label: recommended.label().to_string(),
+        reason,
+        multiple_ready,
+        none_ready,
+        candidates,
+    })
+}
+
+/// 趋势状态的典型程度：MA20 的五日斜率 + 现价离 MA20 的距离。
+fn trend_strength(close: f64, ma20_now: Option<f64>, ma20_before: Option<f64>) -> f64 {
+    let mut s = 55.0;
+    if let (Some(now), Some(before)) = (ma20_now, ma20_before) {
+        if before > 0.0 {
+            // 斜率 1% 记 20 分；下行同样扣分
+            s += ((now / before - 1.0) * 100.0 * 20.0).clamp(-20.0, 25.0);
+        }
+        if now > 0.0 {
+            // 站得越高趋势越强，但离得太远也意味着回归压力，所以上限给得克制
+            s += ((close / now - 1.0) * 100.0 * 3.0).clamp(-15.0, 15.0);
+        }
+    }
+    s.clamp(0.0, 100.0)
+}
+
+/// 超跌状态的深度：RSI 距超卖线的距离 + 现价跌破布林下轨的幅度。
+fn meanrev_strength(close: f64, rsi: Option<f64>, boll_lower: Option<f64>) -> f64 {
+    let mut s = 45.0;
+    if let Some(r) = rsi {
+        // RSI 从 35 起每低 1 点加 2 分；高于 35 相应减分（最多减 10）
+        s += ((35.0 - r) * 2.0).clamp(-10.0, 30.0);
+    }
+    if let Some(lower) = boll_lower.filter(|v| *v > 0.0) {
+        s += ((lower / close - 1.0) * 100.0 * 8.0).clamp(0.0, 25.0);
+    }
+    s.clamp(0.0, 100.0)
+}
+
+/// 突破状态的成色：突破前高的幅度 + 量能配合。
+/// 没有量能的突破假信号率很高，所以量比直接进强度，而不是只看价格破没破。
+fn breakout_strength(close: f64, prior_high: Option<f64>, volume_ratio: Option<f64>) -> f64 {
+    let mut s = 50.0;
+    if let Some(high) = prior_high.filter(|v| *v > 0.0) {
+        s += ((close / high - 1.0) * 100.0 * 15.0).clamp(-20.0, 25.0);
+    }
+    if let Some(v) = volume_ratio {
+        s += ((v - 1.0) * 10.0).clamp(-10.0, 25.0);
+    }
+    s.clamp(0.0, 100.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,7 +609,8 @@ mod tests {
                 low: c * 0.99,
                 close: c,
                 volume: 10_000,
-                turnover: c * 10_000.0,
+                // 换手率 %（KLineData.turnover 的语义，历史遗留的成交额写法已修正）
+                turnover: 1.0,
             })
             .collect()
     }
@@ -465,5 +678,96 @@ mod tests {
         }
         assert_eq!(TradeRule::from_id("不存在的规则"), TradeRule::TrendFollow);
         assert_eq!(TradeRule::from_id(""), TradeRule::TrendFollow);
+    }
+
+    // ── 按状态自动挑规则 ──
+
+    /// 稳步上涨 → 该选趋势跟随
+    #[test]
+    fn auto_pick_prefers_trend_follow_on_uptrend() {
+        let closes: Vec<f64> = (0..150).map(|i| 10.0 + i as f64 * 0.08).collect();
+        let m = match_rule(&klines_from(&closes)).expect("应能给出匹配结果");
+        assert_eq!(
+            m.recommended,
+            TradeRule::TrendFollow,
+            "稳步上涨该选趋势跟随，理由：{}",
+            m.reason
+        );
+        assert_eq!(m.candidates.len(), 3, "三条规则的状态都要列出来");
+        let trend = m
+            .candidates
+            .iter()
+            .find(|c| c.rule == TradeRule::TrendFollow)
+            .unwrap();
+        assert!(trend.ready);
+        assert!(trend.strength > 0.0);
+    }
+
+    /// 先涨后急跌到超卖 → 该选均值回归
+    #[test]
+    fn auto_pick_prefers_mean_reversion_after_selloff() {
+        let mut closes: Vec<f64> = (0..80).map(|i| 20.0 + i as f64 * 0.05).collect();
+        closes.extend((0..30).map(|i| 24.0 - i as f64 * 0.55));
+        let m = match_rule(&klines_from(&closes)).expect("应能给出匹配结果");
+        assert_eq!(
+            m.recommended,
+            TradeRule::MeanReversion,
+            "急跌超卖该选均值回归，理由：{}",
+            m.reason
+        );
+    }
+
+    /// 缓慢阴跌（未超卖、未破位）→ 三条都不成立，必须明说，而不是硬推一条
+    #[test]
+    fn auto_pick_admits_when_nothing_is_ready() {
+        let closes: Vec<f64> = (0..150)
+            .map(|i| 20.0 - i as f64 * 0.03 + (i as f64 * 0.5).sin() * 1.0)
+            .collect();
+        let m = match_rule(&klines_from(&closes)).expect("应能给出匹配结果");
+        let states: Vec<(&str, bool)> = m.candidates.iter().map(|c| (c.rule.id(), c.ready)).collect();
+        assert!(m.none_ready, "缓慢阴跌三条都不该成立，实际：{states:?}");
+        assert!(m.reason.contains("都还没成立"), "理由要说清楚现状：{}", m.reason);
+        // 但仍要给出「最接近触发」的那条，而不是拒绝回答
+        assert!(m.candidates.iter().any(|c| c.rule == m.recommended));
+    }
+
+    /// 不按历史收益挑：规则选择只看状态，不看谁过去赚得多。
+    /// 这里只需要保证结论形式自洽 —— 强度、waiting_for、理由三者的口径一致。
+    #[test]
+    fn auto_pick_is_always_well_formed() {
+        let cases: Vec<Vec<f64>> = vec![
+            (0..150).map(|i| 10.0 + i as f64 * 0.1).collect(),
+            (0..150).map(|i| 30.0 - i as f64 * 0.1).collect(),
+            (0..150).map(|i| 15.0 + (i as f64 * 0.3).sin() * 2.0).collect(),
+        ];
+        for closes in cases {
+            let m = match_rule(&klines_from(&closes)).unwrap();
+            assert_eq!(m.candidates.len(), 3);
+            assert_eq!(m.recommended_label, m.recommended.label());
+            assert!(!m.reason.is_empty());
+            assert_eq!(
+                m.multiple_ready,
+                m.candidates.iter().filter(|c| c.ready).count() > 1
+            );
+            for c in &m.candidates {
+                assert!(
+                    (0.0..=100.0).contains(&c.strength),
+                    "强度越界：{} = {}",
+                    c.rule_label,
+                    c.strength
+                );
+                if c.ready {
+                    assert!(c.waiting_for.is_none(), "成立时不该还有「缺什么」");
+                } else {
+                    assert!(c.waiting_for.is_some(), "未成立时必须说明缺什么");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn auto_pick_needs_enough_history() {
+        let closes: Vec<f64> = (0..20).map(|i| 10.0 + i as f64 * 0.1).collect();
+        assert!(match_rule(&klines_from(&closes)).is_none());
     }
 }

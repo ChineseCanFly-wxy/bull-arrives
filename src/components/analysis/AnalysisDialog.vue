@@ -42,6 +42,24 @@ const levels = computed(() => store.analysis?.levels ?? []);
 /** 当前规则最该盯哪类价位 —— 免得用户面对一堆价位不知道看重哪个 */
 const ruleFocus = computed(() => tradeRuleFocus(store.ruleUsed));
 
+/** 自动匹配到的规则与三条规则各自的状态 */
+const ruleMatch = computed(() => store.analysis?.rule_match ?? null);
+/** 当前用的是自动匹配还是用户手动指定 */
+const isAuto = computed(() => store.ruleOverride === null);
+/** 当前生效那条规则的状态（用于显示「为什么是它」） */
+const activeCandidate = computed(
+  () => ruleMatch.value?.candidates.find(c => c.rule === store.ruleUsed) ?? null,
+);
+
+/** 手动切到某条规则；再点一次已选中的那条即回到自动匹配 */
+function switchRule(rule: string) {
+  if (store.ruleOverride === rule) {
+    void store.analyze(props.symbol, 'auto');
+    return;
+  }
+  void store.analyze(props.symbol, rule);
+}
+
 /** 分数条形颜色：高分偏红（看多），低分偏绿（看空） */
 function barClass(score: number): string {
   if (score >= 60) return 'bar-up';
@@ -115,6 +133,58 @@ function rate(v: number): string {
               <span class="muted">综合评分（0–100）</span>
             </div>
           </div>
+
+          <!-- 交易规则：按当前市场状态自动匹配，也可以手动切换 -->
+          <template v-if="ruleMatch">
+            <div class="section-title plan-title">
+              <span>交易规则</span>
+              <span class="rule-tag">{{ ruleMatch.recommended_label }}</span>
+              <span class="muted">
+                {{ isAuto ? '按当前状态自动匹配' : '已手动指定' }}
+              </span>
+              <button
+                v-if="!isAuto"
+                class="link-btn"
+                title="交还给按状态自动匹配"
+                @click="store.analyze(props.symbol, 'auto')"
+              >
+                恢复自动
+              </button>
+            </div>
+
+            <div class="rule-match">
+              <div class="rule-reason">{{ ruleMatch.reason }}</div>
+
+              <div class="rule-cands">
+                <button
+                  v-for="c in ruleMatch.candidates"
+                  :key="c.rule"
+                  class="rule-cand"
+                  :class="{
+                    ready: c.ready,
+                    active: c.rule === store.ruleUsed,
+                    recommended: c.rule === ruleMatch.recommended,
+                  }"
+                  :title="c.note"
+                  @click="switchRule(c.rule)"
+                >
+                  <span class="rc-name">{{ c.rule_label }}</span>
+                  <span class="rc-state">{{ c.ready ? '满足' : '未触发' }}</span>
+                  <span class="rc-strength mono">{{ c.strength.toFixed(0) }}</span>
+                </button>
+              </div>
+
+              <div v-if="activeCandidate" class="rule-note">
+                <b>{{ activeCandidate.rule_label }}</b>：{{ activeCandidate.note }}
+              </div>
+
+              <div class="rule-caveat">
+                选哪条规则看的是<b>当前处于什么状态</b>（趋势 / 超跌 / 突破），
+                不是「历史上哪条赚得多」—— 后者实测选对率只有 40%，随机挑还有 33%，
+                本质是在噪声里挑最大值。回测数字仅供参照，没有参与这里的判断。
+              </div>
+            </div>
+          </template>
 
           <!-- 操作计划：把「选出来」变成「照着做」 -->
           <div class="section-title plan-title">
@@ -233,22 +303,15 @@ function rate(v: number): string {
             </div>
           </div>
 
-          <!-- 指标快照 -->
+          <!-- 指标快照：只列彼此不重复的指标，重复/派生的项已删（见 types/analysis.ts） -->
           <div class="section-title">指标快照</div>
           <div class="grid">
             <div class="cell"><span class="k">现价</span><span class="v mono">{{ pct(store.analysis.close) }}</span></div>
-            <div class="cell"><span class="k">MA5</span><span class="v mono">{{ pct(store.analysis.ma5) }}</span></div>
-            <div class="cell"><span class="k">MA10</span><span class="v mono">{{ pct(store.analysis.ma10) }}</span></div>
             <div class="cell"><span class="k">MA20</span><span class="v mono">{{ pct(store.analysis.ma20) }}</span></div>
             <div class="cell"><span class="k">MA60</span><span class="v mono">{{ pct(store.analysis.ma60) }}</span></div>
             <div class="cell"><span class="k">MACD DIF</span><span class="v mono">{{ pct(store.analysis.macd_dif) }}</span></div>
-            <div class="cell"><span class="k">MACD DEA</span><span class="v mono">{{ pct(store.analysis.macd_dea) }}</span></div>
             <div class="cell"><span class="k">RSI(12)</span><span class="v mono">{{ pct(store.analysis.rsi12) }}</span></div>
-            <div class="cell"><span class="k">KDJ K</span><span class="v mono">{{ pct(store.analysis.kdj_k) }}</span></div>
-            <div class="cell"><span class="k">KDJ D</span><span class="v mono">{{ pct(store.analysis.kdj_d) }}</span></div>
-            <div class="cell"><span class="k">KDJ J</span><span class="v mono">{{ pct(store.analysis.kdj_j) }}</span></div>
             <div class="cell"><span class="k">BOLL 上</span><span class="v mono">{{ pct(store.analysis.boll_upper) }}</span></div>
-            <div class="cell"><span class="k">BOLL 中</span><span class="v mono">{{ pct(store.analysis.boll_mid) }}</span></div>
             <div class="cell"><span class="k">BOLL 下</span><span class="v mono">{{ pct(store.analysis.boll_lower) }}</span></div>
             <div class="cell"><span class="k">20 日动量</span><span class="v mono">{{ momentum(store.analysis.momentum20) }}</span></div>
             <div class="cell"><span class="k">60 日动量</span><span class="v mono">{{ momentum(store.analysis.momentum60) }}</span></div>
@@ -353,6 +416,94 @@ function rate(v: number): string {
 .focus-hint {
   font-weight: var(--font-weight-normal);
   opacity: 0.9;
+}
+
+/* ── 交易规则匹配 ── */
+.rule-match {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-0);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-card);
+}
+.rule-reason {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+.rule-cands {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.rule-cand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 10px;
+  border: 1px solid var(--color-border-0);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+.rule-cand:hover {
+  border-color: var(--color-accent-dim);
+  color: var(--color-accent);
+}
+/* 当前生效的那条 */
+.rule-cand.active {
+  background: var(--color-accent-dim);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+/* 「满足」用品牌蓝而不是红/绿 —— 红绿在本项目里表示涨跌 */
+.rule-cand.ready .rc-state {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-semibold);
+}
+.rule-cand:not(.ready) .rc-state {
+  color: var(--color-text-tertiary);
+}
+.rc-strength {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+.rule-note {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.6;
+}
+.rule-note b {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
+}
+.rule-caveat {
+  padding: var(--space-2);
+  border-left: 2px solid var(--color-border-0);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-bg-hover);
+  color: var(--color-text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+.rule-caveat b {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
+}
+.link-btn {
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: 0;
 }
 .plan {
   display: flex;

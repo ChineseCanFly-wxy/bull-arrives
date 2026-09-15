@@ -27,7 +27,7 @@ import { useUniverseStore } from '@/stores/universe';
 import { useWatchlistStore } from '@/stores/watchlist';
 import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
 import RankDialog from '@/components/rank/RankDialog.vue';
-import type { StockAnalysis, StockStatusItem } from '@/types/analysis';
+import type { StockStatusItem } from '@/types/analysis';
 import { TRADE_RULE_OPTIONS, tradeRuleLabel, type TradeRuleId } from '@/types/analysis';
 import {
   BOARD_LABELS,
@@ -60,14 +60,20 @@ const showAnalysis = ref(false);
 const analysisTarget = ref<{ symbol: string; name: string; rule: string }>({
   symbol: '',
   name: '',
-  rule: 'trend_follow',
+  // 'auto' = 让后端按个股状态自动匹配规则
+  rule: 'auto',
 });
 
 /**
  * 当前策略配套的交易规则。
  *
- * 打开个股分析时用它算买点/止损/止盈 —— 否则会出现
- * 「用超跌反弹策略选出来、却按趋势规则给买点」这种错配。
+ * 现在只剩两个用途：
+ * 1. **筛选结果表「入场」列的判据** —— 列表页要用同一把尺子横向比较，
+ *    所以固定用当前策略的规则，而不是逐只自动匹配；
+ * 2. 界面上提示「买卖点按 X 规则计算」。
+ *
+ * ⚠️ 打开个股分析**不再**用它：那里会按这只股票自身的状态自动匹配规则
+ * （见 Rust `quant::playbook::match_rule`），用户在弹窗里也能手动切换。
  */
 const activeRule = computed(() => {
   const preset = universe.presets.find(p => p.id === universe.activePresetId);
@@ -78,7 +84,8 @@ function openAnalysis(row: SnapshotRow) {
   analysisTarget.value = {
     symbol: toFullSymbol(row.code, row.board),
     name: row.name,
-    rule: activeRule.value,
+    // 交给后端按这只股票当前的状态自动挑规则，而不是沿用筛选策略配套的那条
+    rule: 'auto',
   };
   showAnalysis.value = true;
 }
@@ -290,7 +297,13 @@ const visible = computed({
   set: value => emit('update:show', value),
 });
 
-const SCORE_CONCURRENCY = 3;
+/**
+ * 全量评分每次交给后端的股票数。
+ *
+ * 与后端 `batch_stock_status` 的单次上限（120）对齐并留点余量。
+ * 分批只为了让进度条能走、单次请求不至于过大 —— 并发本身由 Rust 侧控制。
+ */
+const SCORE_BATCH = 100;
 const scoreByRow = ref<Map<string, number | null>>(new Map());
 const scoreSortActive = ref(false);
 const scoring = ref(false);
@@ -617,24 +630,34 @@ async function scoreAllAndSort() {
     rankedPageSize.value = universe.pageSize;
     scoreProgress.value = { done: 0, total: rows.length };
 
-    const scoreRow = async (row: SnapshotRow) => {
-      try {
-        const analysis = await invoke<StockAnalysis>('analyze_stock', { symbol: toFullSymbol(row.code, row.board) });
-        next.set(scoreKey(row), analysis.total_score);
-      } catch (error) {
-        console.warn(`[universe] 量化评分失败 ${row.code}:`, error);
-        next.set(scoreKey(row), null);
-      } finally {
-        if (run !== scoreRun) return;
-        scoreByRow.value = new Map(next);
-        scoreProgress.value = { ...scoreProgress.value, done: scoreProgress.value.done + 1 };
-      }
-    };
-
+    // 分批交给后端：`batch_stock_status` 在 Rust 侧用信号量控制并发（5），
+    // 一次 IPC 出整批结果 —— 比前端逐只调 `analyze_stock` 少发几十倍的调用，
+    // 也顺带避开了「逐只完整分析会连股本信息一起拉」的开销。
+    const nextStatus = new Map(statusByRow.value);
     try {
-      for (let start = 0; start < rows.length; start += SCORE_CONCURRENCY) {
+      for (let start = 0; start < rows.length; start += SCORE_BATCH) {
         if (run !== scoreRun) return;
-        await Promise.all(rows.slice(start, start + SCORE_CONCURRENCY).map(scoreRow));
+        const batch = rows.slice(start, start + SCORE_BATCH);
+        const items = await invoke<StockStatusItem[]>('batch_stock_status', {
+          symbols: batch.map(row => toFullSymbol(row.code, row.board)),
+          rule: activeRule.value,
+        });
+        if (run !== scoreRun) return;
+
+        const bySymbol = new Map(items.map(item => [item.symbol, item]));
+        for (const row of batch) {
+          const key = scoreKey(row);
+          const item = bySymbol.get(key);
+          next.set(key, item?.score ?? null);
+          // 顺手把入场状态也存上 —— 表格翻到这一页时就不必再算一遍
+          if (item) nextStatus.set(key, item);
+        }
+        scoreByRow.value = new Map(next);
+        statusByRow.value = new Map(nextStatus);
+        scoreProgress.value = {
+          done: Math.min(start + SCORE_BATCH, rows.length),
+          total: rows.length,
+        };
       }
     } catch (error) {
       if (run === scoreRun) scoreError.value = `全量评分失败：${error}`;
@@ -998,7 +1021,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
           <span class="preset-desc">{{ activeDesc }}</span>
           <span class="preset-cond" :title="`${conditionSummary}`">
             当前条件：{{ conditionSummary }}
-            <em class="preset-rule">· 买卖点按「{{ tradeRuleLabel(activeRule) }}」规则计算</em>
+            <em class="preset-rule">· 「入场」列按「{{ tradeRuleLabel(activeRule) }}」判断；点「分析」会按个股状态自动匹配规则</em>
           </span>
         </div>
       </div>

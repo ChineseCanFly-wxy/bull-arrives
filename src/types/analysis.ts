@@ -21,20 +21,21 @@ export interface StockAnalysis {
   verdict: string;
   /** 各因子明细 */
   factors: FactorScore[];
-  /** 关键指标快照（null 表示数据不足未算出） */
+  /**
+   * 关键指标快照（null 表示数据不足未算出）。
+   *
+   * ⚠️ 只放**彼此不重复**的指标。下面几项是被刻意删掉的，别再加回来：
+   * - `ma5` / `ma10`：与 MA20 高度共线，MA5 一周平均噪声极大
+   * - `macd_dea`：就是 DIF 的 9 日 EMA，两者永远贴着走
+   * - `boll_mid`：**数学上恒等于 MA20**，同一个数字显示两遍
+   * - `kdj_k/d/j`：J = 3K−2D 纯派生，且 KDJ 整体判据只有 4 档
+   */
   close: number | null;
-  ma5: number | null;
-  ma10: number | null;
   ma20: number | null;
   ma60: number | null;
   macd_dif: number | null;
-  macd_dea: number | null;
   rsi12: number | null;
-  kdj_k: number | null;
-  kdj_d: number | null;
-  kdj_j: number | null;
   boll_upper: number | null;
-  boll_mid: number | null;
   boll_lower: number | null;
   /** 20 日 / 60 日动量（0.1 = +10%） */
   momentum20: number | null;
@@ -43,12 +44,48 @@ export interface StockAnalysis {
   volume_ratio: number | null;
   /** 操作计划（买点 / 止损 / 止盈 / 仓位）。K 线不足或价格异常时为 null */
   trade_plan: TradePlan | null;
-  /** 该规则在这只股票自身历史上的回测结果 */
+  /** 最终采用的那条规则在这只股票自身历史上的回测结果 */
   backtest: BacktestStats | null;
   /** 筹码分布**估算**（获利盘 / 平均成本 / 成本区间 / 筹码峰）。数据不足时为 null */
   chips: ChipDistribution | null;
-  /** 支撑位与压力位，**已按当前交易规则加权排序**（压力由近到远，然后支撑由近到远） */
+  /** 支撑位与压力位，**已按最终采用的规则加权排序**（压力由近到远，然后支撑由近到远） */
   levels: PriceLevel[];
+  /** 按市场状态自动匹配到的规则，以及三条规则各自的状态 */
+  rule_match: RuleMatch | null;
+}
+
+/** 一条规则在当前这只股票上的状态 */
+export interface RuleCandidate {
+  rule: TradeRuleId;
+  rule_label: string;
+  /** 当前是否满足该规则的入场条件 */
+  ready: boolean;
+  /** 未满足时缺什么 */
+  waiting_for: string | null;
+  /** 状态强度 0–100：成立时是「这种状态有多典型」，未成立时是「离触发有多近」 */
+  strength: number;
+  /** 一句话说明这条规则现在怎么看 */
+  note: string;
+}
+
+/**
+ * 按**当前市场状态**自动匹配到的规则。
+ *
+ * ⚠️ 这不是「历史上哪条规则最赚」。实测那样挑的选对率只有 40%（随机挑是 33%），
+ * 本质上是在 3 个噪声里挑最大值 —— 把某段行情的特征当成了规律。
+ * 这里挑的依据是三条规则各自的入场条件是否成立，也就是**当前处于什么状态**。
+ */
+export interface RuleMatch {
+  recommended: TradeRuleId;
+  recommended_label: string;
+  /** 推荐依据（说人话） */
+  reason: string;
+  /** 是否有多条同时成立 */
+  multiple_ready: boolean;
+  /** 三条都不成立时为 true，此时推荐的是「最接近触发」的一条 */
+  none_ready: boolean;
+  /** 顺序固定：趋势跟随 / 均值回归 / 放量突破 */
+  candidates: RuleCandidate[];
 }
 
 /** 换手率的数据来源。精度不同，UI 上必须如实说明，不能混着当"真实筹码"讲 */

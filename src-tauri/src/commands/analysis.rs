@@ -10,28 +10,28 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-/// 分析单只股票：拉取日 K，给出技术评分、操作计划、规则回测、筹码分布与支撑压力位。
+/// 分析单只股票：拉取日 K，给出技术评分、**自动匹配的交易规则**、操作计划、
+/// 规则回测、筹码分布与支撑压力位。
 ///
 /// 接收**完整符号**（`sh600519` / `sz000001` / `bj920xxx`），
 /// 拉取 250 根前复权日 K（约一年，足以让 MA60 / 60 日动量等指标收敛）。
 ///
-/// `rule` 指定用哪条交易规则算买卖点（`trend_follow` / `mean_reversion` / `breakout`），
-/// 不传或传未知值即回落为趋势跟随。前端把它与当前策略绑定 ——
-/// **筛选器负责粗筛（单日快照），规则负责精确点位（日 K）**，
-/// 因为快照里既没有均线也没有 RSI，买点只能逐只看日 K 才准。
+/// # `rule` 的两种用法
 ///
-/// 支撑/压力位同样按 `rule` 加权：趋势跟随看均线、均值回归看布林轨道、
+/// - **不传，或传 `"auto"`**（默认、推荐）：按这只股票**当前的市场状态**自动挑一条。
+///   判据就是三条规则各自的入场条件本身 —— 见 `playbook::match_rule`。
+/// - **传具体规则 id**：强制使用该规则 —— 用户在界面上手动切换时走这条。
+///
+/// ⚠️ 自动匹配**不按历史回测收益**挑。实测那样做的选对率只有 40%（随机挑是 33%），
+/// 本质上是在噪声里挑最大值。理由见 `playbook::match_rule` 的注释。
+///
+/// 支撑/压力位按**最终采用的规则**加权：趋势跟随看均线、均值回归看布林轨道、
 /// 放量突破看前高与上方筹码峰（见 `quant::levels`）。
 ///
 /// 说明：日 K 分析是盘前/盘后也要用的能力，因此**不走** `DataSourceManager`
 /// 的交易时段门禁（`ensure_request_allowed`），直接走东财历史 K 线接口。
 #[tauri::command]
 pub async fn analyze_stock(symbol: String, rule: Option<String>) -> Result<StockAnalysis, String> {
-    let rule = rule
-        .as_deref()
-        .map(TradeRule::from_id)
-        .unwrap_or(TradeRule::TrendFollow);
-
     // 日K 与股本信息并行取。
     // ⚠️ 两者重要性不同：日K 失败就没得分析（直接 `?`），
     // 股本只是筹码分布的输入，拿不到就降级 —— 不能因为它把整个分析废掉。
@@ -47,6 +47,22 @@ pub async fn analyze_stock(symbol: String, rule: Option<String>) -> Result<Stock
             None
         }
     };
+
+    // 按市场状态自动匹配规则（纯计算，不额外拉数据）
+    let rule_match = crate::quant::playbook::match_rule(&klines);
+    // 用户显式指定了就尊重它；否则用自动匹配的结果
+    let manual = rule
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "auto")
+        .map(TradeRule::from_id);
+    let rule = manual.unwrap_or_else(|| {
+        rule_match
+            .as_ref()
+            .map(|m| m.recommended)
+            .unwrap_or(TradeRule::TrendFollow)
+    });
+    let rule_source = if manual.is_some() { "手动指定" } else { "自动匹配" };
 
     let mut analysis = crate::quant::scorer::analyze(&klines).ok_or_else(|| {
         format!(
@@ -67,12 +83,13 @@ pub async fn analyze_stock(symbol: String, rule: Option<String>) -> Result<Stock
     // 支撑/压力位：按当前规则加权。筹码拿不到时只是少一路来源，其余照常
     analysis.levels = crate::quant::levels::detect(&klines, rule, chips.as_ref());
     analysis.chips = chips;
+    analysis.rule_match = rule_match;
 
     if analysis.trade_plan.is_none() {
         log::warn!("[analysis] {symbol} 未能生成操作计划（K 线不足或价格异常）");
     }
     log::info!(
-        "[analysis] {symbol} 规则={} 评分={:.1} K线={} 计划={} 回测触发={} 价位={} 筹码={}",
+        "[analysis] {symbol} 规则={}({rule_source}) 评分={:.1} K线={} 计划={} 回测触发={} 价位={} 筹码={}",
         rule.id(),
         analysis.total_score,
         klines.len(),
