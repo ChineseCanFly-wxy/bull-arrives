@@ -2,8 +2,12 @@
 // src/components/rank/RankDialog.vue
 // 推荐榜对话框：对筛选结果里最活跃的 N 只批量评分，按总分排序展示。
 
-import { computed, h, ref, watch } from 'vue';
-import { NButton, NDataTable, NTag, type DataTableColumns } from 'naive-ui';
+import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
+// 注意：本项目没有全局注册 naive-ui，模板里用到的每个组件都必须显式 import。
+// 漏掉 NModal 时 <n-modal> 会被当作原生未知标签：插槽内容直接内联渲染，
+// 没有遮罩/卡片/定位，表现为「透明错位、被主界面盖住」——此前多轮 z-index /
+// 挂载位置修复都是在治标，根因就是这个缺失的 import。
+import { NButton, NDataTable, NModal, NTag, type DataTableColumns } from 'naive-ui';
 import { useRankStore } from '@/stores/rank';
 import { useWatchlistStore } from '@/stores/watchlist';
 import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
@@ -37,17 +41,31 @@ const addError = ref<string | null>(null);
 // 分析详情
 const showAnalysis = ref(false);
 const analysisTarget = ref<{ symbol: string; name: string }>({ symbol: '', name: '' });
+let scanFrame: number | null = null;
 
 watch(
   () => props.show,
   open => {
-    if (open) {
-      addedSymbols.value = new Set();
-      addError.value = null;
-      void rank.scan(props.filter);
+    if (!open) {
+      if (scanFrame != null) cancelAnimationFrame(scanFrame);
+      scanFrame = null;
+      return;
     }
+    addedSymbols.value = new Set();
+    addError.value = null;
+    rank.reset();
+    // 先渲染加载中的弹窗，再开始可能需要数十秒的联网评分。
+    scanFrame = requestAnimationFrame(() => {
+      scanFrame = null;
+      void rank.scan(props.filter);
+    });
   },
+  { flush: 'post', immediate: true },
 );
+
+onBeforeUnmount(() => {
+  if (scanFrame != null) cancelAnimationFrame(scanFrame);
+});
 
 function changeClass(value: number): string {
   if (value > 0) return 'up';
@@ -74,6 +92,9 @@ async function handleAdd(row: RankItem) {
     addError.value = `加自选失败：${e}`;
   }
 }
+
+// 弹窗内容区高 84vh − 96px；扣掉工具条 / 提示行后，表格高度随窗口自适应（vh 随窗口实时变化）
+const tableMaxHeight = 'calc(84vh - 220px)';
 
 const columns = computed<DataTableColumns<RankItem>>(() => [
   {
@@ -162,6 +183,7 @@ const columns = computed<DataTableColumns<RankItem>>(() => [
     preset="card"
     title="今日推荐榜"
     :style="{ width: '92vw' }"
+    :mask-closable="false"
     :bordered="false"
     size="small"
   >
@@ -178,6 +200,10 @@ const columns = computed<DataTableColumns<RankItem>>(() => [
         <span v-if="addError" class="add-error">{{ addError }}</span>
       </div>
 
+      <div v-if="rank.loading" class="notice-line" role="status">
+        正在扫描活跃股并计算推荐榜，通常需要十几秒。
+      </div>
+
       <div v-if="rank.result?.skipped_conditions?.length" class="notice-line">
         当前数据源不提供「{{ rank.result.skipped_conditions.join('、') }}」，该条件已自动忽略。
       </div>
@@ -185,14 +211,15 @@ const columns = computed<DataTableColumns<RankItem>>(() => [
       <div v-if="rank.error" class="error-line">{{ rank.error }}</div>
 
       <div class="table-wrap">
-        <!-- 同筛选器：不用 flex-height / virtual-scroll，避免布局依赖导致行不渲染 -->
+        <!-- 注意：本弹窗里 flex-height 会导致表体一行都不渲染（实测复现），
+             所以用随视口高度变化的 max-height 实现自适应，而不是 flex-height。 -->
         <n-data-table
           :columns="columns"
           :data="rank.result?.items ?? []"
           :loading="rank.loading"
           :row-key="rowKey"
           size="small"
-          :max-height="420"
+          :max-height="tableMaxHeight"
           :scroll-x="840"
         />
         <div

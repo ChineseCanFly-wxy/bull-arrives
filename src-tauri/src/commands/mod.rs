@@ -9,3 +9,4 @@ pub mod universe;
 pub mod analysis;
 pub mod rank;
 pub mod monitor;
+pub mod sector;

@@ -532,9 +532,12 @@ pub fn run() {
                     match event {
                         tauri::WindowEvent::CloseRequested { api, .. } => {
                             api.prevent_close();
+                            let is_fullscreen = main_clone.is_fullscreen().unwrap_or(false);
                             let is_min = main_clone.is_minimized().unwrap_or(false);
                             let is_vis = main_clone.is_visible().unwrap_or(false);
-                            if is_vis && !is_min {
+                            // Fullscreen geometry is the whole screen — persisting it
+                            // would corrupt the saved window size, so skip it.
+                            if is_vis && !is_min && !is_fullscreen {
                                 let is_max = main_clone.is_maximized().unwrap_or(false);
                                 let _ = db_clone.set_setting("window_maximized", if is_max { "1" } else { "0" });
                                 if !is_max {
@@ -556,7 +559,19 @@ pub fn run() {
                                     }
                                 }
                             }
-                            let _ = main_clone.hide();
+                            if is_fullscreen {
+                                // macOS: hiding a window that owns a native fullscreen
+                                // space strands a black, unrecoverable space. Exit
+                                // fullscreen first, then hide after the animation.
+                                let _ = main_clone.set_fullscreen(false);
+                                let win = main_clone.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+                                    let _ = win.hide();
+                                });
+                            } else {
+                                let _ = main_clone.hide();
+                            }
                         }
                         tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
                             if main_clone.is_minimized().unwrap_or(false)
@@ -833,6 +848,8 @@ pub fn run() {
             commands::analysis::analyze_stock,
             commands::analysis::batch_stock_status,
             commands::rank::scan_and_rank,
+            commands::sector::get_sector_summaries,
+            commands::sector::get_sector_members,
             commands::monitor::get_monitors,
             commands::monitor::save_monitor,
             commands::monitor::delete_monitor,

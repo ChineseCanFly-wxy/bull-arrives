@@ -114,3 +114,5 @@ export interface UpdateInfo {
   release_url: string;
   download_size: number | null;
 }
+
+export * from './sector';

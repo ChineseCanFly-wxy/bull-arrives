@@ -26,14 +26,15 @@ export const useMonitorStore = defineStore('monitor', () => {
   }
 
   /** 开启（或刷新）一只股票的量化监控。后端自动算止损/止盈。 */
-  async function save(code: string, market: string, name: string): Promise<boolean> {
+  async function save(code: string, market: string, name: string): Promise<Monitor | null> {
+    error.value = null;
     try {
-      await invoke<Monitor>('save_monitor', { code, market, name });
+      const monitor = await invoke<Monitor>('save_monitor', { code, market, name });
       await fetchMonitors();
-      return true;
+      return monitor;
     } catch (e) {
       error.value = `开启监控失败：${e}`;
-      return false;
+      return null;
     }
   }
 

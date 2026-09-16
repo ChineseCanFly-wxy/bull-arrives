@@ -25,8 +25,8 @@ import {
 } from 'naive-ui';
 import { useUniverseStore } from '@/stores/universe';
 import { useWatchlistStore } from '@/stores/watchlist';
+import { useRankStore } from '@/stores/rank';
 import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
-import RankDialog from '@/components/rank/RankDialog.vue';
 import type { StockStatusItem } from '@/types/analysis';
 import { TRADE_RULE_OPTIONS, tradeRuleLabel, type TradeRuleId } from '@/types/analysis';
 import {
@@ -51,6 +51,7 @@ const emit = defineEmits<{ 'update:show': [value: boolean] }>();
 
 const universe = useUniverseStore();
 const watchlist = useWatchlistStore();
+const rank = useRankStore();
 
 const addedSymbols = ref<Set<string>>(new Set());
 const addError = ref<string | null>(null);
@@ -91,7 +92,16 @@ function openAnalysis(row: SnapshotRow) {
 }
 
 // 推荐榜对话框状态
-const showRank = ref(false);
+let rankOpenTimer: ReturnType<typeof setTimeout> | null = null;
+
+function openRank() {
+  if (rankOpenTimer) clearTimeout(rankOpenTimer);
+  // 等当前按钮的 click 事件传播结束，再挂载模态层，避免它把这次点击当作遮罩点击关闭。
+  rankOpenTimer = setTimeout(() => {
+    rankOpenTimer = null;
+    rank.open(universe.filter);
+  }, 0);
+}
 
 // ── 策略（预设）管理 ──────────────────────────────────────────────
 // 内置策略只读（随版本维护），用户的自建策略支持重命名 / 覆盖条件 / 删除。
@@ -726,6 +736,8 @@ onBeforeUnmount(() => {
     clearTimeout(statusTimer);
     statusTimer = undefined;
   }
+  // 推荐榜的延迟挂载定时器也要清 —— 否则卸载后才触发，会去开一个已经没人管的模态
+  if (rankOpenTimer) clearTimeout(rankOpenTimer);
   tableObserver?.disconnect();
   tableObserver = null;
 });
@@ -1165,8 +1177,17 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
         <n-button size="small" quaternary :disabled="universe.loading" @click="universe.reset()">
           重置条件
         </n-button>
-        <n-button size="small" type="warning" secondary :disabled="universe.loading" @click="showRank = true">
-          生成推荐榜
+        <!-- 推荐榜走独立的数据获取与加载状态：不受筛选器快照加载（universe.loading）影响，
+             只在榜单自身生成期间禁用并显示进度。 -->
+        <n-button
+          size="small"
+          type="warning"
+          secondary
+          :loading="rank.loading"
+          :disabled="rank.loading"
+          @click="openRank"
+        >
+          {{ rank.loading ? '正在生成推荐榜…' : '生成推荐榜' }}
         </n-button>
 
         <span v-if="universe.hasLoaded" class="stats">
@@ -1273,8 +1294,6 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     :name="analysisTarget.name"
     :rule="analysisTarget.rule"
   />
-
-  <RankDialog v-model:show="showRank" :filter="universe.filter" />
 
   <!-- 策略命名 / 覆盖：新建、另存为、重命名、覆盖条件共用这一个弹窗 -->
   <n-modal
