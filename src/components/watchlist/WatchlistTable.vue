@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, h, inject, onBeforeUnmount, onMounted, watch, defineAsyncComponent } from 'vue';
-import { NButton, NDataTable, NDropdown, NModal, NTag } from 'naive-ui';
+import { NButton, NDataTable, NDropdown, NModal, NTag, useMessage } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { invoke } from '@tauri-apps/api/core';
 import { useWatchlistStore } from '@/stores/watchlist';
@@ -23,6 +23,7 @@ import { CLEAR_INDEX_DETAIL_KEY, OPEN_STOCK_DETAIL_KEY, type StockDetailCoordina
 const watchlist = useWatchlistStore();
 const quoteStore = useQuoteStore();
 const monitorStore = useMonitorStore();
+const message = useMessage();
 const showAddDialog = ref(false);
 const showAlertDialog = ref(false);
 const showHoldingDialog = ref(false);
@@ -41,16 +42,21 @@ function openHolding(row: WatchItem) {
 }
 
 /**
- * 打开个股量化分析（含操作计划：买点 / 止损 / 止盈 / 仓位 + 规则历史回测）。
+ * 打开个股量化分析（含操作计划：买点 / 止损 / 止盈 / 仓位、规则历史回测、支撑压力位）。
  *
  * 自选股此前只能「整表评分排序」，看不到单只股票为什么是这个分、更看不到买卖点 ——
- * 这里补上逐只的分析入口。规则用默认的趋势跟随：自选股不属于任何筛选策略，
- * 不存在「策略配套规则」可继承。
+ * 这里补上逐只的分析入口。入口有两处：「操作」列的按钮（固定在表格右侧，
+ * 不会被横向滚动藏掉）与右键菜单。
+ *
+ * 规则**交给后端按这只股票自身的状态自动匹配**，与筛选器结果表里点「分析」
+ * 走的是同一条路（筛选器传的也是 'auto'）—— 自选股不属于任何筛选策略，
+ * 不存在「策略配套规则」可继承，硬套一条反而是错配。
  */
 const showAnalysisDialog = ref(false);
 const analysisRow = ref<WatchItem | null>(null);
 function openAnalysis(row: WatchItem) {
   cancelPendingRowClick();
+  showCtxMenu.value = false;
   analysisRow.value = row;
   showAnalysisDialog.value = true;
 }
@@ -65,6 +71,43 @@ function holdingMetric(row: WatchItem) {
 /** 该自选股对应的监控规则（未开启为 undefined） */
 function monitorOf(row: WatchItem): Monitor | undefined {
   return monitorStore.monitors.find(m => m.code === row.code && m.market === row.market);
+}
+
+/**
+ * 右键菜单里的「开启监控 / 停止监控 / 恢复监控」。
+ *
+ * 三态由当前状态决定，用户不用先想清楚"我现在是哪一步"：
+ * - 没有规则 → 开启（后端拉日 K 算 ATR 止损/止盈位，要等一次网络往返）
+ * - 有规则且在跑 → **停止**（只翻开关，价位原样留着）
+ * - 有规则但已停 → 恢复
+ *
+ * 停止/恢复走 `set_monitor_enabled`，**不重算价位** —— 这是它与「开启」的关键区别：
+ * 重算会用当时的收盘价当参考价，止损/止盈整体挪位，等于换了一套规则。
+ */
+async function toggleMonitor(row: WatchItem | null) {
+  if (!row) return;
+  showCtxMenu.value = false;
+  const existing = monitorOf(row);
+  if (!existing) {
+    const created = await monitorStore.save(row.code, row.market, row.name, true);
+    if (!created) {
+      message.error(monitorStore.error ?? '开启监控失败');
+      return;
+    }
+    message.success(`已开启“${row.name}”监控：止损 ${created.stop_price.toFixed(2)}，止盈 ${created.take_price.toFixed(2)}`);
+    return;
+  }
+  const next = !existing.enabled;
+  const ok = await monitorStore.setEnabled(row.code, row.market, next);
+  if (!ok) {
+    message.error(monitorStore.error ?? `${next ? '恢复' : '停止'}监控失败`);
+    return;
+  }
+  message.success(
+    next
+      ? `已恢复监控“${row.name}”，继续按原止损 ${existing.stop_price.toFixed(2)} / 止盈 ${existing.take_price.toFixed(2)} 判断`
+      : `已停止监控“${row.name}”，规则与价位都保留，可随时恢复`,
+  );
 }
 
 const alertDialogItem = ref<WatchItem | null>(null);
@@ -239,8 +282,8 @@ onBeforeUnmount(cancelPendingRowClick);
 function handleContextMenu(e: MouseEvent, row: WatchItem) {
   e.preventDefault();
   // Clamp menu position to viewport so it never renders off-screen
-  const menuW = 140; // approximate menu width
-  const menuH = 200; // approximate menu height
+  const menuW = 150; // approximate menu width
+  const menuH = 320; // approximate menu height（8 项 + 3 条分隔线）
   ctxMenuX.value = Math.min(e.clientX, window.innerWidth - menuW);
   ctxMenuY.value = Math.min(e.clientY, window.innerHeight - menuH);
   ctxMenuItem.value = row;
@@ -347,6 +390,26 @@ const iconAlert = () => h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, 
   h('path', { d: 'M3.5 11.5h9l-1.2-1.8V6.8A3.3 3.3 0 008 3.5 3.3 3.3 0 004.7 6.8v2.9z' }),
   h('path', { d: 'M6.7 12.5a1.35 1.35 0 002.6 0' }),
 ]);
+// 个股分析：柱状图 + 放大镜，和「评分/分析」的语义对齐
+const iconAnalyze = () => h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, style: 'vertical-align:middle;margin-right:6px' }, [
+  h('path', { d: 'M2.5 13.5h11' }),
+  h('path', { d: 'M4.5 11V8.5' }),
+  h('path', { d: 'M7.5 11V5.5' }),
+  h('path', { d: 'M10.5 11V7.5' }),
+  h('circle', { cx: 12.4, cy: 4.2, r: 2.1 }),
+  h('path', { d: 'M14 5.8l1.1 1.1' }),
+]);
+// 停止监控：暂停（方块）—— 语义是"停一下"，不是"删掉"
+const iconMonitorPause = () => h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, style: 'vertical-align:middle;margin-right:6px' }, [
+  h('circle', { cx: 8, cy: 8, r: 5.5 }),
+  h('path', { d: 'M6.6 5.8v4.4' }),
+  h('path', { d: 'M9.4 5.8v4.4' }),
+]);
+// 开启 / 恢复监控：播放三角形
+const iconMonitorPlay = () => h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, style: 'vertical-align:middle;margin-right:6px' }, [
+  h('circle', { cx: 8, cy: 8, r: 5.5 }),
+  h('path', { d: 'M6.6 5.6l4 2.4-4 2.4z' }),
+]);
 const iconDelete = () => h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', stroke: '#f85149', strokeWidth: 1.5, style: 'vertical-align:middle;margin-right:6px' }, [
   h('path', { d: 'M3 4h10' }),
   h('path', { d: 'M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1' }),
@@ -357,13 +420,21 @@ const iconDelete = () => h('svg', { viewBox: '0 0 16 16', width: 14, height: 14,
 
 const ctxOptions = computed(() => {
   const grouped = watchlist.activeGroupId !== 0;
+  const row = ctxMenuItem.value;
+  const monitored = row ? monitorOf(row) : undefined;
+  // 菜单项要跟着当前状态走：已经停掉的票不该显示「停止监控」
+  const monitorLabel = !monitored ? '开启监控' : monitored.enabled ? '停止监控' : '恢复监控';
+  const monitorIcon = monitored?.enabled ? iconMonitorPause : iconMonitorPlay;
   return [
+    { label: '个股分析', key: 'analyze', icon: iconAnalyze },
     { label: '设置行情提醒', key: 'alert', icon: iconAlert },
     { type: 'divider' as const, key: 'd0' },
+    { label: monitorLabel, key: 'monitor', icon: monitorIcon },
+    { type: 'divider' as const, key: 'd1' },
     { label: '置顶', key: 'top', icon: iconTop },
     { label: '上移', key: 'up', icon: iconUp },
     { label: '下移', key: 'down', icon: iconDown },
-    { type: 'divider' as const, key: 'd1' },
+    { type: 'divider' as const, key: 'd2' },
     {
       label: grouped ? '从当前分组移出' : '从全部自选删除',
       key: 'delete',
@@ -374,7 +445,9 @@ const ctxOptions = computed(() => {
 
 function handleCtxSelect(key: string) {
   switch (key) {
+    case 'analyze': if (ctxMenuItem.value) openAnalysis(ctxMenuItem.value); break;
     case 'alert': if (ctxMenuItem.value) openAlertSettings(ctxMenuItem.value); break;
+    case 'monitor': void toggleMonitor(ctxMenuItem.value); break;
     case 'top': void handleMoveTop(); break;
     case 'up': void handleMoveUp(); break;
     case 'down': void handleMoveDown(); break;
@@ -456,6 +529,20 @@ const columns: DataTableColumns<WatchItem> = [
         tipLines.push(
           `距止损 ${((q.price - m.stop_price) / q.price * 100).toFixed(1)}%`,
           `距止盈 ${((m.take_price - q.price) / q.price * 100).toFixed(1)}%`,
+        );
+      }
+      // 已停止的票把重点放在"它现在不会提醒你"上，价位信息退到悬停里 ——
+      // 状态列回答的是"会不会响"，不是"价位是多少"
+      if (!m.enabled) {
+        return h(
+          NTag,
+          {
+            type: 'warning',
+            size: 'small',
+            bordered: false,
+            title: `已停止监控（规则保留，右键可恢复）\n${tipLines.join('\n')}`,
+          },
+          { default: () => '已停止' },
         );
       }
       const tip = tipLines.join('\n');
@@ -544,7 +631,9 @@ const columns: DataTableColumns<WatchItem> = [
     }
   },
   {
-    title: '操作', key: 'action', width: 76, align: 'center',
+    // ⚠️ 必须 fixed: 'right'：这张表一共 16 列、横向要滚，固定在右边才不会被滚出去。
+    // 之前它跟着表格滚，窄窗口下用户根本看不到这里有个「分析」——入口等于不存在。
+    title: '操作', key: 'action', width: 76, align: 'center', fixed: 'right',
     render(row) {
       return h(
         NButton,
@@ -613,7 +702,7 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
     <NDataTable
       v-else
       :columns="columns"
-      :scroll-x="1528"
+      :scroll-x="1600"
       :data="displayedItems"
       :bordered="false"
       :single-line="true"
@@ -646,6 +735,7 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
       v-model:show="showAnalysisDialog"
       :symbol="analysisRow.code"
       :name="analysisRow.name"
+      rule="auto"
     />
 
     <HoldingDialog v-if="showHoldingDialog" v-model:show="showHoldingDialog" :item="holdingItem" @saved="loadHoldings" />

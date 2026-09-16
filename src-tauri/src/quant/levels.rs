@@ -8,9 +8,14 @@
 //! - **趋势跟随**：均线就是支撑。回踩 MA20 买是这套打法的入场逻辑，
 //!   所以 MA 的权重最高，布林轨道基本不看。
 //! - **均值回归**：布林上下轨才是主战场（下轨买、上轨走），均线只当参考。
-//! - **放量突破**：前高是触发位，而**上方套牢盘的多寡决定突破能不能走** ——
-//!   所以筹码峰的权重在这里最高。前高之上压着巨大筹码峰 = 突破极难成立；
-//!   上方筹码稀薄 = 突破了容易走。这是筹码分布最有价值的一处用法。
+//! - **放量突破**：前高是触发位，前高之上有没有"一层层套牢区"决定突破能不能走。
+//!   这里看的是**摆动高点被触及的次数**与 20 日高点 —— 一个价位被反复冲高回落，
+//!   说明上方抛压集中在那里。
+//!
+//! ⚠️ 这里**没有**筹码分布这一路来源（v1.5.1 移除）：A 股没有公开的筹码原始数据，
+//! 各软件的"筹码峰"都是自己的模型算的、互相之间对不上，拿它当支撑压力位会误导
+//! （详见 `CHANGELOG.md` v1.5.1）。上方抛压改用**被市场验证过的价位**表达 ——
+//! 摆动高点、20 日高点，这些都是真实成交打出来的。
 //!
 //! 所以本模块不是"找出所有支撑压力就完事"，而是给每个位一个**强度分**，
 //! 再乘以当前策略的权重，最后只留最该看的那几个。
@@ -21,7 +26,6 @@
 //! 强度分只表达"这个位置的参考价值相对更高"，不表达"跌到这里一定会停"。
 
 use crate::domain::KLineData;
-use crate::quant::chips::ChipDistribution;
 use crate::quant::indicators;
 use crate::quant::playbook::TradeRule;
 use serde::{Deserialize, Serialize};
@@ -59,7 +63,6 @@ pub enum LevelSource {
     BollUpper,
     SwingLow,
     SwingHigh,
-    ChipPeak,
     PriorLow20,
     PriorHigh20,
 }
@@ -74,7 +77,6 @@ impl LevelSource {
             LevelSource::BollUpper => "布林上轨",
             LevelSource::SwingLow => "摆动低点",
             LevelSource::SwingHigh => "摆动高点",
-            LevelSource::ChipPeak => "筹码密集区",
             LevelSource::PriorLow20 => "20日低点",
             LevelSource::PriorHigh20 => "20日高点",
         }
@@ -88,7 +90,7 @@ pub struct PriceLevel {
     pub kind: LevelKind,
     /// 强度最高的那个来源（决定用法）
     pub source: LevelSource,
-    /// 可能由多个来源共振而成，这里是中文来源说明（如 "MA20 + 筹码密集区"）
+    /// 可能由多个来源共振而成，这里是中文来源说明（如 "MA20 + 摆动低点"）
     pub label: String,
     /// 为什么这个位置值得看
     pub note: String,
@@ -99,19 +101,21 @@ pub struct PriceLevel {
 }
 
 /// 当前策略下各来源的权重倍数。
+///
+/// 筹码来源移除后，它原来的权重按各自策略的侧重点摊给了摇摆价（swing）与前 20 日高低
+/// （prior）—— 这两路本来就承担"上方抛压 / 下方承接"的语义，交给它们最顺。
 struct Weights {
     ma: f64,
     boll: f64,
     swing: f64,
-    chip: f64,
     prior: f64,
 }
 
 fn rule_weights(rule: TradeRule) -> Weights {
     match rule {
-        TradeRule::TrendFollow => Weights { ma: 1.30, boll: 0.80, swing: 1.00, chip: 0.95, prior: 0.90 },
-        TradeRule::MeanReversion => Weights { ma: 0.85, boll: 1.35, swing: 0.90, chip: 1.10, prior: 0.80 },
-        TradeRule::Breakout => Weights { ma: 0.90, boll: 0.75, swing: 1.05, chip: 1.25, prior: 1.35 },
+        TradeRule::TrendFollow => Weights { ma: 1.35, boll: 0.80, swing: 1.10, prior: 0.95 },
+        TradeRule::MeanReversion => Weights { ma: 0.90, boll: 1.40, swing: 1.00, prior: 0.85 },
+        TradeRule::Breakout => Weights { ma: 0.95, boll: 0.75, swing: 1.20, prior: 1.40 },
     }
 }
 
@@ -127,13 +131,9 @@ struct Candidate {
 
 /// 识别支撑与压力位。
 ///
-/// `chips` 为 `None` 时仍可用（只是少了筹码这一路来源），此时结果里不会有
-/// `LevelSource::ChipPeak`。
-pub fn detect(
-    klines: &[KLineData],
-    rule: TradeRule,
-    chips: Option<&ChipDistribution>,
-) -> Vec<PriceLevel> {
+/// 输入只要日 K 与当前交易规则 —— 所有来源都是**价格自己走出来的**（均线 / 布林 /
+/// 摆动点 / 前 20 日高低），不依赖任何外部估算数据。
+pub fn detect(klines: &[KLineData], rule: TradeRule) -> Vec<PriceLevel> {
     if klines.len() < 30 {
         return Vec::new();
     }
@@ -245,34 +245,6 @@ pub fn detect(
             strength: 64.0 * w.prior,
             note: format!("前 20 日最低 {v:.2} —— 短线多头的最后一道防线"),
         });
-    }
-
-    // ── 筹码密集区：本项目里最"量化"的一路来源 ──
-    if let Some(chips) = chips {
-        for peak in &chips.peaks {
-            // 占比越高越硬：5% 的峰给 55 分，20% 以上给到 85
-            let base = (45.0 + peak.ratio * 200.0).min(85.0);
-            let side = if peak.price > close { "上方" } else { "下方" };
-            let note = if peak.price > close {
-                format!(
-                    "{side} {:.2} 一带堆着约 {:.0}% 的筹码 —— 反弹到这里会遇到解套盘，是突破最需要跨过的坎",
-                    peak.price,
-                    peak.ratio * 100.0
-                )
-            } else {
-                format!(
-                    "{side} {:.2} 一带堆着约 {:.0}% 的筹码 —— 大量持仓成本在此，回调时容易形成承接",
-                    peak.price,
-                    peak.ratio * 100.0
-                )
-            };
-            candidates.push(Candidate {
-                price: peak.price,
-                source: LevelSource::ChipPeak,
-                strength: base * w.chip,
-                note,
-            });
-        }
     }
 
     if candidates.is_empty() {
@@ -497,7 +469,7 @@ mod tests {
     #[test]
     fn too_few_bars_returns_empty() {
         let prices: Vec<f64> = (0..20).map(|i| 10.0 + i as f64 * 0.01).collect();
-        assert!(detect(&bars(&prices), TradeRule::TrendFollow, None).is_empty());
+        assert!(detect(&bars(&prices), TradeRule::TrendFollow).is_empty());
     }
 
     #[test]
@@ -506,7 +478,7 @@ mod tests {
             .map(|i| 10.0 + (i as f64 * 0.13).sin() * 1.5 + i as f64 * 0.01)
             .collect();
         let close = *prices.last().unwrap();
-        let levels = detect(&bars(&prices), TradeRule::TrendFollow, None);
+        let levels = detect(&bars(&prices), TradeRule::TrendFollow);
         assert!(!levels.is_empty(), "应能识别出价位");
         for l in &levels {
             match l.kind {
@@ -522,7 +494,7 @@ mod tests {
         let prices: Vec<f64> = (0..200)
             .map(|i| 20.0 + (i as f64 * 0.31).sin() * 3.0)
             .collect();
-        let levels = detect(&bars(&prices), TradeRule::Breakout, None);
+        let levels = detect(&bars(&prices), TradeRule::Breakout);
         let supports = levels.iter().filter(|l| l.kind == LevelKind::Support).count();
         let resistances = levels.iter().filter(|l| l.kind == LevelKind::Resistance).count();
         assert!(supports <= MAX_LEVELS_EACH_SIDE, "支撑最多 3 条，实际 {supports}");
@@ -534,7 +506,7 @@ mod tests {
         let prices: Vec<f64> = (0..150)
             .map(|i| 15.0 + (i as f64 * 0.17).sin() * 2.0)
             .collect();
-        let levels = detect(&bars(&prices), TradeRule::TrendFollow, None);
+        let levels = detect(&bars(&prices), TradeRule::TrendFollow);
         let r: Vec<f64> = levels
             .iter()
             .filter(|l| l.kind == LevelKind::Resistance)
@@ -550,8 +522,8 @@ mod tests {
             .map(|i| 12.0 + i as f64 * 0.02 + (i as f64 * 0.4).sin() * 0.3)
             .collect();
         let k = bars(&prices);
-        let trend = detect(&k, TradeRule::TrendFollow, None);
-        let mean = detect(&k, TradeRule::MeanReversion, None);
+        let trend = detect(&k, TradeRule::TrendFollow);
+        let mean = detect(&k, TradeRule::MeanReversion);
 
         let ma_score = |levels: &[PriceLevel]| -> f64 {
             levels
@@ -575,7 +547,7 @@ mod tests {
             .collect();
         let k = bars(&prices);
         let boll_score = |rule: TradeRule| -> f64 {
-            detect(&k, rule, None)
+            detect(&k, rule)
                 .iter()
                 .filter(|l| matches!(l.source, LevelSource::BollLower | LevelSource::BollUpper))
                 .map(|l| l.strength)

@@ -852,6 +852,7 @@ pub fn run() {
             commands::sector::get_sector_members,
             commands::monitor::get_monitors,
             commands::monitor::save_monitor,
+            commands::monitor::set_monitor_enabled,
             commands::monitor::delete_monitor,
             commands::watchlist::get_watchlist,
             commands::watchlist::add_watch,

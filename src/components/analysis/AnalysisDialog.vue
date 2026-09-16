@@ -36,8 +36,7 @@ const plan = computed(() => store.analysis?.trade_plan ?? null);
 const backtest = computed(() => store.analysis?.backtest ?? null);
 const backtestVerdict = computed(() => (backtest.value ? evaluateBacktest(backtest.value) : null));
 
-/** 筹码分布与支撑/压力位（后端已按当前规则加权排序） */
-const chips = computed(() => store.analysis?.chips ?? null);
+/** 支撑/压力位（后端已按当前规则加权排序） */
 const levels = computed(() => store.analysis?.levels ?? []);
 /** 当前规则最该盯哪类价位 —— 免得用户面对一堆价位不知道看重哪个 */
 const ruleFocus = computed(() => tradeRuleFocus(store.ruleUsed));
@@ -239,14 +238,14 @@ function rate(v: number): string {
             拿不到操作计划：日 K 不足（至少需要 15 根才能算出 ATR）或价格数据异常。宁可不给价位，也不编一个。
           </div>
 
-          <!-- 价格位：筹码分布 + 支撑/压力位，权重随当前策略变 -->
-          <template v-if="levels.length || chips">
+          <!-- 价格位：支撑/压力位，权重随当前策略变（v1.5.1 起不再画筹码分布） -->
+          <template v-if="levels.length">
             <div class="section-title plan-title">
               <span>价格位</span>
               <span class="rule-tag">{{ tradeRuleLabel(store.ruleUsed) }}</span>
               <span class="muted focus-hint">{{ ruleFocus }}</span>
             </div>
-            <PriceLevelChart :close="store.analysis.close" :levels="levels" :chips="chips" />
+            <PriceLevelChart :close="store.analysis.close" :levels="levels" />
           </template>
 
           <!-- 规则回测：让「胜率」落到这只股票自己的历史上 -->

@@ -431,6 +431,18 @@ const prefHeight = ref<number | null>(null);
 const viewport = ref({ w: window.innerWidth, h: window.innerHeight });
 const resizing = ref(false);
 
+/**
+ * 筛选条件面板是否收起。
+ *
+ * 窗口小时，条件面板（板块 + 排除 + 11 组数值区间）会占掉大半高度，
+ * 结果表被挤到只剩几十像素；表体一矮，它自己的**横向**滚动条就被顶到
+ * 看不见的地方 —— 用户想左右挪一下看后面的指标，得先把整块滚到底、
+ * 挪完再滚回来。收起条件是最直接的解法。
+ *
+ * 收起不会让人"不知道自己筛的是什么"：策略条上的「当前条件」摘要一直在。
+ */
+const filterCollapsed = ref(false);
+
 const sizeLimits = computed(() => {
   const maxW = Math.max(320, viewport.value.w - VIEWPORT_GUTTER_W);
   const maxH = Math.max(280, viewport.value.h - VIEWPORT_GUTTER_H);
@@ -529,6 +541,14 @@ function handleViewportChange() {
 // ⚠️ 这里用 ResizeObserver 量出实际可用高度，再喂给 data-table 的 max-height。
 // 不用 virtual-scroll / flex-height：那两个都要求外层高度被正确算出来，
 // 一旦算出 0 表格就是一片空白（这个坑踩过，见表格处的注释）。
+//
+// ⚠️ 量出来的高度要**扣掉分页条**：分页在 n-data-table 内部，但它不占 max-height
+// 的额度 —— 不扣的话表体 + 分页会比容器高出一截，于是又出现外层滚动条，
+// 而横向滚动条会被推到看不见的地方（这正是用户报的问题）。
+// 52 ≈ 小号分页控件（约 28px）加两侧留白。
+const TABLE_PAGINATION_H = 52;
+/** 表体最小高度兜底（`.table-wrap` 的 min-height 120 − 分页 52 = 68，正常不会碰到这个值） */
+const TABLE_MIN_H = 60;
 const tableWrapRef = ref<HTMLElement | null>(null);
 const tableMaxHeight = ref(420);
 let tableObserver: ResizeObserver | null = null;
@@ -540,8 +560,9 @@ function observeTableWrap() {
   if (!el || typeof ResizeObserver === 'undefined') return;
   tableObserver = new ResizeObserver(entries => {
     const height = entries[0]?.contentRect.height ?? 0;
-    // 最小 180px 兜底：算出 0 会让整个表格渲染成空白
-    if (height > 0) tableMaxHeight.value = Math.max(180, Math.round(height));
+    if (height > 0) {
+      tableMaxHeight.value = Math.max(TABLE_MIN_H, Math.round(height) - TABLE_PAGINATION_H);
+    }
   });
   tableObserver.observe(el);
 }
@@ -919,10 +940,13 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     render: row => h('span', { class: 'muted' }, BOARD_LABELS[row.board] ?? row.board),
   },
   {
+    // 「加自选 / 分析」固定在右侧：这张表 13 列、横向要滚，
+    // 不固定的话窄弹窗下这两个按钮要滚动才看得见（操作类按钮不该藏起来）
     title: '操作',
     key: 'action',
     width: 132,
     align: 'center',
+    fixed: 'right',
     render: row => {
       const symbol = toFullSymbol(row.code, row.board);
       const done = addedSymbols.value.has(symbol);
@@ -1045,7 +1069,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
       </div>
 
       <!-- 筛选条件 -->
-      <div class="filter-panel">
+      <div v-show="!filterCollapsed" class="filter-panel">
         <div class="field">
           <span class="field-label">板块</span>
           <n-checkbox-group v-model:value="universe.filter.boards" @update:value="universe.markCustom">
@@ -1177,6 +1201,15 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
         <n-button size="small" quaternary :disabled="universe.loading" @click="universe.reset()">
           重置条件
         </n-button>
+        <!-- 收起条件：窗口小时给结果表腾高度，横向滚动条才不会被挤出视野 -->
+        <n-button
+          size="small"
+          quaternary
+          :title="filterCollapsed ? '展开筛选条件面板' : '收起筛选条件面板，给结果表让出高度'"
+          @click="filterCollapsed = !filterCollapsed"
+        >
+          {{ filterCollapsed ? '展开条件' : '收起条件' }}
+        </n-button>
         <!-- 推荐榜走独立的数据获取与加载状态：不受筛选器快照加载（universe.loading）影响，
              只在榜单自身生成期间禁用并显示进度。 -->
         <n-button
@@ -1252,6 +1285,8 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
           max-height 现在是个**具体数值**（tableMaxHeight），由 ResizeObserver 量出
           这块区域的实际高度得到 —— 弹窗拖大，表格跟着变大；仍然不是 CSS 百分比，
           所以不会退化成上面那两种「依赖外层高度」的写法。
+          该数值已扣掉分页条高度，因此表体 + 分页恰好等于这块区域，
+          不会溢出到外面去（溢出会把横向滚动条挤到看不见的地方）。
         -->
         <n-data-table
           :columns="columns"
@@ -1383,20 +1418,33 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 </template>
 
 <style scoped>
-/* 唯一滚动区。筛选面板在窄窗口下会变很高，这时整体滚动；
-   表格区另有自己的内部滚动（max-height 由 ResizeObserver 喂）。 */
+/* ⚠️ 弹窗内**不再有整体滚动区**（v1.5.1）：
+   以前这里是 overflow: auto，窗口小时整块内容（含筛选面板）会一起上下滚，
+   结果把结果表自己的横向滚动条推出了可视区 —— 用户要左右挪一下，得先把整块
+   拉到最底、挪完再拉回来看指标。现在改成：面板内部各自滚（条件面板自己滚、
+   表体自己滚），整块永不滚动，横向滚动条永远在弹窗内看得见。 */
 .screener-scroll {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
-  overflow: auto;
+  /* ⚠️ 这里**不是**主滚动区：正常情况下子项会各自收缩到恰好填满，永远不溢出，
+     也就不出现滚动条。`auto` 只是**兜底** —— 万一连最小高度都放不下
+     （比如同时冒出好几条提示行 + 弹窗被拖到最小），宁可给一条纵向滚动条，
+     也不能让内容被 overflow:hidden 直接裁掉、连分页都点不到。 */
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* 自己也是 flex 列容器 —— 让 .screener 用 flex:1 撑满，
+     而不是靠 height:100%（百分比高度依赖祖先有确定高度，容易在某些布局下变成 auto）。 */
+  display: flex;
+  flex-direction: column;
 }
 
 .screener {
   display: flex;
   flex-direction: column;
-  /* 撑满滚动区，表格区才能分到剩余空间 */
-  min-height: 100%;
+  /* 撑满滚动区高度：子项按自身规则收缩，总高恰好等于面板高度，不会溢出 */
+  flex: 1 1 auto;
+  min-height: 0;
   min-width: 0;
   gap: var(--space-2);
 }
@@ -1441,11 +1489,18 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
   flex-wrap: wrap;
 }
 .chips {
-  display: inline-flex;
+  display: flex;
   gap: var(--space-1);
-  flex-wrap: wrap;
+  /* 策略 chip 单行排，超出就横向滚 —— 不换行是为了**锁住这一条的高度**：
+     窄窗口下 7 个内置策略 + 新建 + 自定义会折成三四行，把结果表挤没。 */
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 .chip {
+  /* 单行横向滚动的前提下，chip 不许被压扁（见 .chips 的注释） */
+  flex-shrink: 0;
   padding: 3px 10px;
   border: 1px solid var(--color-border-0);
   border-radius: var(--radius-full);
@@ -1492,6 +1547,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 
 /* ── 策略 chip：主体点击切换，右侧「⋯」开管理菜单 ── */
 .preset-chip {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: stretch;
   border: 1px solid var(--color-border-0);
@@ -1614,8 +1670,14 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 }
 
 /* ── 筛选面板 ── */
+/* 允许被压缩（flex-shrink: 1）并自带纵向滚动：窗口小时它让高度给结果表，
+   自己内部滚 —— 这样整块内容不会溢出，表格的横向滚动条也就在视野内。
+   刻意不设 max-height：高度够时按内容自然高（本来就不到 200px），
+   高度不够时由 flex 收缩兜住，加个百分比上限只是多余且依赖父级高度。 */
 .filter-panel {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -1667,16 +1729,25 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 }
 
 /* ── 工具条 ── */
+/* 同样单行横向滚（理由见 .chips）：按钮组一换行就是两三条，窗口小时
+   光工具条就能吃掉结果表一半的高度。 */
 .toolbar {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.toolbar > * {
+  flex-shrink: 0;
 }
 .stats {
   font-size: var(--text-xs);
   color: var(--color-text-secondary);
+  white-space: nowrap;
 }
 .stats b {
   color: var(--color-accent);
@@ -1743,9 +1814,10 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 
 /* ── 结果表 ── */
 .table-wrap {
-  flex: 1;
-  /* 下限保证表格不会被压没；空间不够时由 .screener-scroll 整体滚动 */
-  min-height: 240px;
+  flex: 1 1 auto;
+  /* 下限 = 表体最小高度(TABLE_MIN_H) + 分页条(TABLE_PAGINATION_H)，
+     保证表体 + 分页刚好装得下、不会被裁掉分页或横向滚动条。 */
+  min-height: 112px;
   min-width: 0;
   overflow: hidden;
 }

@@ -1,6 +1,7 @@
 // src-tauri/src/commands/analysis.rs
 // 量化分析命令 —— 把「数据接入（eastmoney_kline）+ 指标打分（quant::scorer）
-// + 操作计划（quant::playbook）+ 规则回测（quant::backtest）」暴露给前端。
+// + 操作计划（quant::playbook）+ 规则回测（quant::backtest）
+// + 支撑压力位（quant::levels）」暴露给前端。
 
 use crate::datasource::kline;
 use crate::quant::playbook::TradeRule;
@@ -11,7 +12,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 /// 分析单只股票：拉取日 K，给出技术评分、**自动匹配的交易规则**、操作计划、
-/// 规则回测、筹码分布与支撑压力位。
+/// 规则回测与支撑压力位。
 ///
 /// 接收**完整符号**（`sh600519` / `sz000001` / `bj920xxx`），
 /// 拉取 250 根前复权日 K（约一年，足以让 MA60 / 60 日动量等指标收敛）。
@@ -26,27 +27,13 @@ use tokio::task::JoinSet;
 /// 本质上是在噪声里挑最大值。理由见 `playbook::match_rule` 的注释。
 ///
 /// 支撑/压力位按**最终采用的规则**加权：趋势跟随看均线、均值回归看布林轨道、
-/// 放量突破看前高与上方筹码峰（见 `quant::levels`）。
+/// 放量突破看前 20 日高点与摆动高点（见 `quant::levels`）。
 ///
 /// 说明：日 K 分析是盘前/盘后也要用的能力，因此**不走** `DataSourceManager`
 /// 的交易时段门禁（`ensure_request_allowed`），直接走东财历史 K 线接口。
 #[tauri::command]
 pub async fn analyze_stock(symbol: String, rule: Option<String>) -> Result<StockAnalysis, String> {
-    // 日K 与股本信息并行取。
-    // ⚠️ 两者重要性不同：日K 失败就没得分析（直接 `?`），
-    // 股本只是筹码分布的输入，拿不到就降级 —— 不能因为它把整个分析废掉。
-    let (kline_result, profile_result) = tokio::join!(
-        crate::datasource::kline::fetch_daily_kline(&symbol, 250),
-        crate::datasource::profile::fetch_profile(&symbol),
-    );
-    let klines = kline_result?;
-    let circulating_shares = match profile_result {
-        Ok(profile) => profile.circulating_shares,
-        Err(e) => {
-            log::warn!("[analysis] {symbol} 股本信息获取失败，换手率将改用其他来源：{e}");
-            None
-        }
-    };
+    let klines = kline::fetch_daily_kline(&symbol, 250).await?;
 
     // 按市场状态自动匹配规则（纯计算，不额外拉数据）
     let rule_match = crate::quant::playbook::match_rule(&klines);
@@ -77,19 +64,17 @@ pub async fn analyze_stock(symbol: String, rule: Option<String>) -> Result<Stock
     // 规则回测：让「胜率」这个词落到这只股票自己的历史上，而不是引一个别人的数字
     analysis.backtest = crate::quant::backtest::run(&klines, rule);
 
-    // 筹码分布：估算，不是交易所数据。换手率优先用 K 线自带的（东财通道），
-    // 否则用流通股本反推；两者都没有时会退化成不衰减的成交量累加，结果里会注明
-    let chips = crate::quant::chips::compute(&klines, circulating_shares);
-    // 支撑/压力位：按当前规则加权。筹码拿不到时只是少一路来源，其余照常
-    analysis.levels = crate::quant::levels::detect(&klines, rule, chips.as_ref());
-    analysis.chips = chips;
+    // 支撑/压力位：只吃价格自己走出来的东西（均线 / 布林 / 摆动点 / 前 20 日高低），
+    // 按当前规则加权。⚠️ 不掺筹码分布 —— A 股没有公开的筹码原始数据，
+    // 各软件的"筹码峰"都是各自的模型算的、互相之间对不上（见 CHANGELOG v1.5.1）。
+    analysis.levels = crate::quant::levels::detect(&klines, rule);
     analysis.rule_match = rule_match;
 
     if analysis.trade_plan.is_none() {
         log::warn!("[analysis] {symbol} 未能生成操作计划（K 线不足或价格异常）");
     }
     log::info!(
-        "[analysis] {symbol} 规则={}({rule_source}) 评分={:.1} K线={} 计划={} 回测触发={} 价位={} 筹码={}",
+        "[analysis] {symbol} 规则={}({rule_source}) 评分={:.1} K线={} 计划={} 回测触发={} 价位={}",
         rule.id(),
         analysis.total_score,
         klines.len(),
@@ -100,15 +85,6 @@ pub async fn analyze_stock(symbol: String, rule: Option<String>) -> Result<Stock
             .map(|b| b.trades.to_string())
             .unwrap_or_else(|| "-".to_string()),
         analysis.levels.len(),
-        analysis
-            .chips
-            .as_ref()
-            .map(|c| match c.rate_basis {
-                crate::quant::chips::RateBasis::Turnover => "换手率",
-                crate::quant::chips::RateBasis::CirculatingShares => "股本反推",
-                crate::quant::chips::RateBasis::VolumeOnly => "仅成交量",
-            })
-            .unwrap_or("无")
     );
 
     Ok(analysis)

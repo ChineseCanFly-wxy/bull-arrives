@@ -59,12 +59,6 @@ pub struct StockAnalysis {
     /// 该规则在这只股票自身历史上的回测结果。缺省为 `None`。
     #[serde(default)]
     pub backtest: Option<super::backtest::BacktestStats>,
-    /// 筹码分布**估算**（获利盘 / 平均成本 / 成本区间 / 筹码峰）。
-    ///
-    /// ⚠️ 同样由 `analyze_stock` 补上 —— 它需要流通股本（换手率要用），
-    /// 纯评分路径拿不到。缺省 `None`。
-    #[serde(default)]
-    pub chips: Option<super::chips::ChipDistribution>,
     /// 支撑位与压力位，**已按当前交易规则加权排序**。缺省为空。
     #[serde(default)]
     pub levels: Vec<super::levels::PriceLevel>,
@@ -259,8 +253,7 @@ pub fn analyze(klines: &[KLineData]) -> Option<StockAnalysis> {
         // 操作计划与回测由 analyze_stock 命令按策略补上（见 commands/analysis.rs）
         trade_plan: None,
         backtest: None,
-        // 筹码与支撑压力位由 analyze_stock 按策略补上（见 commands/analysis.rs）
-        chips: None,
+        // 支撑压力位由 analyze_stock 按策略补上（见 commands/analysis.rs）
         levels: Vec::new(),
         rule_match: None,
     })

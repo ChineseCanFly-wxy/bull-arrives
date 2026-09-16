@@ -46,8 +46,6 @@ export interface StockAnalysis {
   trade_plan: TradePlan | null;
   /** 最终采用的那条规则在这只股票自身历史上的回测结果 */
   backtest: BacktestStats | null;
-  /** 筹码分布**估算**（获利盘 / 平均成本 / 成本区间 / 筹码峰）。数据不足时为 null */
-  chips: ChipDistribution | null;
   /** 支撑位与压力位，**已按最终采用的规则加权排序**（压力由近到远，然后支撑由近到远） */
   levels: PriceLevel[];
   /** 按市场状态自动匹配到的规则，以及三条规则各自的状态 */
@@ -88,61 +86,16 @@ export interface RuleMatch {
   candidates: RuleCandidate[];
 }
 
-/** 换手率的数据来源。精度不同，UI 上必须如实说明，不能混着当"真实筹码"讲 */
-export type ChipRateBasis = 'turnover' | 'circulating_shares' | 'volume_only';
-
-export const CHIP_RATE_BASIS_LABEL: Record<ChipRateBasis, string> = {
-  turnover: '数据源直接提供每日换手率',
-  circulating_shares: '换手率由「成交量 ÷ 流通股本」反推',
-  volume_only: '拿不到换手率，退化为成交量累加（老筹码不会消失，只能看密集区）',
-};
-
-/** 单个价格档位上的筹码占比 */
-export interface ChipBin {
-  price: number;
-  ratio: number;
-}
-
-/** 一个筹码峰（成本分布的局部密集区） */
-export interface ChipPeak {
-  price: number;
-  low: number;
-  high: number;
-  /** 该区间内的筹码占比 0–1 */
-  ratio: number;
-}
-
-/**
- * 筹码分布（持仓成本分布）的**估算**结果。
- *
- * ⚠️ A 股没有公开的筹码原始数据，各家软件都是模型算的，互相之间也对不上。
- * 展示时必须标明是估算，不能包装成"真实持仓"或"主力成本"。
- */
-export interface ChipDistribution {
-  /** 归一化的成本分布直方图（价格升序） */
-  bins: ChipBin[];
-  /** 获利盘比例 0–1：现价之下的筹码占比 */
-  profit_ratio: number;
-  /** 加权平均成本 */
-  avg_cost: number;
-  /** 90% 筹码所在区间 */
-  cost_90_low: number;
-  cost_90_high: number;
-  /** 集中度 %（区间宽度 ÷ 区间中枢，越小越集中） */
-  concentration_90: number;
-  concentration_70: number;
-  /** 筹码峰，按占比降序 */
-  peaks: ChipPeak[];
-  /** 参与计算的 K 线根数 */
-  bars: number;
-  /** 换手率来源 */
-  rate_basis: ChipRateBasis;
-}
-
 /** 位在现价上方还是下方 */
 export type LevelKind = 'support' | 'resistance';
 
-/** 这个价位是从哪来的 */
+/**
+ * 这个价位是从哪来的。
+ *
+ * ⚠️ 曾经还有一个 `chip_peak`（筹码密集区）来源，v1.5.1 随筹码分布一起去掉了：
+ * A 股没有公开的筹码原始数据，各家软件的"筹码峰"都是自己的模型算的、互相之间对不上，
+ * 拿它当支撑压力位会误导。现在所有来源都是**价格自己走出来的**。
+ */
 export type LevelSource =
   | 'ma20'
   | 'ma60'
@@ -151,7 +104,6 @@ export type LevelSource =
   | 'boll_upper'
   | 'swing_low'
   | 'swing_high'
-  | 'chip_peak'
   | 'prior_low20'
   | 'prior_high20';
 
@@ -161,7 +113,7 @@ export interface PriceLevel {
   kind: LevelKind;
   /** 强度最高的那个来源 */
   source: LevelSource;
-  /** 中文来源说明，可能由多个来源共振而成（如 "MA20 + 筹码密集区"） */
+  /** 中文来源说明，可能由多个来源共振而成（如 "MA20 + 摆动低点"） */
   label: string;
   /** 为什么这个位置值得看 */
   note: string;
@@ -203,7 +155,7 @@ export const TRADE_RULE_OPTIONS: Array<{
     label: '放量突破',
     value: 'breakout',
     hint: '胜率中等偏上，盈亏比约 1.5 —— 关键是量能确认，缺了量的突破假信号率很高。突破前 20 日高点买入。',
-    focus: '看前高与上方筹码：前高是触发位，上方套牢盘少才走得动',
+    focus: '看前高：前 20 日高点是触发位，摆动高点被反复冲高回落说明上方抛压重',
   },
 ];
 

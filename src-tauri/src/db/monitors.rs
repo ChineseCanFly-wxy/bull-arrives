@@ -114,6 +114,32 @@ impl Database {
         Ok(())
     }
 
+    /// 停止 / 恢复一条监控 —— 只改 `enabled` 开关，不碰其他字段。
+    ///
+    /// ⚠️ 与 `delete_monitor` 的分工要守住：
+    /// - **停止**：参考价、止损/止盈位、`last_triggered` 全部保留，恢复后立刻按原价位继续判断；
+    ///   用户只是暂时不想被这只票打扰（比如已经减仓、或者想先观察几天）。
+    /// - **删除**：不再监控这只票了。
+    ///
+    /// 之所以不能靠「删掉再开启」代替停止：`save_monitor` 会用**当时的收盘价**重算参考价，
+    /// 止损/止盈位会整体挪位，`last_triggered` 也会被清空 —— 等于换了一套规则，
+    /// 而不是"暂停一下"。
+    ///
+    /// 返回是否真的改到了行：没有对应记录时返回 `false`，由调用方决定怎么提示。
+    pub fn set_monitor_enabled(
+        &self,
+        code: &str,
+        market: &str,
+        enabled: bool,
+    ) -> SqliteResult<bool> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let changed = conn.execute(
+            "UPDATE monitors SET enabled = ?3 WHERE code = ?1 AND market = ?2",
+            params![code, market, i64::from(enabled)],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// 记录触发的条件（一次性去重：之后同条件不再重复触发）。
     pub fn mark_monitor_triggered(&self, id: i64, triggered: &str) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
@@ -216,5 +242,41 @@ mod tests {
 
         db.delete_monitor("sh600519", "CN").unwrap();
         assert!(db.get_monitors().unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_enabled_pauses_without_losing_the_rule() {
+        let db = database();
+        db.upsert_monitor(&sample()).unwrap();
+        let id = db.get_monitors().unwrap()[0].id;
+        db.mark_monitor_triggered(id, "take_profit").unwrap();
+
+        assert!(db.set_monitor_enabled("sh600519", "CN", false).unwrap());
+        let paused = db.get_monitors().unwrap();
+        assert_eq!(paused.len(), 1, "停止监控不应删掉记录");
+        assert!(!paused[0].enabled);
+        // 关键：止损/止盈位与触发状态都必须原样留着 —— 恢复后按同一套价位继续判断
+        assert_eq!(paused[0].stop_price, 950.0);
+        assert_eq!(paused[0].take_price, 1080.0);
+        assert_eq!(paused[0].last_triggered.as_deref(), Some("take_profit"));
+
+        assert!(db.set_monitor_enabled("sh600519", "CN", true).unwrap());
+        assert!(db.get_monitors().unwrap()[0].enabled);
+    }
+
+    #[test]
+    fn set_enabled_reports_missing_row() {
+        let db = database();
+        assert!(!db.set_monitor_enabled("sh600519", "CN", false).unwrap());
+    }
+
+    /// `upsert_monitor` 覆盖时会把 `enabled` 一起写进去 —— 「刷新」不该把停掉的监控偷偷打开。
+    #[test]
+    fn upsert_preserves_explicitly_disabled_state() {
+        let db = database();
+        let mut m = sample();
+        m.enabled = false;
+        db.upsert_monitor(&m).unwrap();
+        assert!(!db.get_monitors().unwrap()[0].enabled);
     }
 }
