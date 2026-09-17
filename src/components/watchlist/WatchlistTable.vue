@@ -270,7 +270,7 @@ function handleContextMenu(e: MouseEvent, row: WatchItem) {
   e.preventDefault();
   // Clamp menu position to viewport so it never renders off-screen
   const menuW = 150; // approximate menu width
-  const menuH = 320; // approximate menu height（8 项 + 3 条分隔线）
+  const menuH = 380; // approximate menu height（最多 10 项 + 3 条分隔线）
   ctxMenuX.value = Math.min(e.clientX, window.innerWidth - menuW);
   ctxMenuY.value = Math.min(e.clientY, window.innerHeight - menuH);
   ctxMenuItem.value = row;
@@ -319,7 +319,45 @@ async function confirmDelete() {
   }
 }
 
+/**
+ * 删除监控规则（自选股本身不受影响）。
+ *
+ * 与「停止监控」的区别：停止只翻开关、价位与触发状态原样留着；
+ * 删除是把这条规则拿掉，重新开启会按当时的收盘价重算止损/止盈位。
+ * 所以这里要确认一次。
+ */
+const monitorDeleteRow = ref<WatchItem | null>(null);
+const showMonitorDeleteConfirm = ref(false);
+const monitorDeleting = ref(false);
+
+function requestMonitorDelete() {
+  showCtxMenu.value = false;
+  const row = ctxMenuItem.value;
+  if (!row) return;
+  monitorDeleteRow.value = row;
+  showMonitorDeleteConfirm.value = true;
+}
+
+async function confirmMonitorDelete() {
+  const row = monitorDeleteRow.value;
+  if (!row || monitorDeleting.value) return;
+  monitorDeleting.value = true;
+  try {
+    const ok = await monitorStore.remove(row.code, row.market);
+    if (!ok) {
+      message.error(monitorStore.error ?? '删除监控失败');
+      return;
+    }
+    showMonitorDeleteConfirm.value = false;
+    monitorDeleteRow.value = null;
+    message.success(`已删除“${row.name}”的监控`);
+  } finally {
+    monitorDeleting.value = false;
+  }
+}
+
 const deleteDialogTitle = computed(() => pendingDeleteGroupId.value === 0 ? '从全部自选删除' : '从当前分组移出');
+
 const deleteDialogContent = computed(() => {
   const count = pendingDeleteItems.value.length;
   const subject = count === 1 ? `“${pendingDeleteItems.value[0]?.name ?? ''}”` : `所选 ${count} 只股票`;
@@ -397,6 +435,13 @@ const iconMonitorPlay = () => h('svg', { viewBox: '0 0 16 16', width: 14, height
   h('circle', { cx: 8, cy: 8, r: 5.5 }),
   h('path', { d: 'M6.6 5.6l4 2.4-4 2.4z' }),
 ]);
+// 删除监控：圆圈打叉 —— 与「暂停」（两条竖线）、「播放」（三角）同一套形状语言，
+// 和下面「从全部自选删除」的垃圾桶也区分得开：删的是监控规则，不是这只股票
+const iconMonitorDelete = () => h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, style: 'vertical-align:middle;margin-right:6px' }, [
+  h('circle', { cx: 8, cy: 8, r: 5.5 }),
+  h('path', { d: 'M6.1 6.1l3.8 3.8' }),
+  h('path', { d: 'M9.9 6.1l-3.8 3.8' }),
+]);
 const iconDelete = () => h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', stroke: '#f85149', strokeWidth: 1.5, style: 'vertical-align:middle;margin-right:6px' }, [
   h('path', { d: 'M3 4h10' }),
   h('path', { d: 'M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1' }),
@@ -409,14 +454,25 @@ const ctxOptions = computed(() => {
   const grouped = watchlist.activeGroupId !== 0;
   const row = ctxMenuItem.value;
   const monitored = row ? monitorOf(row) : undefined;
-  // 菜单项要跟着当前状态走：已经停掉的票不该显示「停止监控」
-  const monitorLabel = !monitored ? '开启监控' : monitored.enabled ? '停止监控' : '恢复监控';
-  const monitorIcon = monitored?.enabled ? iconMonitorPause : iconMonitorPlay;
+  // 监控项跟着当前状态走，不出现点了没反应的空项：
+  //   未监控 → 开启监控
+  //   监控中 → 停止监控 + 删除监控
+  //   已停止 → 恢复监控 + 删除监控
+  // 「开启」与「恢复」走同一个 key：对没有规则的票是新建，对已停的票是翻回启用，
+  // 后端 `save_monitor` 两种都处理得对，前端不必分岔。
+  const monitorItems = monitored
+    ? [
+        monitored.enabled
+          ? { label: '停止监控', key: 'monitor-off', icon: iconMonitorPause }
+          : { label: '恢复监控', key: 'monitor-on', icon: iconMonitorPlay },
+        { label: '删除监控', key: 'monitor-delete', icon: iconMonitorDelete },
+      ]
+    : [{ label: '开启监控', key: 'monitor-on', icon: iconMonitorPlay }];
   return [
     { label: '个股分析', key: 'analyze', icon: iconAnalyze },
     { label: '设置行情提醒', key: 'alert', icon: iconAlert },
     { type: 'divider' as const, key: 'd0' },
-    { label: monitorLabel, key: 'monitor', icon: monitorIcon },
+    ...monitorItems,
     { type: 'divider' as const, key: 'd1' },
     { label: '置顶', key: 'top', icon: iconTop },
     { label: '上移', key: 'up', icon: iconUp },
@@ -434,7 +490,9 @@ function handleCtxSelect(key: string) {
   switch (key) {
     case 'analyze': if (ctxMenuItem.value) openAnalysis(ctxMenuItem.value); break;
     case 'alert': if (ctxMenuItem.value) openAlertSettings(ctxMenuItem.value); break;
-    case 'monitor': void toggleMonitor(ctxMenuItem.value); break;
+    case 'monitor-on': void toggleMonitor(ctxMenuItem.value); break;
+    case 'monitor-off': void toggleMonitor(ctxMenuItem.value); break;
+    case 'monitor-delete': requestMonitorDelete(); break;
     case 'top': void handleMoveTop(); break;
     case 'up': void handleMoveUp(); break;
     case 'down': void handleMoveDown(); break;
@@ -744,6 +802,20 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
       @positive-click="confirmDelete"
     >
       {{ deleteDialogContent }}
+    </NModal>
+
+    <NModal
+      v-model:show="showMonitorDeleteConfirm"
+      preset="dialog"
+      title="删除监控"
+      positive-text="确认删除"
+      negative-text="取消"
+      :loading="monitorDeleting"
+      :mask-closable="!monitorDeleting"
+      @positive-click="confirmMonitorDelete"
+    >
+      不再监控“{{ monitorDeleteRow?.name ?? '' }}”？删除后已算好的止损/止盈位不再保留，
+      以后重新开启会按当时的收盘价重算。自选股与持仓数据不受影响。
     </NModal>
 
     <NDropdown
