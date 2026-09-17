@@ -4,22 +4,16 @@ import IndexBar from '@/components/index/IndexBar.vue';
 import WatchlistTable from '@/components/watchlist/WatchlistTable.vue';
 import StatusBar from './StatusBar.vue';
 import { provide, ref } from 'vue';
-import { CLEAR_INDEX_DETAIL_KEY, OPEN_STOCK_DETAIL_KEY, type StockDetailTarget } from '@/utils/keys';
+import { CLEAR_INDEX_DETAIL_KEY } from '@/utils/keys';
 
 const clearIndexDetailFn = ref<(() => void) | null>(null);
 const clearStockDetailFn = ref<(() => void) | null>(null);
-const openStockDetailFn = ref<((target: StockDetailTarget) => void) | null>(null);
 
 provide(CLEAR_INDEX_DETAIL_KEY, {
   registerClearIndexFn: (fn: () => void) => { clearIndexDetailFn.value = fn; },
   clearIndexDetail: () => { clearIndexDetailFn.value?.(); },
   registerClearStockFn: (fn: () => void) => { clearStockDetailFn.value = fn; },
   clearStockDetail: () => { clearStockDetailFn.value?.(); },
-});
-
-provide(OPEN_STOCK_DETAIL_KEY, {
-  registerOpenStockFn: (fn: (target: StockDetailTarget) => void) => { openStockDetailFn.value = fn; },
-  openStockDetail: (target: StockDetailTarget) => { openStockDetailFn.value?.(target); },
 });
 
 defineProps<{

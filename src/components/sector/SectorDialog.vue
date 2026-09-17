@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, inject, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
 import {
   NButton,
   NDataTable,
@@ -16,14 +16,15 @@ import {
 import { useSectorStore } from '@/stores/sector';
 import { useWatchlistStore } from '@/stores/watchlist';
 import type { SectorKind, SectorMember, SectorSummary } from '@/types/sector';
+import type { WatchItem } from '@/types';
 import { formatPrice } from '@/utils/format';
-import { OPEN_STOCK_DETAIL_KEY, type StockDetailCoordinator } from '@/utils/keys';
+import StockDetail from '@/components/detail/StockDetail.vue';
+import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
 
 const props = defineProps<{ show: boolean }>();
 const emit = defineEmits<{ 'update:show': [value: boolean] }>();
 const sector = useSectorStore();
 const watchlist = useWatchlistStore();
-const stockDetailCoord = inject<StockDetailCoordinator | undefined>(OPEN_STOCK_DETAIL_KEY);
 const visible = computed({
   get: () => props.show,
   set: value => emit('update:show', value),
@@ -135,7 +136,8 @@ const memberColumns = computed<DataTableColumns<SectorMember>>(() => [
   },
   { title: '市盈率', key: 'pe', width: 78, align: 'right', render: row => row.pe == null ? '--' : row.pe.toFixed(2) },
   {
-    title: '操作', key: 'action', width: 148, align: 'center',
+    // 三个按钮：加自选 / 详情（分时·K线 + 五档）/ 分析（评分 + 操作计划 + 价格位）
+    title: '操作', key: 'action', width: 186, align: 'center',
     render: row => {
       const symbol = stockSymbol(row);
       const done = addedSymbols.value.has(symbol);
@@ -167,6 +169,18 @@ const memberColumns = computed<DataTableColumns<SectorMember>>(() => [
           },
           { default: () => '详情' },
         ),
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            tertiary: true,
+            onClick: (event: MouseEvent) => {
+              event.stopPropagation();
+              openAnalysis(row);
+            },
+          },
+          { default: () => '分析' },
+        ),
       ]);
     },
   },
@@ -194,10 +208,47 @@ async function handleAdd(row: SectorMember) {
   }
 }
 
+/**
+ * 「详情」= 在弹窗内切到第三个视图看个股详情（分时 / K 线 + 五档盘口）。
+ *
+ * ⚠️ 修过一个 bug：以前这里是 `visible.value = false`，把整个市场板块弹窗关掉，
+ * 改用主窗口的详情面板显示 —— 代价是**市场板块页面连同已选板块、成分股列表一起消失**，
+ * 用户得重新点工具栏图标、重新找到那个板块才能回来（用户反馈）。
+ * 而且主窗口的详情面板本来就被这个模态挡着、根本看不见，"关掉再开"没解决任何问题。
+ */
+const detailMember = ref<SectorMember | null>(null);
+
 function openMemberDetail(row: SectorMember) {
-  const target = { code: stockSymbol(row), market: 'CN', name: row.name };
-  visible.value = false;
-  void nextTick(() => stockDetailCoord?.openStockDetail(target));
+  detailMember.value = row;
+}
+
+function closeMemberDetail() {
+  detailMember.value = null;
+}
+
+/** 内嵌的 StockDetail 要 `WatchItem` 形状；id 用 -1 表示"不在自选股里"（沿用主窗口的约定） */
+const detailItem = computed<WatchItem | null>(() => {
+  const row = detailMember.value;
+  if (!row) return null;
+  return {
+    id: -1,
+    code: stockSymbol(row),
+    market: 'CN',
+    name: row.name,
+    sort_order: 0,
+    added_at: '',
+  };
+});
+
+// ── 个股技术分析 ──
+// 与筛选器 / 推荐榜 / 自选股的「分析」走同一条路：不传规则，让后端按这只股票**当前状态**
+// 自动匹配（筛选器结果表那种"固定用当前策略配套规则"是列表页横向比较才需要的口径）。
+const showAnalysis = ref(false);
+const analysisTarget = ref({ symbol: '', name: '' });
+
+function openAnalysis(row: SectorMember) {
+  analysisTarget.value = { symbol: stockSymbol(row), name: row.name };
+  showAnalysis.value = true;
 }
 </script>
 
@@ -212,7 +263,19 @@ function openMemberDetail(row: SectorMember) {
     size="small"
   >
     <div class="sector-dialog">
-      <template v-if="sector.selected">
+      <!-- 视图三：个股详情。内嵌在这里，而不是把弹窗关掉去用主窗口的详情面板 ——
+           关掉的话市场板块页面（含已选板块与成分股列表）会一起消失，「返回成分股」就没得回了。 -->
+      <template v-if="detailItem">
+        <div class="detail-toolbar">
+          <NButton text size="small" @click="closeMemberDetail">‹ 返回成分股</NButton>
+          <span class="muted">{{ detailItem.name }} · {{ detailItem.code }}</span>
+        </div>
+        <div class="detail-host">
+          <StockDetail :item="detailItem" @close="closeMemberDetail" />
+        </div>
+      </template>
+
+      <template v-else-if="sector.selected">
         <div class="detail-toolbar">
           <NButton text size="small" @click="sector.clearSector">‹ 返回板块排行</NButton>
           <NButton size="small" :loading="sector.memberLoading" @click="sector.fetchMembers(true)">刷新成分股</NButton>
@@ -251,7 +314,7 @@ function openMemberDetail(row: SectorMember) {
             :data="sector.members"
             :row-key="memberKey"
             :max-height="430"
-            :scroll-x="860"
+            :scroll-x="900"
             :bordered="false"
             :single-line="true"
             size="small"
@@ -306,6 +369,13 @@ function openMemberDetail(row: SectorMember) {
       </template>
     </div>
   </NModal>
+
+  <!-- 分析弹窗放在市场板块模态之外：它是独立模态，挂在后面才会盖在板块弹窗之上 -->
+  <AnalysisDialog
+    v-model:show="showAnalysis"
+    :symbol="analysisTarget.symbol"
+    :name="analysisTarget.name"
+  />
 </template>
 
 <style scoped>
@@ -314,6 +384,21 @@ function openMemberDetail(row: SectorMember) {
 .toolbar :deep(.n-tabs) { width: 180px; flex-shrink: 0; }
 .search { flex: 1; min-width: 160px; }
 .detail-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* 内嵌个股详情的宿主：StockDetail 自己是 `flex: 1 1 56%` 的纵向容器，
+   必须有个**确定高度**的 flex 父级才撑得开 —— 否则它算成 0 高，图表区一片空白。
+   高度用 vh 算，图表的 `.chart-container` 本身也是 vh 基准，两者对得上。 */
+.detail-host {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 220px);
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-0);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-1);
+}
+/* StockDetail 自带顶部边框（它原本是主窗口里贴在表格下方的分隔线），内嵌时是多余的 */
+.detail-host :deep(.stock-detail) { border-top: 0; }
 .detail-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .detail-heading > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .detail-name { font-size: var(--text-md); font-weight: 600; color: var(--color-text-primary); }
