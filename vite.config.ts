@@ -48,6 +48,7 @@ export default defineConfig(async () => ({
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         ticker: fileURLToPath(new URL("./ticker.html", import.meta.url)),
         toast: fileURLToPath(new URL("./toast.html", import.meta.url)),
+        tickerQuick: fileURLToPath(new URL("./ticker-quick.html", import.meta.url)),
       },
     },
   },

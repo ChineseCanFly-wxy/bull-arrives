@@ -193,3 +193,83 @@ pub fn resize_ticker_window(app: AppHandle, visible_rows: u32) -> Result<(), Str
     }
     Ok(())
 }
+
+/// 快速自选面板的尺寸（逻辑像素），与 `tauri.conf.json` 里的窗口配置保持一致。
+const QUICK_ADD_WIDTH: u32 = 320;
+const QUICK_ADD_HEIGHT: u32 = 300;
+/// 面板与悬浮窗之间的间隙（物理像素）。
+const QUICK_ADD_GAP: i32 = 8;
+
+/// 显示「快速自选」小窗：不用打开主界面就能搜索添加自选股、并直接删掉。
+///
+/// 位置策略是「贴着悬浮窗放」——悬浮窗通常在屏幕右侧偏下，所以优先摆在它正上方；
+/// 上方空间不够就改到下方；都放不下时退回上方，最后由 clamp 保证不会跑出显示器。
+/// 面板必须能拿到键盘焦点（要输入搜索词），因此**不能**加 `WS_EX_NOACTIVATE`，
+/// 只去掉任务栏图标（`WS_EX_TOOLWINDOW`）。
+#[tauri::command]
+pub fn open_ticker_quick_add(app: AppHandle) -> Result<(), String> {
+    let quick = app
+        .get_webview_window("ticker-quick")
+        .ok_or_else(|| "快速自选窗口不存在".to_string())?;
+
+    if let Some(ticker) = app.get_webview_window("ticker") {
+        if let (Ok(t_pos), Ok(t_size)) = (ticker.outer_position(), ticker.outer_size()) {
+            let monitor = ticker.current_monitor().ok().flatten();
+            let (mon_x, mon_y, mon_w, mon_h) = monitor
+                .as_ref()
+                .map(|m| {
+                    let origin = m.position();
+                    let bounds = m.size();
+                    (
+                        origin.x,
+                        origin.y,
+                        bounds.width as i32,
+                        bounds.height as i32,
+                    )
+                })
+                .unwrap_or((0, 0, 1920, 1080));
+
+            // 面板尺寸按它自己的缩放比换算成物理像素，才能和悬浮窗的位置直接比较。
+            let scale = quick.scale_factor().unwrap_or(1.0);
+            let panel_w = (QUICK_ADD_WIDTH as f64 * scale).round() as i32;
+            let panel_h = (QUICK_ADD_HEIGHT as f64 * scale).round() as i32;
+            let ticker_bottom = t_pos.y + t_size.height as i32;
+
+            let above = t_pos.y - panel_h - QUICK_ADD_GAP;
+            let below = ticker_bottom + QUICK_ADD_GAP;
+            let fits_above = above >= mon_y;
+            let fits_below = below + panel_h <= mon_y + mon_h;
+            let target_y = if fits_above || !fits_below {
+                above
+            } else {
+                below
+            };
+
+            // 右对齐悬浮窗（面板比悬浮窗宽，左对齐容易戳出屏幕右侧）。
+            let target_x = t_pos.x + t_size.width as i32 - panel_w;
+
+            let max_x = (mon_x + mon_w - panel_w).max(mon_x);
+            let max_y = (mon_y + mon_h - panel_h).max(mon_y);
+            let x = target_x.clamp(mon_x, max_x);
+            let y = target_y.clamp(mon_y, max_y);
+            let _ = quick.set_position(tauri::PhysicalPosition::new(x, y));
+        }
+    }
+
+    quick.show().map_err(|e| e.to_string())?;
+    let _ = quick.set_always_on_top(true);
+    let _ = quick.set_skip_taskbar(true);
+    // 只去掉任务栏图标；这里刻意不加非激活样式，否则输入框拿不到键盘焦点。
+    crate::apply_tool_window_style(&quick);
+    quick.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 隐藏「快速自选」小窗（Esc / 失焦 / 关闭按钮都走这里）。
+#[tauri::command]
+pub fn close_ticker_quick_add(app: AppHandle) -> Result<(), String> {
+    let quick = app
+        .get_webview_window("ticker-quick")
+        .ok_or_else(|| "快速自选窗口不存在".to_string())?;
+    quick.hide().map_err(|e| e.to_string())
+}

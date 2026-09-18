@@ -137,7 +137,7 @@ mod windows_util {
 
 /// Apply WS_EX_TOOLWINDOW to a Tauri window so it stays hidden from the
 /// Windows taskbar even after Explorer restarts.  No-op on non-Windows.
-fn apply_tool_window_style<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+pub(crate) fn apply_tool_window_style<R: Runtime>(window: &tauri::WebviewWindow<R>) {
     #[cfg(target_os = "windows")]
     {
         use raw_window_handle::HasWindowHandle;
@@ -1002,6 +1002,8 @@ pub fn run() {
             commands::window::set_ticker_hotkey,
             commands::window::set_ticker_opacity,
             commands::window::resize_ticker_window,
+            commands::window::open_ticker_quick_add,
+            commands::window::close_ticker_quick_add,
             commands::updater::check_update,
             commands::updater::install_update,
             commands::updater::is_trading_session,

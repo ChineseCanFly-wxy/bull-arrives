@@ -200,6 +200,15 @@ async function handleClick() {
   }
   await invoke('show_main_window').catch((e) => { console.error('[TickerBar] show_main_window failed:', e); });
 }
+
+/// 打开「快速自选」面板 —— 不用切到主界面就能搜索添加自选股、或把手头的自选直接删掉。
+/// 面板是一个独立的可聚焦窗口（悬浮窗本身是 WS_EX_NOACTIVATE，拿不到键盘焦点，
+/// 没法在上面直接放输入框），它的位置由后端贴着本窗口计算。
+function openQuickAdd() {
+  invoke('open_ticker_quick_add').catch((e) => {
+    console.error('[TickerBar] open_ticker_quick_add failed:', e);
+  });
+}
 </script>
 
 <template>
@@ -248,11 +257,21 @@ async function handleClick() {
       </div>
     </template>
     <div v-else class="ticker-empty">暂无自选</div>
+    <button
+      v-if="!initFailed"
+      class="ticker-add"
+      type="button"
+      title="快速自选：搜索添加 / 直接删除（不打开主界面）"
+      aria-label="快速自选"
+      @mousedown.stop
+      @click.stop="openQuickAdd"
+    >＋</button>
   </div>
 </template>
 
 <style scoped>
 .ticker-bar {
+  position: relative;
   width: 100%;
   height: 100%;
   background: transparent;
@@ -263,6 +282,8 @@ async function handleClick() {
   cursor: grab;
   overflow: hidden;
   padding: var(--space-1) var(--space-2);
+  /* 右侧留出「＋」的位置，避免它压住涨跌幅那一列 */
+  padding-right: 20px;
   transition: background var(--transition-fast);
 }
 .ticker-bar:hover {
@@ -346,5 +367,37 @@ async function handleClick() {
   color: var(--color-warning);
   font-size: 9px;
   opacity: 0.7;
+}
+
+/* ── 快速自选入口 ──
+   默认隐藏且不接收点击：悬浮条整条都是「点击打开主界面」的热区，
+   一个看不见但可点的按钮会造成误触。只在鼠标悬停时露出来。 */
+.ticker-add {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast);
+}
+.ticker-bar:hover .ticker-add {
+  opacity: 1;
+  pointer-events: auto;
+}
+.ticker-add:hover {
+  background: var(--color-accent-dim);
+  color: var(--color-accent);
 }
 </style>
