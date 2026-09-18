@@ -1,6 +1,6 @@
 [package]
 name = "bull-arrives"
-version = "2.1.0"
+version = "2.1.1"
 description = "Bull Arrives - 免费实时 A 股行情监控"
 authors = ["ChineseCanFly-wxy"]
 edition = "2021"
@@ -39,6 +39,7 @@ dirs = "5"
 tauri-plugin-updater = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-dialog = "2"
 raw-window-handle = "0.6"
 
 [target.'cfg(target_os = "windows")'.dependencies]
