@@ -5,8 +5,8 @@
 // 评分口径刻意保守：只做「方向 + 强弱」的规则化打分，不承诺收益，
 // 供 AI 分析（L4）与人工决策参考。所有阈值集中为常量，便于回测调参。
 
-use crate::domain::KLineData;
 use super::indicators::{self, latest_finite};
+use crate::domain::KLineData;
 
 /// 单个因子的评分结果
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -68,6 +68,12 @@ pub struct StockAnalysis {
     /// 后者实测选对率只有 40%（随机挑是 33%），理由见 `playbook::match_rule`。
     #[serde(default)]
     pub rule_match: Option<super::playbook::RuleMatch>,
+    /// 本次分析使用的历史数据来源、区间与复权口径。
+    #[serde(default)]
+    pub history: Option<crate::domain::HistoryMeta>,
+    /// 后端冻结的 Agent 输入快照；前端只能持此指纹触发解读。
+    #[serde(default)]
+    pub agent_context_fingerprint: Option<String>,
 }
 
 /// 至少需要多少根日 K 才能输出完整评分（MA60 需要 60 根）
@@ -154,7 +160,10 @@ fn score_rsi(rsi: f64) -> (f64, String) {
     } else if rsi > 75.0 {
         (45.0, "RSI 超买（>75），短期动能透支".into())
     } else if rsi < 20.0 {
-        (35.0, "RSI 极度超卖（<20），超跌但需等企稳信号，别直接接".into())
+        (
+            35.0,
+            "RSI 极度超卖（<20），超跌但需等企稳信号，别直接接".into(),
+        )
     } else if rsi < 30.0 {
         (50.0, "RSI 超卖（<30），偏弱".into())
     } else {
@@ -215,7 +224,12 @@ pub fn analyze(klines: &[KLineData]) -> Option<StockAnalysis> {
 
     let (s, note) = score_trend(ma5, ma10, ma20, ma60, close);
     total += s * W_TREND;
-    factors.push(FactorScore { name: "趋势".into(), score: s, weight: W_TREND, note });
+    factors.push(FactorScore {
+        name: "趋势".into(),
+        score: s,
+        weight: W_TREND,
+        note,
+    });
 
     // 量能因子依赖 vr，可能为 None（早期数据不足），缺失时按中性 55 分处理
     let (s, note) = match vr {
@@ -223,15 +237,30 @@ pub fn analyze(klines: &[KLineData]) -> Option<StockAnalysis> {
         None => (55.0, "量比数据不足".to_string()),
     };
     total += s * W_VOLUME;
-    factors.push(FactorScore { name: "量能".into(), score: s, weight: W_VOLUME, note });
+    factors.push(FactorScore {
+        name: "量能".into(),
+        score: s,
+        weight: W_VOLUME,
+        note,
+    });
 
     let (s, note) = score_momentum(mom20);
     total += s * W_MOMENTUM;
-    factors.push(FactorScore { name: "动量".into(), score: s, weight: W_MOMENTUM, note });
+    factors.push(FactorScore {
+        name: "动量".into(),
+        score: s,
+        weight: W_MOMENTUM,
+        note,
+    });
 
     let (s, note) = score_rsi(rsi12);
     total += s * W_RSI;
-    factors.push(FactorScore { name: "RSI".into(), score: s, weight: W_RSI, note });
+    factors.push(FactorScore {
+        name: "RSI".into(),
+        score: s,
+        weight: W_RSI,
+        note,
+    });
 
     let total_score = (total * 10.0).round() / 10.0; // 保留 1 位小数
 
@@ -256,6 +285,8 @@ pub fn analyze(klines: &[KLineData]) -> Option<StockAnalysis> {
         // 支撑压力位由 analyze_stock 按策略补上（见 commands/analysis.rs）
         levels: Vec::new(),
         rule_match: None,
+        history: None,
+        agent_context_fingerprint: None,
     })
 }
 
@@ -277,12 +308,16 @@ mod tests {
 
     /// 生成一段缓步上涨的 90 根日 K（每根 +0.5%）
     fn uptrend_bars(n: usize) -> Vec<KLineData> {
-        (0..n).map(|i| bar(10.0 * 1.005f64.powi(i as i32))).collect()
+        (0..n)
+            .map(|i| bar(10.0 * 1.005f64.powi(i as i32)))
+            .collect()
     }
 
     /// 生成一段缓步下跌的 90 根日 K（每根 -0.5%）
     fn downtrend_bars(n: usize) -> Vec<KLineData> {
-        (0..n).map(|i| bar(10.0 * 0.995f64.powi(i as i32))).collect()
+        (0..n)
+            .map(|i| bar(10.0 * 0.995f64.powi(i as i32)))
+            .collect()
     }
 
     #[test]
@@ -336,7 +371,10 @@ mod tests {
         let a = analyze(&uptrend_bars(90)).unwrap();
         let names: Vec<&str> = a.factors.iter().map(|f| f.name.as_str()).collect();
         // 实测与趋势因子相关 0.71 的 MACD、判据只有 4 档的 KDJ，都已删
-        assert!(!names.contains(&"MACD"), "MACD 与趋势因子共线，不该再出现在因子里");
+        assert!(
+            !names.contains(&"MACD"),
+            "MACD 与趋势因子共线，不该再出现在因子里"
+        );
         assert!(!names.contains(&"KDJ"), "KDJ 判据太粗，不该再出现在因子里");
         assert_eq!(names.len(), 4, "应只剩四个彼此独立的维度：{names:?}");
         // 量能是唯一与其他因子相关 0.00 的维度，必须在

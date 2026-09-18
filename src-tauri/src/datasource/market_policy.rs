@@ -40,7 +40,10 @@ impl Default for MarketRequestPolicy {
 impl MarketRequestPolicy {
     /// 配置损坏时停止请求，不能静默扩大允许获取行情的时间范围。
     pub fn paused() -> Self {
-        Self { windows: Vec::new(), closed_dates: Vec::new() }
+        Self {
+            windows: Vec::new(),
+            closed_dates: Vec::new(),
+        }
     }
 
     /// Parses the `settings.quote_schedule` JSON value. Empty input selects defaults.
@@ -104,14 +107,9 @@ impl MarketRequestPolicy {
         let local = now.with_timezone(&offset);
         let date = local.date_naive();
 
-        if matches!(local.weekday(), Weekday::Sat | Weekday::Sun) {
+        if !self.is_trading_day_at(now) {
             return MarketGateDecision::Paused {
-                reason: format!("北京时间 {date} 为周末，行情请求已暂停"),
-            };
-        }
-        if self.closed_dates.binary_search(&date).is_ok() {
-            return MarketGateDecision::Paused {
-                reason: format!("北京时间 {date} 已配置为休市日，行情请求已暂停"),
+                reason: format!("北京时间 {date} 为周末或已配置休市日，行情请求已暂停"),
             };
         }
         if self
@@ -129,6 +127,17 @@ impl MarketRequestPolicy {
                 self.schedule_text()
             ),
         }
+    }
+
+    /// 统一的交易日期闸门；不受行情时段开关影响，供资讯和定时任务复用。
+    pub fn is_trading_day_at(&self, now: DateTime<Utc>) -> bool {
+        let offset = FixedOffset::east_opt(CST_OFFSET_SECONDS).expect("UTC+8 is valid");
+        let local = now.with_timezone(&offset);
+        !matches!(local.weekday(), Weekday::Sat | Weekday::Sun)
+            && self
+                .closed_dates
+                .binary_search(&local.date_naive())
+                .is_err()
     }
 
     pub fn ensure_request_allowed(&self) -> Result<(), String> {
@@ -155,9 +164,8 @@ impl MarketRequestPolicy {
 
 fn parse_window(value: &Value, index: usize) -> Result<TradingWindow, String> {
     let (start, end) = if let Some(text) = value.as_str() {
-        text.split_once('-').ok_or_else(|| {
-            format!("quote_schedule.sessions[{index}] 必须采用 HH:MM-HH:MM 格式")
-        })?
+        text.split_once('-')
+            .ok_or_else(|| format!("quote_schedule.sessions[{index}] 必须采用 HH:MM-HH:MM 格式"))?
     } else if let Some(object) = value.as_object() {
         let start = object
             .get("start")
@@ -175,7 +183,8 @@ fn parse_window(value: &Value, index: usize) -> Result<TradingWindow, String> {
     };
 
     Ok(TradingWindow {
-        start: parse_time(start).map_err(|message| format!("sessions[{index}].start: {message}"))?,
+        start: parse_time(start)
+            .map_err(|message| format!("sessions[{index}].start: {message}"))?,
         end: parse_time(end).map_err(|message| format!("sessions[{index}].end: {message}"))?,
     })
 }
@@ -188,7 +197,9 @@ fn parse_time(value: &str) -> Result<NaiveTime, String> {
 fn validate_windows(windows: &[TradingWindow]) -> Result<(), String> {
     for (index, window) in windows.iter().enumerate() {
         if window.start >= window.end {
-            return Err(format!("quote_schedule.sessions[{index}] 开始时间必须早于结束时间"));
+            return Err(format!(
+                "quote_schedule.sessions[{index}] 开始时间必须早于结束时间"
+            ));
         }
         if index > 0 && windows[index - 1].start > window.start {
             return Err("quote_schedule.sessions 必须按开始时间升序排列".to_string());
@@ -214,18 +225,39 @@ mod tests {
     #[test]
     fn default_policy_allows_auction_and_both_sessions() {
         let policy = MarketRequestPolicy::default();
-        assert_eq!(policy.decision_at(utc(2026, 9, 9, 1, 15)), MarketGateDecision::Allowed);
-        assert_eq!(policy.decision_at(utc(2026, 9, 9, 3, 29)), MarketGateDecision::Allowed);
-        assert_eq!(policy.decision_at(utc(2026, 9, 9, 5, 0)), MarketGateDecision::Allowed);
-        assert_eq!(policy.decision_at(utc(2026, 9, 9, 6, 59)), MarketGateDecision::Allowed);
+        assert_eq!(
+            policy.decision_at(utc(2026, 9, 9, 1, 15)),
+            MarketGateDecision::Allowed
+        );
+        assert_eq!(
+            policy.decision_at(utc(2026, 9, 9, 3, 29)),
+            MarketGateDecision::Allowed
+        );
+        assert_eq!(
+            policy.decision_at(utc(2026, 9, 9, 5, 0)),
+            MarketGateDecision::Allowed
+        );
+        assert_eq!(
+            policy.decision_at(utc(2026, 9, 9, 6, 59)),
+            MarketGateDecision::Allowed
+        );
     }
 
     #[test]
     fn default_policy_blocks_boundaries_lunch_and_weekends() {
         let policy = MarketRequestPolicy::default();
-        assert!(matches!(policy.decision_at(utc(2026, 9, 9, 3, 30)), MarketGateDecision::Paused { .. }));
-        assert!(matches!(policy.decision_at(utc(2026, 9, 9, 7, 0)), MarketGateDecision::Paused { .. }));
-        assert!(matches!(policy.decision_at(utc(2026, 9, 12, 2, 0)), MarketGateDecision::Paused { .. }));
+        assert!(matches!(
+            policy.decision_at(utc(2026, 9, 9, 3, 30)),
+            MarketGateDecision::Paused { .. }
+        ));
+        assert!(matches!(
+            policy.decision_at(utc(2026, 9, 9, 7, 0)),
+            MarketGateDecision::Paused { .. }
+        ));
+        assert!(matches!(
+            policy.decision_at(utc(2026, 9, 12, 2, 0)),
+            MarketGateDecision::Paused { .. }
+        ));
     }
 
     #[test]
@@ -234,9 +266,18 @@ mod tests {
             r#"{"sessions":["09:30-11:00",{"start":"13:30","end":"14:30"}],"closed_dates":["2026-09-09"]}"#,
         ))
         .unwrap();
-        assert!(matches!(policy.decision_at(utc(2026, 9, 9, 2, 0)), MarketGateDecision::Paused { .. }));
-        assert_eq!(policy.decision_at(utc(2026, 9, 10, 1, 30)), MarketGateDecision::Allowed);
-        assert!(matches!(policy.decision_at(utc(2026, 9, 10, 1, 29)), MarketGateDecision::Paused { .. }));
+        assert!(matches!(
+            policy.decision_at(utc(2026, 9, 9, 2, 0)),
+            MarketGateDecision::Paused { .. }
+        ));
+        assert_eq!(
+            policy.decision_at(utc(2026, 9, 10, 1, 30)),
+            MarketGateDecision::Allowed
+        );
+        assert!(matches!(
+            policy.decision_at(utc(2026, 9, 10, 1, 29)),
+            MarketGateDecision::Paused { .. }
+        ));
     }
 
     #[test]

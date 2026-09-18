@@ -1,6 +1,6 @@
+use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
-use std::sync::Arc;
 
 use crate::db::Database;
 
@@ -27,13 +27,24 @@ pub struct MainWindowSize {
 }
 
 impl Default for MainWindowSize {
-    fn default() -> Self { Self { width: 1000, height: 680, remember: false } }
+    fn default() -> Self {
+        Self {
+            width: 1000,
+            height: 680,
+            remember: false,
+        }
+    }
 }
 
 pub fn apply_main_window_size(app: &AppHandle, db: &Database) -> Result<(), String> {
-    let config = db.get_setting("main_window_size").map_err(|e| e.to_string())?
-        .and_then(|raw| serde_json::from_str::<MainWindowSize>(&raw).ok()).unwrap_or_default();
-    if config.remember { return Ok(()); }
+    let config = db
+        .get_setting("main_window_size")
+        .map_err(|e| e.to_string())?
+        .and_then(|raw| serde_json::from_str::<MainWindowSize>(&raw).ok())
+        .unwrap_or_default();
+    if config.remember {
+        return Ok(());
+    }
     apply_size(app, config.width, config.height)
 }
 
@@ -41,15 +52,30 @@ fn apply_size(app: &AppHandle, width: u32, height: u32) -> Result<(), String> {
     let window = app.get_webview_window("main").ok_or("主窗口不存在")?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
     let monitor = window.current_monitor().map_err(|e| e.to_string())?;
-    let (max_w, max_h) = monitor.as_ref().map(|m| {
-        ((m.size().width as f64 / scale).floor() as u32, (m.size().height as f64 / scale).floor() as u32)
-    }).unwrap_or((width, height));
+    let (max_w, max_h) = monitor
+        .as_ref()
+        .map(|m| {
+            (
+                (m.size().width as f64 / scale).floor() as u32,
+                (m.size().height as f64 / scale).floor() as u32,
+            )
+        })
+        .unwrap_or((width, height));
     window.unmaximize().map_err(|e| e.to_string())?;
-    window.set_size(tauri::LogicalSize::new(width.min(max_w.saturating_sub(20).max(320)), height.min(max_h.saturating_sub(80).max(240)))).map_err(|e| e.to_string())
+    window
+        .set_size(tauri::LogicalSize::new(
+            width.min(max_w.saturating_sub(20).max(320)),
+            height.min(max_h.saturating_sub(80).max(240)),
+        ))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn set_main_window_size(app: AppHandle, db: State<'_, Arc<Database>>, config: MainWindowSize) -> Result<(), String> {
+pub fn set_main_window_size(
+    app: AppHandle,
+    db: State<'_, Arc<Database>>,
+    config: MainWindowSize,
+) -> Result<(), String> {
     if !(640..=7680).contains(&config.width) || !(480..=4320).contains(&config.height) {
         return Err("宽度范围 640–7680，高度范围 480–4320（逻辑像素）".into());
     }
@@ -72,14 +98,14 @@ pub fn set_ticker_hotkey(
     db: State<'_, Arc<Database>>,
     hotkey: String,
 ) -> Result<(), String> {
-    let new_sc = hotkey
-        .parse::<Shortcut>()
-        .map_err(|e| e.to_string())?;
+    let new_sc = hotkey.parse::<Shortcut>().map_err(|e| e.to_string())?;
 
     let state = app.state::<crate::HotkeyState>();
     let mut cur = state.0.lock().unwrap_or_else(|e| e.into_inner());
     if cur.as_ref() == Some(&new_sc) {
-        return db.set_setting("ticker_hotkey", &hotkey).map_err(|e| e.to_string());
+        return db
+            .set_setting("ticker_hotkey", &hotkey)
+            .map_err(|e| e.to_string());
     }
     let previous_value = db.get_setting("ticker_hotkey").map_err(|e| e.to_string())?;
     let gs = app.global_shortcut();
@@ -96,8 +122,12 @@ pub fn set_ticker_hotkey(
             let rollback_key = previous_value.unwrap_or_else(|| old.to_string());
             let db_result = db.set_setting("ticker_hotkey", &rollback_key);
             let unregister_result = gs.unregister(new_sc);
-            if let Err(e) = db_result { log::error!("恢复快捷键设置失败: {}", e); }
-            if let Err(e) = unregister_result { log::error!("注销候选快捷键失败: {}", e); }
+            if let Err(e) = db_result {
+                log::error!("恢复快捷键设置失败: {}", e);
+            }
+            if let Err(e) = unregister_result {
+                log::error!("注销候选快捷键失败: {}", e);
+            }
             return Err(format!("旧快捷键注销失败，未切换：{}", error));
         }
     }
@@ -146,11 +176,9 @@ pub fn resize_ticker_window(app: AppHandle, visible_rows: u32) -> Result<(), Str
         .set_size(tauri::LogicalSize::new(230_u32, height))
         .map_err(|e| e.to_string())?;
 
-    if let (Some(monitor), Ok(position), Ok(size)) = (
-        monitor,
-        window.outer_position(),
-        window.outer_size(),
-    ) {
+    if let (Some(monitor), Ok(position), Ok(size)) =
+        (monitor, window.outer_position(), window.outer_size())
+    {
         let origin = monitor.position();
         let bounds = monitor.size();
         let max_x = origin.x + bounds.width as i32 - size.width as i32;

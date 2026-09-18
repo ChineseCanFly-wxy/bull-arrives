@@ -1,7 +1,7 @@
 use encoding_rs::GBK;
 
-use crate::domain::StockBrief;
 use super::headers;
+use crate::domain::StockBrief;
 
 const SINA_SUGGEST_URL: &str = "https://suggest3.sinajs.cn/suggest/name=cn";
 const TENCENT_SUGGEST_URL: &str = "http://smartbox.gtimg.cn/s3/";
@@ -29,9 +29,9 @@ pub async fn suggest_search(keyword: &str) -> Result<Vec<StockBrief>, String> {
         super::shared_client().get(&url),
         "https://finance.sina.com.cn",
     )
-        .send()
-        .await
-        .map_err(|e| format!("Search request failed: {:#}", e))?;
+    .send()
+    .await
+    .map_err(|e| format!("Search request failed: {:#}", e))?;
 
     let body_bytes = resp
         .bytes()
@@ -60,16 +60,9 @@ pub async fn tencent_suggest_search(keyword: &str) -> Result<Vec<StockBrief>, St
         return Ok(vec![]);
     }
 
-    let url = format!(
-        "{}?q={}&t=all",
-        TENCENT_SUGGEST_URL,
-        urlencoding(trimmed)
-    );
+    let url = format!("{}?q={}&t=all", TENCENT_SUGGEST_URL, urlencoding(trimmed));
 
-    let resp = headers::with_browser_headers(
-        super::shared_client().get(&url),
-        "https://gu.qq.com",
-    )
+    let resp = headers::with_browser_headers(super::shared_client().get(&url), "https://gu.qq.com")
         .send()
         .await
         .map_err(|e| format!("Tencent search request failed: {:#}", e))?;
@@ -223,7 +216,9 @@ fn parse_sina_suggest(body: &str, limit: usize) -> Vec<StockBrief> {
         .and_then(|start| {
             let after_quote = start + 4; // "cn=" + opening quote
             let remaining = &body[after_quote..];
-            remaining.find('"').map(|end| &body[after_quote..after_quote + end])
+            remaining
+                .find('"')
+                .map(|end| &body[after_quote..after_quote + end])
         })
         .unwrap_or("");
 

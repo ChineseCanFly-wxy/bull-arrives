@@ -1,12 +1,12 @@
+use crate::domain::AppError;
+use crate::domain::*;
 use async_trait::async_trait;
+use market_policy::{MarketGateDecision, MarketRequestPolicy};
+use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 use tokio::sync::Notify;
-use reqwest::Client;
-use crate::domain::*;
-use crate::domain::AppError;
-use market_policy::{MarketGateDecision, MarketRequestPolicy};
 
 // ── Shared HTTP Client ──
 // A single reqwest::Client shared across all data source adapters.
@@ -131,21 +131,13 @@ pub trait DataSource: Send + Sync {
     fn display_name(&self) -> &str;
 
     /// Fetch real-time quotes (batch)
-    async fn fetch_realtime(
-        &self,
-        codes: &[String],
-        market: &str,
-    ) -> Result<Vec<Quote>, AppError>;
+    async fn fetch_realtime(&self, codes: &[String], market: &str) -> Result<Vec<Quote>, AppError>;
 
     /// Fetch major indices
     async fn fetch_indices(&self) -> Result<Vec<IndexQuote>, AppError>;
 
     /// Search stocks (fuzzy match code or name)
-    async fn search(
-        &self,
-        keyword: &str,
-        market: &str,
-    ) -> Result<Vec<StockBrief>, AppError>;
+    async fn search(&self, keyword: &str, market: &str) -> Result<Vec<StockBrief>, AppError>;
 
     /// Fetch 5-level depth (bid/ask order book)
     async fn fetch_depth(
@@ -214,7 +206,8 @@ impl DataSourceManager {
     }
 
     pub fn invalidate_requests(&self) {
-        self.revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         self.wakeup.notify_one();
     }
 
@@ -303,7 +296,10 @@ impl DataSourceManager {
 
     /// Get the name of the currently active data source
     pub fn active_name(&self) -> String {
-        self.active.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.active
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Get a reference to the currently active data source.
@@ -367,17 +363,18 @@ mod tests {
     }
 }
 
-pub mod sina;
-pub mod tencent;
+pub mod eastmoney_kline;
+pub mod eastmoney_universe;
+pub mod headers;
+pub mod history;
+pub mod kline;
 pub mod market_clock;
 pub mod market_policy;
-pub mod sector;
-pub mod search;
-pub mod headers;
-pub mod eastmoney_universe;
-pub mod eastmoney_kline;
-pub mod sina_universe;
-pub mod kline;
-pub mod profile;
 #[cfg(test)]
 mod network_smoke;
+pub mod profile;
+pub mod search;
+pub mod sector;
+pub mod sina;
+pub mod sina_universe;
+pub mod tencent;

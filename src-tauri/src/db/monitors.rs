@@ -70,7 +70,10 @@ impl Database {
         if !monitor.reference_price.is_finite() || monitor.reference_price <= 0.0 {
             return Err("参考价无效".into());
         }
-        if !monitor.stop_price.is_finite() || monitor.stop_price <= 0.0 || monitor.stop_price >= monitor.reference_price {
+        if !monitor.stop_price.is_finite()
+            || monitor.stop_price <= 0.0
+            || monitor.stop_price >= monitor.reference_price
+        {
             return Err("止损价应低于参考价".into());
         }
         if !monitor.take_price.is_finite() || monitor.take_price <= monitor.reference_price {
@@ -238,7 +241,10 @@ mod tests {
         let id = db.get_monitors().unwrap()[0].id;
 
         db.mark_monitor_triggered(id, "stop_loss").unwrap();
-        assert_eq!(db.get_monitors().unwrap()[0].last_triggered.as_deref(), Some("stop_loss"));
+        assert_eq!(
+            db.get_monitors().unwrap()[0].last_triggered.as_deref(),
+            Some("stop_loss")
+        );
 
         db.delete_monitor("sh600519", "CN").unwrap();
         assert!(db.get_monitors().unwrap().is_empty());

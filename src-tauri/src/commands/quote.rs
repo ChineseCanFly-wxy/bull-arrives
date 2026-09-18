@@ -1,13 +1,13 @@
-use tauri::State;
-use std::sync::Arc;
 use crate::cache::QuoteCache;
 use crate::datasource::DataSourceManager;
-use crate::domain::{Quote, IndexQuote, Depth, MinuteData, KLineData};
+use crate::domain::{Depth, IndexQuote, KLineData, MinuteData, Quote};
+use std::sync::Arc;
+use tauri::State;
 
 fn ensure_detail_request_allowed(manager: &DataSourceManager) -> Result<(), String> {
-    manager.ensure_request_allowed().map_err(|reason| {
-        format!("{reason}；详情无缓存可返回，请在交易时段内重试")
-    })
+    manager
+        .ensure_request_allowed()
+        .map_err(|reason| format!("{reason}；详情无缓存可返回，请在交易时段内重试"))
 }
 
 #[tauri::command]
@@ -27,9 +27,11 @@ pub async fn get_depth(
     manager: State<'_, Arc<DataSourceManager>>,
 ) -> Result<Depth, String> {
     ensure_detail_request_allowed(&manager)?;
-    let source = manager.active_source()
-        .ok_or("No active data source")?;
-    source.fetch_depth(&code, &market).await.map_err(|e| e.to_string())
+    let source = manager.active_source().ok_or("No active data source")?;
+    source
+        .fetch_depth(&code, &market)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

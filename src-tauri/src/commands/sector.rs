@@ -1,4 +1,7 @@
-use crate::datasource::sector::{self, SectorKind, SectorMemberPage, SectorSummaryPage};
+use crate::datasource::sector::{
+    self, SectorHistory, SectorKind, SectorLimitUpStats, SectorMemberPage, SectorRotation,
+    SectorSummaryPage,
+};
 
 /// 获取行业或概念板块排行。
 ///
@@ -47,4 +50,24 @@ pub async fn get_sector_members(
         force_refresh.unwrap_or(false),
     )
     .await
+}
+
+#[tauri::command]
+pub async fn get_sector_limit_up_stats(sector_code: String) -> Result<SectorLimitUpStats, String> {
+    sector::fetch_limit_up_stats(&sector_code).await
+}
+
+/// 按需获取单个板块的日/周/月 K 线，不参与排行和成分股请求。
+#[tauri::command]
+pub async fn get_sector_history(
+    sector_code: String,
+    period: String,
+) -> Result<SectorHistory, String> {
+    sector::fetch_history(&sector_code, &period).await
+}
+
+/// 行业、概念各一个批量请求；响应保留两类各自的成功/失败状态。
+#[tauri::command]
+pub async fn get_sector_rotation() -> Result<SectorRotation, String> {
+    Ok(sector::fetch_rotation().await)
 }

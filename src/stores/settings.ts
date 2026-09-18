@@ -40,12 +40,16 @@ export const useSettingsStore = defineStore('settings', () => {
   const tickerPageSize = ref(2);
   const quoteScheduleEnabled = ref(false);
   const alertsEnabled = ref(true);
+  const newsNotificationsEnabled = ref(false);
   const notificationDesktopAlways = ref(false);
   /// AI / 量化智能总开关。关闭后所有「自动运行」的智能功能一并停止，
   /// 手动点击触发的分析/推荐榜不受它约束。
   const aiEnabled = ref(true);
   /// 智能监控（ATR 自动止损/止盈），受 aiEnabled 约束。
   const aiMonitorEnabled = ref(true);
+  const localHistoryEnabled = ref(true);
+  const localHistoryUrl = ref('http://127.0.0.1:7899');
+  const localHistoryEngineDir = ref('');
   const refreshInterval = ref(REFRESH_INTERVAL_AUTO);
   const marketSession = ref<MarketSessionInfo>({
     session: '休市',
@@ -104,6 +108,9 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'alerts_enabled':
         alertsEnabled.value = value !== '0';
         break;
+      case 'news_notifications_enabled':
+        newsNotificationsEnabled.value = value === '1';
+        break;
       case 'notification_desktop_always':
         notificationDesktopAlways.value = value === '1';
         break;
@@ -112,6 +119,15 @@ export const useSettingsStore = defineStore('settings', () => {
         break;
       case 'ai_monitor_enabled':
         aiMonitorEnabled.value = value !== '0';
+        break;
+      case 'local_history_enabled':
+        localHistoryEnabled.value = value !== '0';
+        break;
+      case 'local_history_url':
+        localHistoryUrl.value = value || 'http://127.0.0.1:7899';
+        break;
+      case 'local_history_engine_dir':
+        localHistoryEngineDir.value = value;
         break;
       case 'refresh_interval':
         refreshInterval.value = clampInterval(parseInt(value, 10));
@@ -141,9 +157,13 @@ export const useSettingsStore = defineStore('settings', () => {
       applySettingLocally('ticker_page_size', settings.value['ticker_page_size'] || '2');
       applySettingLocally('quote_schedule_enabled', settings.value['quote_schedule_enabled'] ?? '0');
       applySettingLocally('alerts_enabled', settings.value['alerts_enabled'] ?? '1');
+      applySettingLocally('news_notifications_enabled', settings.value['news_notifications_enabled'] ?? '0');
       applySettingLocally('notification_desktop_always', settings.value['notification_desktop_always'] ?? '0');
       applySettingLocally('ai_enabled', settings.value['ai_enabled'] ?? '1');
       applySettingLocally('ai_monitor_enabled', settings.value['ai_monitor_enabled'] ?? '1');
+      applySettingLocally('local_history_enabled', settings.value['local_history_enabled'] ?? '1');
+      applySettingLocally('local_history_url', settings.value['local_history_url'] || 'http://127.0.0.1:7899');
+      applySettingLocally('local_history_engine_dir', settings.value['local_history_engine_dir'] || '');
       applySettingLocally('refresh_interval', settings.value['refresh_interval'] ?? '0');
       datasources.value = await invoke<[string, string][]>('list_datasources');
       autoLaunch.value = await isEnabled();
@@ -302,8 +322,8 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     settings, datasources, activeDatasource, theme, autoLaunch, isPortable,
     tickerHotkey, tickerOpacity, tickerSingleColor, tickerTextColor, tickerDisplayMode, tickerPageSize,
-    quoteScheduleEnabled, alertsEnabled, notificationDesktopAlways,
-    aiEnabled, aiMonitorEnabled,
+    quoteScheduleEnabled, alertsEnabled, newsNotificationsEnabled, notificationDesktopAlways,
+    aiEnabled, aiMonitorEnabled, localHistoryEnabled, localHistoryUrl, localHistoryEngineDir,
     refreshInterval, marketSession, error,
     fetchSettings, setSetting, switchDatasource, toggleTheme, toggleAutoLaunch,
     applyTheme, applyRemoteSetting, setTickerHotkey, setTickerOpacity,

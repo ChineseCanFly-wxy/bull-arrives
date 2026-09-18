@@ -6,11 +6,11 @@
 //! - 只对「成交额最大的前 N 只」评分（最活跃的票才值得算，而不是全市场 5000 只）
 //! - 日 K 请求用 Semaphore 限制并发，结果按总分降序
 
-use crate::datasource::kline;
 use crate::datasource::eastmoney_universe::{
     self, preferred_source, Board, FilterCapabilities, MarketFilter, SnapshotRow, SnapshotSource,
     DEFAULT_SNAPSHOT_TTL,
 };
+use crate::datasource::kline;
 use crate::db::Database;
 use crate::quant::scorer::{self, StockAnalysis};
 use serde::Serialize;
@@ -134,7 +134,8 @@ pub async fn scan_and_rank(
     // 2) 轻量池较窄，条件苛刻时命中可能不足 top_n，这时补一次全市场扫描
     let mut capabilities = FilterCapabilities::for_source(source_used);
     if filter.apply_with(&rows, capabilities).len() < top_n {
-        if let Ok(outcome) = eastmoney_universe::market_snapshot_with_fallback(ttl, preferred).await {
+        if let Ok(outcome) = eastmoney_universe::market_snapshot_with_fallback(ttl, preferred).await
+        {
             let full = outcome.rows.as_ref().clone();
             if full.len() > rows.len() {
                 stale = outcome.stale;
@@ -154,7 +155,7 @@ pub async fn scan_and_rank(
     candidates.sort_by(|a, b| b.amount.partial_cmp(&a.amount).unwrap_or(Ordering::Equal));
     candidates.truncate(top_n);
 
-    let mut items = rank_candidates(&candidates).await;
+    let mut items = rank_candidates(&candidates, db.inner().clone()).await;
 
     // 按总分降序；评分失败的（analysis=None）排最后
     items.sort_by(|a, b| {
@@ -180,20 +181,28 @@ pub async fn scan_and_rank(
 }
 
 /// 并发拉日 K + 评分。每个任务内部拿一个信号量许可，限制同时发起的请求数。
-async fn rank_candidates(candidates: &[SnapshotRow]) -> Vec<RankItem> {
+async fn rank_candidates(candidates: &[SnapshotRow], db: Arc<Database>) -> Vec<RankItem> {
     let sem = Arc::new(Semaphore::new(KLINE_CONCURRENCY));
     let mut set = JoinSet::new();
 
     for row in candidates {
         let row = row.clone();
         let sem = sem.clone();
+        let db = db.clone();
         set.spawn(async move {
             let _permit = sem.acquire_owned().await.expect("semaphore not closed");
             let symbol = kline::full_symbol_from(&row.code, row.board);
-            let (analysis, error) = match kline::fetch_daily_kline(&symbol, 250).await {
-                Ok(klines) => match scorer::analyze(&klines) {
-                    Some(a) => (Some(a), None),
-                    None => (None, Some(format!("K 线不足（{} 根）", klines.len()))),
+            let (analysis, error) = match kline::fetch_history(&db, &symbol, Some(250), false).await
+            {
+                Ok(history) => match scorer::analyze(&history.klines) {
+                    Some(mut analysis) => {
+                        analysis.history = Some(history.meta);
+                        (Some(analysis), None)
+                    }
+                    None => (
+                        None,
+                        Some(format!("K 线不足（{} 根）", history.klines.len())),
+                    ),
                 },
                 Err(e) => (None, Some(e)),
             };

@@ -57,7 +57,9 @@ pub async fn fetch_profile(symbol: &str) -> Result<StockProfile, String> {
 pub fn parse_profile(text: &str) -> Result<StockProfile, String> {
     let json: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("个股信息 JSON 解析失败: {e}"))?;
-    let data = json.get("data").ok_or_else(|| "个股信息返回中无 data 节点".to_string())?;
+    let data = json
+        .get("data")
+        .ok_or_else(|| "个股信息返回中无 data 节点".to_string())?;
     if data.is_null() {
         return Err("个股信息返回 data 为空".to_string());
     }

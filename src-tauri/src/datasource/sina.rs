@@ -1,9 +1,9 @@
-use async_trait::async_trait;
-use reqwest::Client;
-use encoding_rs::GBK;
-use crate::domain::*;
+use super::{headers, DataSource, INDEX_CODES};
 use crate::domain::AppError;
-use super::{DataSource, INDEX_CODES, headers};
+use crate::domain::*;
+use async_trait::async_trait;
+use encoding_rs::GBK;
+use reqwest::Client;
 
 const SINA_URL: &str = "http://hq.sinajs.cn/list=";
 
@@ -18,10 +18,9 @@ fn sina_scale(period: &str) -> Result<u32, AppError> {
         "1min" => Err(AppError::Unsupported(
             "新浪数据源不支持1分钟K线，请切换到腾讯数据源查看".into(),
         )),
-        other => super::minute_span(other)
-            .ok_or_else(|| AppError::Unsupported(
-                "新浪数据源不支持该周期，请切换到腾讯数据源查看".into(),
-            )),
+        other => super::minute_span(other).ok_or_else(|| {
+            AppError::Unsupported("新浪数据源不支持该周期，请切换到腾讯数据源查看".into())
+        }),
     }
 }
 
@@ -130,7 +129,11 @@ impl SinaAdapter {
             turnover,
             turnover_rate,
             timestamp: crate::domain::parse_quote_timestamp(
-                &format!("{} {}", fields.get(30).copied().unwrap_or(""), fields.get(31).copied().unwrap_or("")),
+                &format!(
+                    "{} {}",
+                    fields.get(30).copied().unwrap_or(""),
+                    fields.get(31).copied().unwrap_or("")
+                ),
                 "%Y-%m-%d %H:%M:%S",
             ),
         })
@@ -215,16 +218,17 @@ impl SinaAdapter {
             symbol, scale
         );
 
-        let resp = headers::with_browser_headers(
-            self.client.get(&url),
-            "https://finance.sina.com.cn",
-        )
-            .send()
-            .await
-            .map_err(|e| AppError::network("sina", format!("K线请求失败: {:#}", e)))?;
+        let resp =
+            headers::with_browser_headers(self.client.get(&url), "https://finance.sina.com.cn")
+                .send()
+                .await
+                .map_err(|e| AppError::network("sina", format!("K线请求失败: {:#}", e)))?;
 
         if !resp.status().is_success() {
-            return Err(AppError::network("sina", format!("K线 HTTP {}", resp.status())));
+            return Err(AppError::network(
+                "sina",
+                format!("K线 HTTP {}", resp.status()),
+            ));
         }
 
         let body_text = resp
@@ -289,24 +293,18 @@ impl DataSource for SinaAdapter {
         "新浪财经"
     }
 
-    async fn fetch_realtime(
-        &self,
-        codes: &[String],
-        market: &str,
-    ) -> Result<Vec<Quote>, AppError> {
+    async fn fetch_realtime(&self, codes: &[String], market: &str) -> Result<Vec<Quote>, AppError> {
         let sina_codes: Vec<String> = codes
             .iter()
             .map(|c| Self::code_to_sina(c, market))
             .collect();
         let url = format!("{}{}", SINA_URL, sina_codes.join(","));
 
-        let resp = headers::with_browser_headers(
-            self.client.get(&url),
-            "https://finance.sina.com.cn",
-        )
-            .send()
-            .await
-            .map_err(|e| AppError::network("sina", format!("请求失败: {:#}", e)))?;
+        let resp =
+            headers::with_browser_headers(self.client.get(&url), "https://finance.sina.com.cn")
+                .send()
+                .await
+                .map_err(|e| AppError::network("sina", format!("请求失败: {:#}", e)))?;
 
         if !resp.status().is_success() {
             return Err(AppError::network("sina", format!("HTTP {}", resp.status())));
@@ -318,10 +316,7 @@ impl DataSource for SinaAdapter {
             .map_err(|e| AppError::network("sina", format!("读取响应体失败: {:#}", e)))?;
         let (body, _, _) = GBK.decode(&body_bytes);
 
-        let quotes: Vec<Quote> = body
-            .lines()
-            .filter_map(Self::parse_sina_line)
-            .collect();
+        let quotes: Vec<Quote> = body.lines().filter_map(Self::parse_sina_line).collect();
 
         Ok(quotes)
     }
@@ -337,16 +332,17 @@ impl DataSource for SinaAdapter {
             .collect();
         let url = format!("{}{}", SINA_URL, stock_codes.join(","));
 
-        let resp = headers::with_browser_headers(
-            self.client.get(&url),
-            "https://finance.sina.com.cn",
-        )
-            .send()
-            .await
-            .map_err(|e| AppError::network("sina", format!("指数请求失败: {:#}", e)))?;
+        let resp =
+            headers::with_browser_headers(self.client.get(&url), "https://finance.sina.com.cn")
+                .send()
+                .await
+                .map_err(|e| AppError::network("sina", format!("指数请求失败: {:#}", e)))?;
 
         if !resp.status().is_success() {
-            return Err(AppError::network("sina", format!("指数 HTTP {}", resp.status())));
+            return Err(AppError::network(
+                "sina",
+                format!("指数 HTTP {}", resp.status()),
+            ));
         }
 
         let body_bytes = resp
@@ -355,32 +351,26 @@ impl DataSource for SinaAdapter {
             .map_err(|e| AppError::network("sina", format!("读取响应体失败: {:#}", e)))?;
         let (body, _, _) = GBK.decode(&body_bytes);
 
-        let indices: Vec<IndexQuote> = body
-            .lines()
-            .filter_map(Self::parse_sina_index)
-            .collect();
+        let indices: Vec<IndexQuote> = body.lines().filter_map(Self::parse_sina_index).collect();
 
         Ok(indices)
     }
 
-    async fn search(
-        &self,
-        keyword: &str,
-        market: &str,
-    ) -> Result<Vec<StockBrief>, AppError> {
+    async fn search(&self, keyword: &str, market: &str) -> Result<Vec<StockBrief>, AppError> {
         // If the keyword looks like a 6-digit stock code, try direct lookup
         let trimmed = keyword.trim();
         if trimmed.len() == 6 && trimmed.chars().all(|c| c.is_ascii_digit()) {
             let sina_code = Self::code_to_sina(trimmed, market);
             let url = format!("{}{}", SINA_URL, sina_code);
-            let resp = headers::with_browser_headers(
-                self.client.get(&url),
-                "https://finance.sina.com.cn",
-            )
-                .send()
+            let resp =
+                headers::with_browser_headers(self.client.get(&url), "https://finance.sina.com.cn")
+                    .send()
+                    .await
+                    .map_err(|e| AppError::network("sina", format!("搜索请求失败: {:#}", e)))?;
+            let body_bytes = resp
+                .bytes()
                 .await
-                .map_err(|e| AppError::network("sina", format!("搜索请求失败: {:#}", e)))?;
-            let body_bytes = resp.bytes().await.map_err(|e| AppError::network("sina", format!("搜索读取失败: {:#}", e)))?;
+                .map_err(|e| AppError::network("sina", format!("搜索读取失败: {:#}", e)))?;
             let (body, _, _) = GBK.decode(&body_bytes);
 
             // Parse the response to extract name
@@ -417,16 +407,17 @@ impl DataSource for SinaAdapter {
             symbol
         );
 
-        let resp = headers::with_browser_headers(
-            self.client.get(&url),
-            "https://finance.sina.com.cn",
-        )
-            .send()
-            .await
-            .map_err(|e| AppError::network("sina", format!("分钟数据请求失败: {:#}", e)))?;
+        let resp =
+            headers::with_browser_headers(self.client.get(&url), "https://finance.sina.com.cn")
+                .send()
+                .await
+                .map_err(|e| AppError::network("sina", format!("分钟数据请求失败: {:#}", e)))?;
 
         if !resp.status().is_success() {
-            return Err(AppError::network("sina", format!("分钟数据 HTTP {}", resp.status())));
+            return Err(AppError::network(
+                "sina",
+                format!("分钟数据 HTTP {}", resp.status()),
+            ));
         }
 
         let body_text = resp
@@ -446,7 +437,6 @@ impl DataSource for SinaAdapter {
         }
         let raw: Vec<serde_json::Value> = serde_json::from_str(json_str)
             .map_err(|e| AppError::network("sina", format!("分钟数据解析失败: {}", e)))?;
-
 
         let data: Vec<crate::domain::MinuteData> = raw
             .iter()
@@ -515,19 +505,24 @@ impl DataSource for SinaAdapter {
         let tc_code = Self::code_to_sina(code, market);
         let url = format!("http://qt.gtimg.cn/q={}", tc_code);
 
-        let resp = headers::with_browser_headers(
-            self.client.get(&url),
-            "https://gu.qq.com",
-        )
+        let resp = headers::with_browser_headers(self.client.get(&url), "https://gu.qq.com")
             .send()
             .await
-            .map_err(|e| AppError::network("sina", format!("深度数据(Tencent)请求失败: {:#}", e)))?;
+            .map_err(|e| {
+                AppError::network("sina", format!("深度数据(Tencent)请求失败: {:#}", e))
+            })?;
 
         if !resp.status().is_success() {
-            return Err(AppError::network("sina", format!("深度数据 HTTP {}", resp.status())));
+            return Err(AppError::network(
+                "sina",
+                format!("深度数据 HTTP {}", resp.status()),
+            ));
         }
 
-        let body_bytes = resp.bytes().await.map_err(|e| AppError::network("sina", format!("深度数据读取失败: {:#}", e)))?;
+        let body_bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| AppError::network("sina", format!("深度数据读取失败: {:#}", e)))?;
         let (body, _, _) = GBK.decode(&body_bytes);
 
         let mut bids = Vec::new();
@@ -548,23 +543,27 @@ impl DataSource for SinaAdapter {
                 if fields.len() >= 29 {
                     for i in 0..5 {
                         let pi = 9 + i * 2;
-                        if let (Ok(price), Ok(vol)) = (
-                            fields[pi].parse::<f64>(),
-                            fields[pi + 1].parse::<u64>(),
-                        ) {
+                        if let (Ok(price), Ok(vol)) =
+                            (fields[pi].parse::<f64>(), fields[pi + 1].parse::<u64>())
+                        {
                             if price > 0.0 && vol > 0 {
-                                bids.push(Level { price, volume: super::normalize_volume(vol) });
+                                bids.push(Level {
+                                    price,
+                                    volume: super::normalize_volume(vol),
+                                });
                             }
                         }
                     }
                     for i in 0..5 {
                         let pi = 19 + i * 2;
-                        if let (Ok(price), Ok(vol)) = (
-                            fields[pi].parse::<f64>(),
-                            fields[pi + 1].parse::<u64>(),
-                        ) {
+                        if let (Ok(price), Ok(vol)) =
+                            (fields[pi].parse::<f64>(), fields[pi + 1].parse::<u64>())
+                        {
                             if price > 0.0 && vol > 0 {
-                                asks.push(Level { price, volume: super::normalize_volume(vol) });
+                                asks.push(Level {
+                                    price,
+                                    volume: super::normalize_volume(vol),
+                                });
                             }
                         }
                     }
@@ -573,7 +572,11 @@ impl DataSource for SinaAdapter {
             }
         }
 
-        Ok(crate::domain::Depth { code: code.to_string(), bids, asks })
+        Ok(crate::domain::Depth {
+            code: code.to_string(),
+            bids,
+            asks,
+        })
     }
 
     async fn health_check(&self) -> Result<bool, AppError> {
@@ -590,7 +593,8 @@ mod tests {
 
     #[test]
     fn parse_sina_line_preserves_exchange_prefix() {
-        let line = "var hq_str_sz000852=\"石化机械,6.00,5.51,6.06,6.10,5.90,0,0,581842,348293126.000\"";
+        let line =
+            "var hq_str_sz000852=\"石化机械,6.00,5.51,6.06,6.10,5.90,0,0,581842,348293126.000\"";
         let q = SinaAdapter::parse_sina_line(line).unwrap();
         assert_eq!(q.code, "sz000852");
         assert_eq!(q.name, "石化机械");

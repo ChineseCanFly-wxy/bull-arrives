@@ -86,15 +86,33 @@ mod tests {
 
     #[test]
     fn auction_opens_at_0915_beijing() {
-        assert_eq!(MarketSession::at_utc(utc(2026, 9, 9, 1, 14)), MarketSession::PreOpen);
-        assert_eq!(MarketSession::at_utc(utc(2026, 9, 9, 1, 15)), MarketSession::MorningTrade);
+        assert_eq!(
+            MarketSession::at_utc(utc(2026, 9, 9, 1, 14)),
+            MarketSession::PreOpen
+        );
+        assert_eq!(
+            MarketSession::at_utc(utc(2026, 9, 9, 1, 15)),
+            MarketSession::MorningTrade
+        );
     }
 
     #[test]
     fn boundaries_and_weekends_are_classified() {
-        assert_eq!(MarketSession::at_utc(utc(2026, 9, 9, 3, 30)), MarketSession::LunchBreak);
-        assert_eq!(MarketSession::at_utc(utc(2026, 9, 9, 5, 0)), MarketSession::AfternoonTrade);
-        assert_eq!(MarketSession::at_utc(utc(2026, 9, 9, 7, 0)), MarketSession::Closed);
-        assert_eq!(MarketSession::at_utc(utc(2026, 9, 12, 2, 0)), MarketSession::Closed);
+        assert_eq!(
+            MarketSession::at_utc(utc(2026, 9, 9, 3, 30)),
+            MarketSession::LunchBreak
+        );
+        assert_eq!(
+            MarketSession::at_utc(utc(2026, 9, 9, 5, 0)),
+            MarketSession::AfternoonTrade
+        );
+        assert_eq!(
+            MarketSession::at_utc(utc(2026, 9, 9, 7, 0)),
+            MarketSession::Closed
+        );
+        assert_eq!(
+            MarketSession::at_utc(utc(2026, 9, 12, 2, 0)),
+            MarketSession::Closed
+        );
     }
 }

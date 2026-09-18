@@ -28,7 +28,7 @@
 //! 东财是国内数据源，**务必在构造 Client 时调用 `.no_proxy()`**：
 //!
 //! ```no_run
-//! let client = reqwest::Client::builder().no_proxy().build()?;
+//! let client = reqwest::Client::builder().no_proxy().build().expect("client");
 //! ```
 //!
 //! 本项目 `datasource::shared_client()` 目前**没有**设置 `no_proxy()`，
@@ -71,11 +71,11 @@ const CONCURRENCY: usize = 6;
 
 /// 全 A 股市场过滤串（沪主板 + 科创 + 深主板 + 创业 + 北交所）
 /// 与 akshare-rs 内部使用的过滤串一致，已实测返回 total=5913
-const FS_ALL_A: &str =
-    "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048";
+const FS_ALL_A: &str = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048";
 
 /// 请求字段。字段含义见模块末尾 `FIELD_MEANING` 注释
-const FIELDS: &str = "f12,f14,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f15,f16,f17,f18,f20,f21,f22,f23,f24,f25";
+const FIELDS: &str =
+    "f12,f14,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f15,f16,f17,f18,f20,f21,f22,f23,f24,f25,f26";
 
 /// 单页请求超时
 const PAGE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -148,10 +148,7 @@ impl Board {
             return Self::BShare;
         }
         // 北交所：43x（原新三板精选层）、83x、87x、920（新代码段）
-        if c.starts_with("43")
-            || c.starts_with("83")
-            || c.starts_with("87")
-            || c.starts_with("920")
+        if c.starts_with("43") || c.starts_with("83") || c.starts_with("87") || c.starts_with("920")
         {
             return Self::Bse;
         }
@@ -226,6 +223,10 @@ pub struct SnapshotRow {
     pub change_60d: f64,
     /// 年初至今涨跌幅 %
     pub change_ytd: f64,
+    /// 上市日期（YYYY-MM-DD）；部分兜底数据源不提供
+    pub listing_date: Option<String>,
+    /// 自上市日起的自然日数；部分兜底数据源不提供
+    pub listed_days: Option<u32>,
 
     // ── 派生分类（解析时一并算出，避免后续重复计算） ──
     /// 板块
@@ -238,6 +239,8 @@ pub struct SnapshotRow {
     pub suspected_suspended: bool,
     /// 一字板：涨跌幅接近 ±10% 且振幅极小
     pub is_limit_locked: bool,
+    /// 存托凭证。上交所 CDR 使用 689 代码段。
+    pub is_cdr: bool,
 }
 
 impl SnapshotRow {
@@ -248,10 +251,7 @@ impl SnapshotRow {
 
     /// 是否通过「基础可用性」硬门槛：有成交、价格有效、非退市
     pub fn is_basically_tradable(&self) -> bool {
-        self.price > 0.0
-            && self.volume > 0.0
-            && !self.is_delisting
-            && self.board.is_tradable_a()
+        self.price > 0.0 && self.volume > 0.0 && !self.is_delisting && self.board.is_tradable_a()
     }
 }
 
@@ -290,13 +290,21 @@ fn f64_of(v: &serde_json::Value, key: &str) -> f64 {
 /// 早期版本用统一的 9.8% 阈值，会把 ST 的 5% 一字板漏掉（4.98% < 9.8%）。
 /// 两个数据源（东财 / 新浪）共用本函数，保证口径一致。
 pub fn is_limit_locked(change_pct: f64, amplitude_pct: f64, board: Board, is_st: bool) -> bool {
-    let limit = match board {
+    change_pct.abs() >= limit_threshold(board, is_st) - 0.2 && amplitude_pct <= 1.0
+}
+
+/// 当前价是否达到对应板块的涨停阈值。仅用于实时快照派生统计；不判断历史触板。
+pub fn is_limit_up(change_pct: f64, board: Board, is_st: bool) -> bool {
+    board.is_tradable_a() && change_pct >= limit_threshold(board, is_st) - 0.2
+}
+
+fn limit_threshold(board: Board, is_st: bool) -> f64 {
+    match board {
         Board::ChiNext | Board::Star => 20.0,
         Board::Bse => 30.0,
         _ if is_st => 5.0,
         _ => 10.0,
-    };
-    change_pct.abs() >= limit - 0.2 && amplitude_pct <= 1.0
+    }
 }
 
 fn str_of(v: &serde_json::Value, key: &str) -> String {
@@ -305,6 +313,21 @@ fn str_of(v: &serde_json::Value, key: &str) -> String {
         Some(other) => other.to_string().trim_matches('"').to_owned(),
         None => String::new(),
     }
+}
+
+fn listing_info(v: &serde_json::Value) -> (Option<String>, Option<u32>) {
+    let compact = str_of(v, "f26").replace('-', "");
+    let Ok(date) = chrono::NaiveDate::parse_from_str(&compact, "%Y%m%d") else {
+        return (None, None);
+    };
+    let days = (chrono::Local::now().date_naive() - date).num_days();
+    if days < 0 {
+        return (None, None);
+    }
+    (
+        Some(date.format("%Y-%m-%d").to_string()),
+        Some(days.min(u32::MAX as i64) as u32),
+    )
 }
 
 fn parse_row(v: &serde_json::Value) -> Option<SnapshotRow> {
@@ -325,6 +348,8 @@ fn parse_row(v: &serde_json::Value) -> Option<SnapshotRow> {
     let board = Board::from_code(&code);
     let upper_name = name.to_uppercase();
     let is_st = upper_name.contains("ST");
+    let (listing_date, listed_days) = listing_info(v);
+    let is_cdr = code.starts_with("689");
 
     Some(SnapshotRow {
         code,
@@ -349,11 +374,14 @@ fn parse_row(v: &serde_json::Value) -> Option<SnapshotRow> {
         pb: f64_of(v, "f23"),
         change_60d: f64_of(v, "f24"),
         change_ytd: f64_of(v, "f25"),
+        listing_date,
+        listed_days,
         board,
         is_st,
         is_delisting: upper_name.contains("退"),
         suspected_suspended: volume <= 0.0 || price <= 0.0,
         is_limit_locked: is_limit_locked(change_pct, amplitude_pct, board, is_st),
+        is_cdr,
     })
 }
 
@@ -516,9 +544,7 @@ async fn fetch_page_range(
 ///
 /// 先请求第 1 页取得 `total`，据此算出总页数，再并发拉取剩余页。
 /// 返回顺序按页码拼接，保证结果稳定。
-pub async fn fetch_market_snapshot(
-    client: &reqwest::Client,
-) -> Result<Vec<SnapshotRow>, EmError> {
+pub async fn fetch_market_snapshot(client: &reqwest::Client) -> Result<Vec<SnapshotRow>, EmError> {
     // 1. 第一页 —— 同时拿到 total（失败会自动轮换域名重试）
     let first = request_clist(client, 1, SortBy::Code).await?;
     let total = first.total;
@@ -599,7 +625,11 @@ pub async fn fetch_top_active(
     }
 
     // 兜底：并发归位后顺序是对的，但跳过失败页可能乱序，这里再排一次保证语义
-    all.sort_by(|a, b| b.amount.partial_cmp(&a.amount).unwrap_or(std::cmp::Ordering::Equal));
+    all.sort_by(|a, b| {
+        b.amount
+            .partial_cmp(&a.amount)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Ok(all)
 }
 
@@ -697,9 +727,7 @@ pub fn preferred_source(setting: Option<&str>) -> Option<SnapshotSource> {
 }
 
 /// 按指定通道拉全市场快照
-pub async fn fetch_snapshot_from(
-    source: SnapshotSource,
-) -> Result<Vec<SnapshotRow>, EmError> {
+pub async fn fetch_snapshot_from(source: SnapshotSource) -> Result<Vec<SnapshotRow>, EmError> {
     match source {
         SnapshotSource::Sina => {
             crate::datasource::sina_universe::fetch_market_snapshot(
@@ -889,6 +917,12 @@ pub struct MarketFilter {
     pub exclude_suspended: bool,
     /// 排除一字板（买不进）
     pub exclude_limit_locked: bool,
+    /// 排除存托凭证（689 代码段）
+    pub exclude_cdr: bool,
+
+    /// 上市自然日数区间；可用于新股/次新股快捷筛选
+    pub listed_days_min: Option<u32>,
+    pub listed_days_max: Option<u32>,
 
     pub price_min: Option<f64>,
     pub price_max: Option<f64>,
@@ -921,6 +955,22 @@ pub struct MarketFilter {
     pub pb_max: Option<f64>,
     /// 振幅上限 %。**当日振幅，仅作波动率代理**，与 60 日波动率不是一回事。
     pub amplitude_max: Option<f64>,
+
+    // 历史技术条件仅在快照粗筛后，对有限候选池读取本地历史计算。
+    /// 收盘价位于 N 日均线之上
+    pub above_ma_days: Option<u32>,
+    /// 最新最高价创 N 日新高
+    pub new_high_days: Option<u32>,
+    /// MACD DIF > DEA 且红柱
+    pub macd_bullish: bool,
+    /// KDJ K > D
+    pub kdj_bullish: bool,
+    /// 最新收盘上涨且成交量高于 5 日均量
+    pub volume_price_rising: bool,
+    /// 计算距 N 日最低价涨幅
+    pub rise_from_low_days: Option<u32>,
+    pub rise_from_low_min: Option<f64>,
+    pub rise_from_low_max: Option<f64>,
 }
 
 impl Default for MarketFilter {
@@ -940,6 +990,9 @@ impl Default for MarketFilter {
             exclude_delisting: true,
             exclude_suspended: true,
             exclude_limit_locked: true,
+            exclude_cdr: false,
+            listed_days_min: None,
+            listed_days_max: None,
             price_min: None,
             price_max: None,
             market_cap_min_yi: None,
@@ -957,6 +1010,14 @@ impl Default for MarketFilter {
             pb_min: None,
             pb_max: None,
             amplitude_max: None,
+            above_ma_days: None,
+            new_high_days: None,
+            macd_bullish: false,
+            kdj_bullish: false,
+            volume_price_rising: false,
+            rise_from_low_days: None,
+            rise_from_low_min: None,
+            rise_from_low_max: None,
         }
     }
 }
@@ -975,6 +1036,8 @@ pub struct FilterCapabilities {
     pub volume_ratio: bool,
     /// 数据源是否提供「60 日涨跌幅」（趋势 / 反转类策略的依据）
     pub change_60d: bool,
+    /// 数据源是否提供上市日期
+    pub listing_date: bool,
 }
 
 impl Default for FilterCapabilities {
@@ -983,6 +1046,7 @@ impl Default for FilterCapabilities {
         Self {
             volume_ratio: true,
             change_60d: true,
+            listing_date: true,
         }
     }
 }
@@ -993,12 +1057,13 @@ impl FilterCapabilities {
         Self {
             volume_ratio: source.has_volume_ratio(),
             change_60d: source.has_change_60d(),
+            listing_date: matches!(source, SnapshotSource::Eastmoney),
         }
     }
 }
 
 impl MarketFilter {
-    fn within(value: f64, min: Option<f64>, max: Option<f64>) -> bool {
+    pub(crate) fn within(value: f64, min: Option<f64>, max: Option<f64>) -> bool {
         if let Some(min) = min {
             if value < min {
                 return false;
@@ -1033,6 +1098,10 @@ impl MarketFilter {
         fix(&mut self.change_60d_min, &mut self.change_60d_max);
         fix(&mut self.pe_min, &mut self.pe_max);
         fix(&mut self.pb_min, &mut self.pb_max);
+        fix(&mut self.rise_from_low_min, &mut self.rise_from_low_max);
+        if matches!((self.listed_days_min, self.listed_days_max), (Some(lo), Some(hi)) if lo > hi) {
+            std::mem::swap(&mut self.listed_days_min, &mut self.listed_days_max);
+        }
     }
 
     /// 因数据源不支持而被忽略的条件名（用于给用户明确提示）
@@ -1045,7 +1114,20 @@ impl MarketFilter {
         if !caps.change_60d && (self.change_60d_min.is_some() || self.change_60d_max.is_some()) {
             skipped.push("60 日涨跌幅".to_owned());
         }
+        if !caps.listing_date && (self.listed_days_min.is_some() || self.listed_days_max.is_some())
+        {
+            skipped.push("上市天数".to_owned());
+        }
         skipped
+    }
+
+    pub fn has_history_conditions(&self) -> bool {
+        self.above_ma_days.is_some()
+            || self.new_high_days.is_some()
+            || self.macd_bullish
+            || self.kdj_bullish
+            || self.volume_price_rising
+            || self.rise_from_low_days.is_some()
     }
 
     /// 单个标的是否通过筛选（默认假设所有字段可用）
@@ -1069,6 +1151,19 @@ impl MarketFilter {
         }
         if self.exclude_limit_locked && row.is_limit_locked {
             return false;
+        }
+        if self.exclude_cdr && row.is_cdr {
+            return false;
+        }
+        if caps.listing_date && (self.listed_days_min.is_some() || self.listed_days_max.is_some()) {
+            let Some(days) = row.listed_days else {
+                return false;
+            };
+            if self.listed_days_min.is_some_and(|min| days < min)
+                || self.listed_days_max.is_some_and(|max| days > max)
+            {
+                return false;
+            }
         }
         if !Self::within(row.price, self.price_min, self.price_max) {
             return false;
@@ -1239,7 +1334,9 @@ impl FilterPreset {
             Self::SteadyTrend => "中大盘 · 近 60 日不弱 · 温和放量上涨 —— 趋势确认，不追高",
             Self::StrongBreakout => "当日明显放量且涨幅靠前 —— 资金驱动型选池，注意追高风险",
             Self::ShortTermActive => "中小市值 · 高换手 —— 活跃度筛选，用于短线选池，非收益预期",
-            Self::OversoldRebound => "近 60 日跌超 15% 且今日仍弱 —— A 股短期反转效应，跌多的更易反弹",
+            Self::OversoldRebound => {
+                "近 60 日跌超 15% 且今日仍弱 —— A 股短期反转效应，跌多的更易反弹"
+            }
             Self::LowValuation => "低市净率 + 正盈利 —— 价值因子，低 PB 是 A 股最稳健的估值因子",
             Self::LowVolatility => "低振幅 · 中大盘 —— 低波动因子，波动大的股票长期收益反而更差",
         }
@@ -1361,6 +1458,13 @@ pub struct PresetInfo {
     /// 从 settings 反序列化用户数据时该项缺省为 false。
     #[serde(default)]
     pub builtin: bool,
+    /// 不可变策略版本标识；旧数据缺省时由后端同步补齐。
+    #[serde(default)]
+    pub strategy_version_id: Option<i64>,
+    #[serde(default)]
+    pub strategy_version: i64,
+    #[serde(default)]
+    pub strategy_status: String,
 }
 
 /// 列出全部内置预设（含展开后的筛选条件，方便前端直接预览）
@@ -1374,6 +1478,9 @@ pub fn preset_infos() -> Vec<PresetInfo> {
             filter: preset.build(),
             rule: preset.rule().id().to_owned(),
             builtin: true,
+            strategy_version_id: None,
+            strategy_version: 0,
+            strategy_status: String::new(),
         })
         .collect()
 }
@@ -1482,7 +1589,10 @@ mod tests {
         let row = parse_row(&raw).expect("应能解析");
         assert!(row.is_delisting);
         assert_eq!(row.board, Board::ChiNext);
-        assert!(!row.is_limit_locked, "创业板 10% 未到 20% 限制，不应判为一字板");
+        assert!(
+            !row.is_limit_locked,
+            "创业板 10% 未到 20% 限制，不应判为一字板"
+        );
     }
 
     #[test]
@@ -1500,6 +1610,10 @@ mod tests {
         assert!(!is_limit_locked(20.0, 0.5, Board::Bse, false));
         // 振幅大说明不是一字板
         assert!(!is_limit_locked(10.0, 5.0, Board::ShMain, false));
+        // 派生涨停家数只统计正向封板，且沿用相同板块口径。
+        assert!(is_limit_up(4.8, Board::SzMain, true));
+        assert!(is_limit_up(19.8, Board::ChiNext, false));
+        assert!(!is_limit_up(-10.0, Board::ShMain, false));
     }
 }
 
@@ -1540,7 +1654,10 @@ mod filter_tests {
         let mut filter = MarketFilter::default();
         filter.boards = vec![Board::ChiNext];
         assert!(filter.accepts(&row("300750", "宁德时代")));
-        assert!(!filter.accepts(&row("600519", "贵州茅台")), "非白名单板块应被排除");
+        assert!(
+            !filter.accepts(&row("600519", "贵州茅台")),
+            "非白名单板块应被排除"
+        );
 
         // 空 Vec 表示放开全部板块
         filter.boards = vec![];
@@ -1698,8 +1815,14 @@ mod preset_tests {
         let infos = preset_infos();
         assert_eq!(infos.len(), FilterPreset::ALL.len());
 
-        let all = infos.iter().find(|info| info.id == "all").expect("应含 all");
-        assert!(all.filter.market_cap_min_yi.is_none(), "全部预设不应限制市值");
+        let all = infos
+            .iter()
+            .find(|info| info.id == "all")
+            .expect("应含 all");
+        assert!(
+            all.filter.market_cap_min_yi.is_none(),
+            "全部预设不应限制市值"
+        );
         assert!(all.filter.change_pct_min.is_none(), "全部预设不应限制涨幅");
 
         // 除「全部」外的预设必须有区分度条件，否则选出来和全部一样
@@ -1751,7 +1874,11 @@ mod preset_tests {
 
         for preset in FilterPreset::ALL {
             let rule = preset.rule();
-            assert_eq!(TradeRule::from_id(rule.id()), rule, "规则 id 必须能往返解析");
+            assert_eq!(
+                TradeRule::from_id(rule.id()),
+                rule,
+                "规则 id 必须能往返解析"
+            );
             assert!(!rule.label().is_empty(), "规则 {} 缺中文名", rule.id());
             assert!(
                 !rule.profile().is_empty(),
@@ -1760,7 +1887,10 @@ mod preset_tests {
             );
         }
 
-        assert_eq!(FilterPreset::OversoldRebound.rule(), TradeRule::MeanReversion);
+        assert_eq!(
+            FilterPreset::OversoldRebound.rule(),
+            TradeRule::MeanReversion
+        );
         assert_eq!(FilterPreset::StrongBreakout.rule(), TradeRule::Breakout);
         assert_eq!(FilterPreset::ShortTermActive.rule(), TradeRule::Breakout);
         assert_eq!(FilterPreset::SteadyTrend.rule(), TradeRule::TrendFollow);
@@ -1779,7 +1909,8 @@ mod preset_tests {
     }
 
     /// 建一只可指定估值 / 60 日涨跌幅 / 振幅的样本股
-    fn sample_full(        change_pct: f64,
+    fn sample_full(
+        change_pct: f64,
         volume_ratio: f64,
         turnover: f64,
         pe: f64,

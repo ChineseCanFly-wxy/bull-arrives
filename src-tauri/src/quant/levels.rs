@@ -113,9 +113,24 @@ struct Weights {
 
 fn rule_weights(rule: TradeRule) -> Weights {
     match rule {
-        TradeRule::TrendFollow => Weights { ma: 1.35, boll: 0.80, swing: 1.10, prior: 0.95 },
-        TradeRule::MeanReversion => Weights { ma: 0.90, boll: 1.40, swing: 1.00, prior: 0.85 },
-        TradeRule::Breakout => Weights { ma: 0.95, boll: 0.75, swing: 1.20, prior: 1.40 },
+        TradeRule::TrendFollow => Weights {
+            ma: 1.35,
+            boll: 0.80,
+            swing: 1.10,
+            prior: 0.95,
+        },
+        TradeRule::MeanReversion => Weights {
+            ma: 0.90,
+            boll: 1.40,
+            swing: 1.00,
+            prior: 0.85,
+        },
+        TradeRule::Breakout => Weights {
+            ma: 0.95,
+            boll: 0.75,
+            swing: 1.20,
+            prior: 1.40,
+        },
     }
 }
 
@@ -173,7 +188,11 @@ pub fn detect(klines: &[KLineData], rule: TradeRule) -> Vec<PriceLevel> {
             strength: base * w.ma,
             note: format!(
                 "{period} 日均线当前在 {v:.2}，{}",
-                if close > v { "现价在其上方，回踩到这里是常见承接位" } else { "现价在其下方，反抽到这里容易受阻" }
+                if close > v {
+                    "现价在其上方，回踩到这里是常见承接位"
+                } else {
+                    "现价在其下方，反抽到这里容易受阻"
+                }
             ),
         });
     }
@@ -196,7 +215,11 @@ pub fn detect(klines: &[KLineData], rule: TradeRule) -> Vec<PriceLevel> {
             strength: base * w.boll,
             note: format!(
                 "布林{}轨在 {v:.2} —— 统计上的极值位置，短期偏离后倾向回归",
-                if source == LevelSource::BollLower { "下" } else { "上" }
+                if source == LevelSource::BollLower {
+                    "下"
+                } else {
+                    "上"
+                }
             ),
         });
     }
@@ -292,13 +315,29 @@ pub fn detect(klines: &[KLineData], rule: TradeRule) -> Vec<PriceLevel> {
         .cloned()
         .collect();
 
-    supports.sort_by(|a, b| b.strength.partial_cmp(&a.strength).unwrap_or(std::cmp::Ordering::Equal));
+    supports.sort_by(|a, b| {
+        b.strength
+            .partial_cmp(&a.strength)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     supports.truncate(MAX_LEVELS_EACH_SIDE);
-    supports.sort_by(|a, b| b.price.partial_cmp(&a.price).unwrap_or(std::cmp::Ordering::Equal));
+    supports.sort_by(|a, b| {
+        b.price
+            .partial_cmp(&a.price)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
-    resistances.sort_by(|a, b| b.strength.partial_cmp(&a.strength).unwrap_or(std::cmp::Ordering::Equal));
+    resistances.sort_by(|a, b| {
+        b.strength
+            .partial_cmp(&a.strength)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     resistances.truncate(MAX_LEVELS_EACH_SIDE);
-    resistances.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap_or(std::cmp::Ordering::Equal));
+    resistances.sort_by(|a, b| {
+        a.price
+            .partial_cmp(&b.price)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     out = resistances;
     out.extend(supports);
@@ -315,7 +354,11 @@ struct MergedCandidate {
 
 /// 把价格接近的候选位合并：价格取加权平均，强度取最大并给共振加成。
 fn merge_candidates(mut candidates: Vec<Candidate>) -> Vec<MergedCandidate> {
-    candidates.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.sort_by(|a, b| {
+        a.price
+            .partial_cmp(&b.price)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut groups: Vec<Vec<Candidate>> = Vec::new();
     for c in candidates {
@@ -338,7 +381,11 @@ fn merge_candidates(mut candidates: Vec<Candidate>) -> Vec<MergedCandidate> {
             // 强度最高的是"主来源"，它决定这条位怎么用
             let strongest = group
                 .iter()
-                .max_by(|a, b| a.strength.partial_cmp(&b.strength).unwrap_or(std::cmp::Ordering::Equal))
+                .max_by(|a, b| {
+                    a.strength
+                        .partial_cmp(&b.strength)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .expect("group is never empty");
             let total_weight: f64 = group.iter().map(|c| c.strength).sum();
             let price = if total_weight > 0.0 {
@@ -431,7 +478,9 @@ fn highest_before_last(values: &[f64], n: usize) -> Option<f64> {
         .iter()
         .copied()
         .filter(|v| v.is_finite())
-        .fold(None, |acc: Option<f64>, v| Some(acc.map_or(v, |a| a.max(v))))
+        .fold(None, |acc: Option<f64>, v| {
+            Some(acc.map_or(v, |a| a.max(v)))
+        })
 }
 
 /// 最近 `n` 根（**不含最后一根**）的最低价。
@@ -442,7 +491,9 @@ fn lowest_before_last(values: &[f64], n: usize) -> Option<f64> {
         .iter()
         .copied()
         .filter(|v| v.is_finite())
-        .fold(None, |acc: Option<f64>, v| Some(acc.map_or(v, |a| a.min(v))))
+        .fold(None, |acc: Option<f64>, v| {
+            Some(acc.map_or(v, |a| a.min(v)))
+        })
 }
 
 #[cfg(test)]
@@ -482,8 +533,16 @@ mod tests {
         assert!(!levels.is_empty(), "应能识别出价位");
         for l in &levels {
             match l.kind {
-                LevelKind::Support => assert!(l.price <= close + 1e-6, "支撑应在现价下方: {} vs {close}", l.price),
-                LevelKind::Resistance => assert!(l.price >= close - 1e-6, "压力应在现价上方: {} vs {close}", l.price),
+                LevelKind::Support => assert!(
+                    l.price <= close + 1e-6,
+                    "支撑应在现价下方: {} vs {close}",
+                    l.price
+                ),
+                LevelKind::Resistance => assert!(
+                    l.price >= close - 1e-6,
+                    "压力应在现价上方: {} vs {close}",
+                    l.price
+                ),
             }
             assert!(l.strength > 0.0 && l.strength <= 100.0);
         }
@@ -495,10 +554,22 @@ mod tests {
             .map(|i| 20.0 + (i as f64 * 0.31).sin() * 3.0)
             .collect();
         let levels = detect(&bars(&prices), TradeRule::Breakout);
-        let supports = levels.iter().filter(|l| l.kind == LevelKind::Support).count();
-        let resistances = levels.iter().filter(|l| l.kind == LevelKind::Resistance).count();
-        assert!(supports <= MAX_LEVELS_EACH_SIDE, "支撑最多 3 条，实际 {supports}");
-        assert!(resistances <= MAX_LEVELS_EACH_SIDE, "压力最多 3 条，实际 {resistances}");
+        let supports = levels
+            .iter()
+            .filter(|l| l.kind == LevelKind::Support)
+            .count();
+        let resistances = levels
+            .iter()
+            .filter(|l| l.kind == LevelKind::Resistance)
+            .count();
+        assert!(
+            supports <= MAX_LEVELS_EACH_SIDE,
+            "支撑最多 3 条，实际 {supports}"
+        );
+        assert!(
+            resistances <= MAX_LEVELS_EACH_SIDE,
+            "压力最多 3 条，实际 {resistances}"
+        );
     }
 
     #[test]
@@ -512,7 +583,10 @@ mod tests {
             .filter(|l| l.kind == LevelKind::Resistance)
             .map(|l| l.price)
             .collect();
-        assert!(r.windows(2).all(|w| w[0] <= w[1]), "压力应按由近到远升序: {r:?}");
+        assert!(
+            r.windows(2).all(|w| w[0] <= w[1]),
+            "压力应按由近到远升序: {r:?}"
+        );
     }
 
     #[test]

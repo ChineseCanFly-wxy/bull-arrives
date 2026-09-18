@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import type { SectorKind, SectorMember, SectorMemberPage, SectorSummary, SectorSummaryPage } from '@/types/sector';
+import type { RotationStatus, SectorKind, SectorLimitUpStats, SectorMember, SectorMemberPage, SectorRotation, SectorSummary, SectorSummaryPage } from '@/types/sector';
 
 export const useSectorStore = defineStore('sector', () => {
   const kind = ref<SectorKind>('industry');
@@ -25,6 +25,13 @@ export const useSectorStore = defineStore('sector', () => {
   const memberStale = ref(false);
   const memberLoading = ref(false);
   const memberError = ref<string | null>(null);
+  const limitUpStats = ref<SectorLimitUpStats | null>(null);
+  const limitUpError = ref<string | null>(null);
+  const rotationRows = ref<SectorSummary[]>([]);
+  const rotationStatuses = ref<RotationStatus[]>([]);
+  const rotationSource = ref('');
+  const rotationLoading = ref(false);
+  const rotationError = ref<string | null>(null);
   let generation = 0;
   let memberGeneration = 0;
 
@@ -76,7 +83,9 @@ export const useSectorStore = defineStore('sector', () => {
     memberPage.value = 1;
     members.value = [];
     memberError.value = null;
-    await fetchMembers();
+    limitUpStats.value = null;
+    limitUpError.value = null;
+    await Promise.all([fetchMembers(), fetchLimitUpStats()]);
   }
 
   function clearSector() {
@@ -84,7 +93,20 @@ export const useSectorStore = defineStore('sector', () => {
     selected.value = null;
     members.value = [];
     memberError.value = null;
+    limitUpStats.value = null;
+    limitUpError.value = null;
     memberLoading.value = false;
+  }
+
+  async function fetchLimitUpStats() {
+    const target = selected.value;
+    if (!target) return;
+    try {
+      const response = await invoke<SectorLimitUpStats>('get_sector_limit_up_stats', { sectorCode: target.code });
+      if (selected.value?.code === target.code) limitUpStats.value = response;
+    } catch (e) {
+      if (selected.value?.code === target.code) limitUpError.value = String(e);
+    }
   }
 
   async function fetchMembers(forceRefresh = false) {
@@ -122,6 +144,30 @@ export const useSectorStore = defineStore('sector', () => {
     await fetchMembers();
   }
 
+  async function fetchRotation() {
+    rotationLoading.value = true;
+    rotationError.value = null;
+    try {
+      const response = await invoke<SectorRotation>('get_sector_rotation');
+      const succeeded = new Set(response.statuses.filter(status => status.ok).map(status => status.kind));
+      // 失败的类别保留上次成功数据，成功的类别才替换。
+      rotationRows.value = [
+        ...rotationRows.value.filter(row => !succeeded.has(row.kind)),
+        ...response.items,
+      ];
+      rotationStatuses.value = response.statuses;
+      rotationSource.value = `${response.source} · ${response.request_count} 次请求`;
+      if (!response.statuses.some(status => status.ok)) {
+        rotationError.value = response.statuses.map(status => status.error).filter(Boolean).join('；') || '轮动数据获取失败';
+      }
+    } catch (e) {
+      rotationError.value = `获取板块轮动失败: ${e}`;
+      console.error('[sector] fetchRotation failed:', e);
+    } finally {
+      rotationLoading.value = false;
+    }
+  }
+
   return {
     kind,
     keyword,
@@ -146,12 +192,21 @@ export const useSectorStore = defineStore('sector', () => {
     memberStale,
     memberLoading,
     memberError,
+    limitUpStats,
+    limitUpError,
+    rotationRows,
+    rotationStatuses,
+    rotationSource,
+    rotationLoading,
+    rotationError,
     fetchSummaries,
     selectKind,
     selectPage,
     selectSector,
     clearSector,
     fetchMembers,
+    fetchLimitUpStats,
     selectMemberPage,
+    fetchRotation,
   };
 });

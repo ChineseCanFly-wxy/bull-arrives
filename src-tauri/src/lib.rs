@@ -1,30 +1,36 @@
-pub mod domain;
-pub mod db;
-pub mod datasource;
+pub mod agent;
+pub mod alerts;
 pub mod cache;
 pub mod commands;
-pub mod notifications;
-pub mod notification_identity;
+pub mod datasource;
+pub mod db;
 pub mod desktop_toast;
-pub mod alerts;
-pub mod monitor;
+pub mod domain;
+pub mod dynamic_filter;
 pub mod group_hotkeys;
+pub mod monitor;
+pub mod news;
+pub mod notification_identity;
+pub mod notifications;
 pub mod quant;
+pub mod simulation;
 
+use cache::QuoteCache;
+use datasource::DataSourceManager;
+use db::Database;
+use simplelog::{
+    ColorChoice, CombinedLogger, Config, LevelFilter, TermLogger, TerminalMode, WriteLogger,
+};
 use std::fs::File;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
-use simplelog::{CombinedLogger, WriteLogger, TermLogger, LevelFilter, Config, TerminalMode, ColorChoice};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, Runtime,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
-use db::Database;
-use datasource::DataSourceManager;
-use cache::QuoteCache;
 
 /// Windows-only utility: add WS_EX_TOOLWINDOW to a window's extended style.
 /// This permanently hides the window from the taskbar (survives Explorer
@@ -60,12 +66,7 @@ mod windows_util {
             cy: i32,
             uFlags: u32,
         ) -> i32;
-        fn SetLayeredWindowAttributes(
-            hwnd: HWND,
-            cr_key: u32,
-            alpha: u8,
-            flags: u32,
-        ) -> i32;
+        fn SetLayeredWindowAttributes(hwnd: HWND, cr_key: u32, alpha: u8, flags: u32) -> i32;
     }
 
     /// Set WS_EX_TOOLWINDOW on a window identified by its raw HWND.
@@ -84,7 +85,10 @@ mod windows_util {
         SetWindowPos(
             hwnd_ptr,
             std::ptr::null_mut(),
-            0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
             SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
         log::info!("[ticker] WS_EX_TOOLWINDOW applied — permanently hidden from taskbar");
@@ -93,9 +97,20 @@ mod windows_util {
     pub unsafe fn set_nonactivating_tool_window(hwnd: isize) {
         let hwnd_ptr = hwnd as HWND;
         let ex_style = GetWindowLongPtrW(hwnd_ptr, GWL_EXSTYLE);
-        SetWindowLongPtrW(hwnd_ptr, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
-        SetWindowPos(hwnd_ptr, std::ptr::null_mut(), 0, 0, 0, 0,
-            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        SetWindowLongPtrW(
+            hwnd_ptr,
+            GWL_EXSTYLE,
+            ex_style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        );
+        SetWindowPos(
+            hwnd_ptr,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
     }
 
     /// Set the overall window opacity (0–255) via a layered window.
@@ -110,7 +125,10 @@ mod windows_util {
             SetWindowLongPtrW(hwnd_ptr, GWL_EXSTYLE, ex_style | WS_EX_LAYERED);
         }
         if SetLayeredWindowAttributes(hwnd_ptr, 0, alpha, LWA_ALPHA) == 0 {
-            return Err(format!("设置悬浮窗透明度失败: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "设置悬浮窗透明度失败: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         log::info!("[ticker] opacity set to {}/255", alpha);
         Ok(())
@@ -140,7 +158,9 @@ pub(crate) fn apply_nonactivating_tool_window_style<R: Runtime>(window: &tauri::
         use raw_window_handle::HasWindowHandle;
         if let Ok(handle) = window.window_handle() {
             if let raw_window_handle::RawWindowHandle::Win32(h) = handle.as_raw() {
-                unsafe { windows_util::set_nonactivating_tool_window(h.hwnd.get() as isize); }
+                unsafe {
+                    windows_util::set_nonactivating_tool_window(h.hwnd.get() as isize);
+                }
             }
         }
     }
@@ -149,7 +169,10 @@ pub(crate) fn apply_nonactivating_tool_window_style<R: Runtime>(window: &tauri::
 
 /// Apply overall opacity (0–255) to a Tauri window via WS_EX_LAYERED.
 /// Supported on Windows only.
-pub(crate) fn apply_ticker_opacity<R: Runtime>(window: &tauri::WebviewWindow<R>, alpha: u8) -> Result<(), String> {
+pub(crate) fn apply_ticker_opacity<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    alpha: u8,
+) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         use raw_window_handle::HasWindowHandle;
@@ -194,7 +217,9 @@ pub struct HotkeyState(pub Mutex<Option<Shortcut>>);
 /// Toggle the ticker window (show/hide) and persist the new visibility.
 /// Shared by the tray menu and the global hotkey handler.
 pub fn toggle_ticker_window<R: Runtime>(app: &tauri::AppHandle<R>, db: &Database) {
-    let Some(window) = app.get_webview_window("ticker") else { return };
+    let Some(window) = app.get_webview_window("ticker") else {
+        return;
+    };
     let was_visible = window.is_visible().unwrap_or(false);
     if was_visible {
         let _ = window.hide();
@@ -209,7 +234,10 @@ pub fn toggle_ticker_window<R: Runtime>(app: &tauri::AppHandle<R>, db: &Database
         let mon = window.primary_monitor().ok().flatten();
         let (mon_w, mon_h) = mon
             .as_ref()
-            .map(|m| { let s = m.size(); (s.width as i32, s.height as i32) })
+            .map(|m| {
+                let s = m.size();
+                (s.width as i32, s.height as i32)
+            })
             .unwrap_or((1920, 1080));
         let win_size = window.outer_size().unwrap_or(tauri::PhysicalSize::new(
             crate::datasource::TICKER_WIDTH,
@@ -223,9 +251,7 @@ pub fn toggle_ticker_window<R: Runtime>(app: &tauri::AppHandle<R>, db: &Database
             if let Ok(Some(y)) = db.get_setting("ticker_y") {
                 if let (Ok(sx), Ok(sy)) = (x.parse::<i32>(), y.parse::<i32>()) {
                     if sx + tw > 0 && sy + th > 0 && sx < mon_w && sy < mon_h {
-                        let _ = window.set_position(
-                            tauri::PhysicalPosition::new(sx, sy),
-                        );
+                        let _ = window.set_position(tauri::PhysicalPosition::new(sx, sy));
                         restored = true;
                     }
                 }
@@ -234,17 +260,12 @@ pub fn toggle_ticker_window<R: Runtime>(app: &tauri::AppHandle<R>, db: &Database
         if !restored {
             let x = (mon_w).saturating_sub(tw + 10);
             let y = (mon_h).saturating_sub(th + 60);
-            let _ = window.set_position(
-                tauri::PhysicalPosition::new(x, y),
-            );
+            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
         }
     }
     // Persist the ticker's visibility so it restores the same state on next
     // launch (default = visible).
-    let _ = db.set_setting(
-        "ticker_visible",
-        if was_visible { "0" } else { "1" },
-    );
+    let _ = db.set_setting("ticker_visible", if was_visible { "0" } else { "1" });
 }
 
 /// Runtime flag indicating whether the app is in portable mode
@@ -271,7 +292,9 @@ pub fn run() {
                     if event.state() != ShortcutState::Pressed {
                         return;
                     }
-                    if group_hotkeys::handle(app, shortcut) { return; }
+                    if group_hotkeys::handle(app, shortcut) {
+                        return;
+                    }
                     let state = app.state::<HotkeyState>();
                     let is_active = state
                         .0
@@ -297,7 +320,8 @@ pub fn run() {
                 .and_then(|exe| {
                     let marker = exe.with_file_name("portable.dat");
                     marker.exists().then(|| {
-                        let dir = exe.parent()
+                        let dir = exe
+                            .parent()
                             .map(|p| p.join("data"))
                             .unwrap_or_else(|| std::path::PathBuf::from("data"));
                         (dir, true)
@@ -312,8 +336,8 @@ pub fn run() {
 
             // Initialize logger — writes to both stderr (dev) and bull-arrives.log (file)
             std::fs::create_dir_all(&app_dir).expect("Failed to create app data directory");
-            let log_file = File::create(app_dir.join("bull-arrives.log"))
-                .expect("Failed to create log file");
+            let log_file =
+                File::create(app_dir.join("bull-arrives.log")).expect("Failed to create log file");
             CombinedLogger::init(vec![
                 TermLogger::new(
                     LevelFilter::Info,
@@ -325,22 +349,15 @@ pub fn run() {
             ])
             .expect("Failed to initialize logger");
             log::info!("Bull Arrives v{} starting", env!("CARGO_PKG_VERSION"));
-            log::info!(
-                "Data directory: {:?} (portable: {})",
-                app_dir, is_portable
-            );
+            log::info!("Data directory: {:?} (portable: {})", app_dir, is_portable);
 
             let db = Arc::new(Database::open(app_dir).expect("Failed to open database"));
             log::info!("Database opened successfully");
 
             // Initialize data source manager (Sina registered first as default)
             let mut ds_manager = DataSourceManager::new();
-            ds_manager.register(Box::new(
-                crate::datasource::tencent::TencentAdapter::new(),
-            ));
-            ds_manager.register(Box::new(
-                crate::datasource::sina::SinaAdapter::new(),
-            ));
+            ds_manager.register(Box::new(crate::datasource::tencent::TencentAdapter::new()));
+            ds_manager.register(Box::new(crate::datasource::sina::SinaAdapter::new()));
 
             // Restore last used data source from settings.
             // Use set_active_initial to avoid triggering a duplicate wakeup fetch
@@ -363,7 +380,9 @@ pub fn run() {
                     if let Err(error) = ds_manager.set_request_policy_json(value.as_deref()) {
                         if quote_schedule_enabled {
                             log::error!("行情时段配置损坏，暂停请求：{}", error);
-                            ds_manager.set_request_policy(datasource::market_policy::MarketRequestPolicy::paused());
+                            ds_manager.set_request_policy(
+                                datasource::market_policy::MarketRequestPolicy::paused(),
+                            );
                         } else {
                             log::warn!("行情时段配置损坏，但时间限制未启用：{}", error);
                         }
@@ -371,7 +390,9 @@ pub fn run() {
                 }
                 Err(error) if quote_schedule_enabled => {
                     log::error!("行情时段配置读取失败，暂停请求：{}", error);
-                    ds_manager.set_request_policy(datasource::market_policy::MarketRequestPolicy::paused());
+                    ds_manager.set_request_policy(
+                        datasource::market_policy::MarketRequestPolicy::paused(),
+                    );
                 }
                 Err(error) => log::warn!("行情时段配置读取失败，但时间限制未启用：{}", error),
             }
@@ -389,7 +410,9 @@ pub fn run() {
             app.manage(cache.clone());
             app.manage(PortableMode(is_portable));
             app.manage(HotkeyState(Mutex::new(None)));
-            app.manage(notifications::NotificationDelivery::new(app.handle().clone()));
+            app.manage(notifications::NotificationDelivery::new(
+                app.handle().clone(),
+            ));
 
             // Start background polling.
             // 0 = AUTO (follow the trading session's recommended interval);
@@ -413,9 +436,34 @@ pub fn run() {
                 polling_config,
             );
 
+            // 资讯轮询完全独立于行情调度；默认关闭，关闭时不会发起任何资讯请求。
+            news::spawn(db.clone(), app.handle().clone());
+
+            // 模拟账户独立调度；默认无启用账户，因此不会联网或改变账本。
+            let simulation_db = db.clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    match simulation_db.list_auto_sim_account_ids() {
+                        Ok(ids) => {
+                            for account_id in ids {
+                                if let Err(error) =
+                                    commands::simulation::run_account(&simulation_db, account_id)
+                                        .await
+                                {
+                                    log::warn!("模拟账户 {} 自动运行失败：{}", account_id, error);
+                                }
+                            }
+                        }
+                        Err(error) => log::warn!("读取自动模拟账户失败：{}", error),
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                }
+            });
+
             // ── System Tray ──
             let show_item = MenuItemBuilder::with_id("show", "显示主界面").build(app)?;
-            let toggle_ticker = MenuItemBuilder::with_id("toggle_ticker", "显示/隐藏行情条").build(app)?;
+            let toggle_ticker =
+                MenuItemBuilder::with_id("toggle_ticker", "显示/隐藏行情条").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
 
             // Portable mode: skip the "check update" tray item — updates
@@ -440,63 +488,71 @@ pub fn run() {
             };
 
             let _tray = TrayIconBuilder::new()
-                .icon(
-                    app.default_window_icon()
-                        .cloned()
-                        .expect("Default window icon not embedded — check tauri.conf.json icons config"),
-                )
+                .icon(app.default_window_icon().cloned().expect(
+                    "Default window icon not embedded — check tauri.conf.json icons config",
+                ))
                 .tooltip("Bull Arrives")
                 .menu(&menu)
                 .on_menu_event({
                     let db = db.clone();
                     move |app, event| {
-                    match event.id().as_ref() {
-                        "show" => {
-                            if app.get_webview_window("main").is_some() {
-                                if let Err(error) = commands::window::show_main_window(app.clone()) {
-                                    log::warn!("显示主窗口失败: {}", error);
-                                }
-                            }
-                        }
-                        "toggle_ticker" => {
-                            toggle_ticker_window(app, &db);
-                        }
-                        "check_update" => {
-                            // Portable mode: the "check update" tray item is hidden,
-                            // but guard here as a safety net.
-                            if app.state::<PortableMode>().0 {
-                                log::info!("[updater] Tray check_update ignored — portable mode");
-                                return;
-                            }
-                            let handle = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                match crate::commands::updater::do_check_update(&handle).await
-                                {
-                                    Ok(Some(info)) => {
-                                        let _ = handle.emit("update-available", &info);
-                                    }
-                                    Ok(None) => {
-                                        log::info!("[updater] Manual check: already up to date");
-                                        let _ = handle.emit("update-check-complete", "up-to-date");
-                                    }
-                                    Err(e) => {
-                                        log::warn!("[updater] Manual check failed: {}", e);
-                                        let _ = handle.emit("update-check-complete", "error");
+                        match event.id().as_ref() {
+                            "show" => {
+                                if app.get_webview_window("main").is_some() {
+                                    if let Err(error) =
+                                        commands::window::show_main_window(app.clone())
+                                    {
+                                        log::warn!("显示主窗口失败: {}", error);
                                     }
                                 }
-                            });
+                            }
+                            "toggle_ticker" => {
+                                toggle_ticker_window(app, &db);
+                            }
+                            "check_update" => {
+                                // Portable mode: the "check update" tray item is hidden,
+                                // but guard here as a safety net.
+                                if app.state::<PortableMode>().0 {
+                                    log::info!(
+                                        "[updater] Tray check_update ignored — portable mode"
+                                    );
+                                    return;
+                                }
+                                let handle = app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    match crate::commands::updater::do_check_update(&handle).await {
+                                        Ok(Some(info)) => {
+                                            let _ = handle.emit("update-available", &info);
+                                        }
+                                        Ok(None) => {
+                                            log::info!(
+                                                "[updater] Manual check: already up to date"
+                                            );
+                                            let _ =
+                                                handle.emit("update-check-complete", "up-to-date");
+                                        }
+                                        Err(e) => {
+                                            log::warn!("[updater] Manual check failed: {}", e);
+                                            let _ = handle.emit("update-check-complete", "error");
+                                        }
+                                    }
+                                });
+                            }
+                            "quit" => {
+                                if let Some(w) = app.get_webview_window("main") {
+                                    let _ = w.close();
+                                }
+                                if let Some(w) = app.get_webview_window("ticker") {
+                                    let _ = w.close();
+                                }
+                                let handle = app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                    handle.exit(0);
+                                });
+                            }
+                            _ => {}
                         }
-                        "quit" => {
-                            if let Some(w) = app.get_webview_window("main") { let _ = w.close(); }
-                            if let Some(w) = app.get_webview_window("ticker") { let _ = w.close(); }
-                            let handle = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                                handle.exit(0);
-                            });
-                        }
-                        _ => {}
-                    }
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -504,13 +560,15 @@ pub fn run() {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
                         ..
-                    } = event {
+                    } = event
+                    {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
                             if window.is_visible().unwrap_or(false) {
                                 let _ = window.hide();
                             } else {
-                                if let Err(error) = commands::window::show_main_window(app.clone()) {
+                                if let Err(error) = commands::window::show_main_window(app.clone())
+                                {
                                     log::warn!("显示主窗口失败: {}", error);
                                 }
                             }
@@ -539,22 +597,33 @@ pub fn run() {
                             // would corrupt the saved window size, so skip it.
                             if is_vis && !is_min && !is_fullscreen {
                                 let is_max = main_clone.is_maximized().unwrap_or(false);
-                                let _ = db_clone.set_setting("window_maximized", if is_max { "1" } else { "0" });
+                                let _ = db_clone.set_setting(
+                                    "window_maximized",
+                                    if is_max { "1" } else { "0" },
+                                );
                                 if !is_max {
                                     if let Ok(pos) = main_clone.outer_position() {
-                                        if let Err(e) = db_clone.set_setting("window_x", &pos.x.to_string()) {
+                                        if let Err(e) =
+                                            db_clone.set_setting("window_x", &pos.x.to_string())
+                                        {
                                             log::warn!("Failed to save window_x on close: {}", e);
                                         }
-                                        if let Err(e) = db_clone.set_setting("window_y", &pos.y.to_string()) {
+                                        if let Err(e) =
+                                            db_clone.set_setting("window_y", &pos.y.to_string())
+                                        {
                                             log::warn!("Failed to save window_y on close: {}", e);
                                         }
                                     }
                                 }
                                 if let Ok(size) = main_clone.outer_size() {
-                                    if let Err(e) = db_clone.set_setting("window_width", &size.width.to_string()) {
+                                    if let Err(e) = db_clone
+                                        .set_setting("window_width", &size.width.to_string())
+                                    {
                                         log::warn!("Failed to save window_width on close: {}", e);
                                     }
-                                    if let Err(e) = db_clone.set_setting("window_height", &size.height.to_string()) {
+                                    if let Err(e) = db_clone
+                                        .set_setting("window_height", &size.height.to_string())
+                                    {
                                         log::warn!("Failed to save window_height on close: {}", e);
                                     }
                                 }
@@ -598,8 +667,10 @@ pub fn run() {
                                 }
                                 if let Ok(size) = main.outer_size() {
                                     if size.width > 0 && size.height > 0 {
-                                        let _ = db.set_setting("window_width", &size.width.to_string());
-                                        let _ = db.set_setting("window_height", &size.height.to_string());
+                                        let _ =
+                                            db.set_setting("window_width", &size.width.to_string());
+                                        let _ = db
+                                            .set_setting("window_height", &size.height.to_string());
                                     }
                                 }
                             });
@@ -611,7 +682,8 @@ pub fn run() {
                 // Restore saved window position and size.
                 // Validate against actual monitor geometry — skip saved values
                 // that would place the window off-screen.
-                let (mon_w, mon_h) = main.primary_monitor()
+                let (mon_w, mon_h) = main
+                    .primary_monitor()
                     .ok()
                     .flatten()
                     .map(|m| {
@@ -621,7 +693,8 @@ pub fn run() {
                     .unwrap_or((1920, 1080));
 
                 // Read default window size from tauri.conf.json
-                let (default_w, default_h) = app.config()
+                let (default_w, default_h) = app
+                    .config()
                     .app
                     .windows
                     .iter()
@@ -638,8 +711,10 @@ pub fn run() {
                 if let Ok(Some(w)) = db.get_setting("window_width") {
                     if let Ok(Some(h)) = db.get_setting("window_height") {
                         if let (Ok(w_val), Ok(h_val)) = (w.parse::<u32>(), h.parse::<u32>()) {
-                            if w_val >= 400 && w_val <= mon_w as u32
-                                && h_val >= 300 && h_val <= mon_h as u32
+                            if w_val >= 400
+                                && w_val <= mon_w as u32
+                                && h_val >= 300
+                                && h_val <= mon_h as u32
                             {
                                 saved_w = w_val;
                                 saved_h = h_val;
@@ -651,8 +726,10 @@ pub fn run() {
                 if let Ok(Some(x)) = db.get_setting("window_x") {
                     if let Ok(Some(y)) = db.get_setting("window_y") {
                         if let (Ok(x_val), Ok(y_val)) = (x.parse::<i32>(), y.parse::<i32>()) {
-                            if x_val + 200 < mon_w && x_val > -50
-                                && y_val + 100 < mon_h && y_val > -50
+                            if x_val + 200 < mon_w
+                                && x_val > -50
+                                && y_val + 100 < mon_h
+                                && y_val > -50
                             {
                                 saved_x = x_val.max(0);
                                 saved_y = y_val.max(0);
@@ -662,7 +739,8 @@ pub fn run() {
                     }
                 }
 
-                let was_max = db.get_setting("window_maximized")
+                let was_max = db
+                    .get_setting("window_maximized")
                     .ok()
                     .flatten()
                     .map(|v| v == "1")
@@ -670,11 +748,18 @@ pub fn run() {
 
                 // Show first so the native NSWindow is realized before applying
                 // geometry (required for correct sizing on macOS).
-                let remember_size = db.get_setting("main_window_size").ok().flatten()
-                    .and_then(|raw| serde_json::from_str::<commands::window::MainWindowSize>(&raw).ok())
-                    .map(|config| config.remember).unwrap_or(false);
+                let remember_size = db
+                    .get_setting("main_window_size")
+                    .ok()
+                    .flatten()
+                    .and_then(|raw| {
+                        serde_json::from_str::<commands::window::MainWindowSize>(&raw).ok()
+                    })
+                    .map(|config| config.remember)
+                    .unwrap_or(false);
                 if !remember_size {
-                    if let Err(error) = commands::window::apply_main_window_size(app.handle(), &db) {
+                    if let Err(error) = commands::window::apply_main_window_size(app.handle(), &db)
+                    {
                         log::warn!("主窗口打开尺寸恢复失败: {}", error);
                     }
                 }
@@ -707,7 +792,10 @@ pub fn run() {
                 let mon = ticker.primary_monitor().ok().flatten();
                 let (mon_w, mon_h) = mon
                     .as_ref()
-                    .map(|m| { let s = m.size(); (s.width as i32, s.height as i32) })
+                    .map(|m| {
+                        let s = m.size();
+                        (s.width as i32, s.height as i32)
+                    })
                     .unwrap_or((1920, 1080));
                 let ticker_size = ticker.outer_size().unwrap_or(tauri::PhysicalSize::new(
                     crate::datasource::TICKER_WIDTH,
@@ -819,7 +907,8 @@ pub fn run() {
                 Err(e) => {
                     log::warn!(
                         "[hotkey] Stored hotkey '{}' is invalid ({}); falling back to default",
-                        hotkey_str, e
+                        hotkey_str,
+                        e
                     );
                     if let Ok(sc) = default_hotkey.parse::<Shortcut>() {
                         if let Err(e) = app.global_shortcut().register(sc) {
@@ -842,14 +931,26 @@ pub fn run() {
             commands::quote::get_intraday,
             commands::quote::get_kline,
             commands::universe::get_market_universe,
+            commands::universe::generate_dynamic_filter_proposal,
             commands::universe::get_filter_presets,
             commands::universe::save_filter_preset,
             commands::universe::delete_filter_preset,
+            commands::strategies::strategy_library,
+            commands::strategies::strategy_transition,
             commands::analysis::analyze_stock,
+            commands::analysis::run_stock_research,
             commands::analysis::batch_stock_status,
+            commands::agent::get_agent_status,
+            commands::agent::analyze_stock_agent,
+            commands::agent::analyze_stock_team,
+            commands::agent::get_prediction_calibration,
+            commands::agent::cancel_agent_analysis,
             commands::rank::scan_and_rank,
             commands::sector::get_sector_summaries,
             commands::sector::get_sector_members,
+            commands::sector::get_sector_limit_up_stats,
+            commands::sector::get_sector_history,
+            commands::sector::get_sector_rotation,
             commands::monitor::get_monitors,
             commands::monitor::save_monitor,
             commands::monitor::set_monitor_enabled,
@@ -892,6 +993,9 @@ pub fn run() {
             commands::settings::set_refresh_interval,
             commands::settings::get_market_session,
             commands::settings::get_build_info,
+            commands::settings::get_local_history_status,
+            commands::settings::test_local_history,
+            commands::settings::scan_local_history,
             commands::settings::log_frontend,
             commands::window::show_main_window,
             commands::window::set_main_window_size,
@@ -901,6 +1005,13 @@ pub fn run() {
             commands::updater::check_update,
             commands::updater::install_update,
             commands::updater::is_trading_session,
+            commands::simulation::simulation_list_accounts,
+            commands::simulation::simulation_save_account,
+            commands::simulation::simulation_delete_account,
+            commands::simulation::simulation_get_detail,
+            commands::simulation::simulation_submit_order,
+            commands::simulation::simulation_confirm_order,
+            commands::simulation::simulation_run,
         ])
         .build(tauri::generate_context!())
         .expect("Failed to build application")

@@ -27,9 +27,15 @@ pub struct Quote {
 /// 数据源报价时间为北京时间；无法解析时返回 0，不把旧报价冒充当前行情。
 pub fn parse_quote_timestamp(value: &str, format: &str) -> i64 {
     use chrono::TimeZone;
-    chrono::NaiveDateTime::parse_from_str(value, format).ok()
-        .and_then(|time| chrono::FixedOffset::east_opt(8 * 3600)?.from_local_datetime(&time).single())
-        .map(|time| time.timestamp()).unwrap_or(0)
+    chrono::NaiveDateTime::parse_from_str(value, format)
+        .ok()
+        .and_then(|time| {
+            chrono::FixedOffset::east_opt(8 * 3600)?
+                .from_local_datetime(&time)
+                .single()
+        })
+        .map(|time| time.timestamp())
+        .unwrap_or(0)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +85,18 @@ pub struct KLineData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryMeta {
+    pub source: String,
+    pub source_label: String,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub bars: usize,
+    pub adjustment: String,
+    pub stale: bool,
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StockBrief {
     pub code: String,
     pub market: String,
@@ -98,10 +116,7 @@ pub enum AppError {
     Database(#[from] rusqlite::Error),
 
     #[error("网络请求失败 ({origin}): {message}")]
-    Network {
-        origin: String,
-        message: String,
-    },
+    Network { origin: String, message: String },
 
     #[error("数据源不可用: {0}")]
     DataSourceUnavailable(String),
@@ -113,10 +128,7 @@ pub enum AppError {
     NotFound(String),
 
     #[error("数据解析失败 ({origin}): {message}")]
-    Parse {
-        origin: String,
-        message: String,
-    },
+    Parse { origin: String, message: String },
 }
 
 impl AppError {

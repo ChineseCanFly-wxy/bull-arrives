@@ -39,9 +39,8 @@ impl Database {
 
     pub fn get_holdings(&self) -> SqliteResult<Vec<Holding>> {
         let conn = self.conn.lock().unwrap_or_else(|error| error.into_inner());
-        let mut statement = conn.prepare(
-            "SELECT watch_id, cost_price, shares FROM holdings ORDER BY watch_id",
-        )?;
+        let mut statement =
+            conn.prepare("SELECT watch_id, cost_price, shares FROM holdings ORDER BY watch_id")?;
         let holdings = statement
             .query_map([], |row| {
                 Ok(Holding {
@@ -70,11 +69,9 @@ impl Database {
         let cost_price = validate_scaled_cost(cost_price)?;
         let conn = self.conn.lock().unwrap_or_else(|error| error.into_inner());
         let watch_exists = conn
-            .query_row(
-                "SELECT 1 FROM watchlist WHERE id = ?1",
-                [watch_id],
-                |_| Ok(()),
-            )
+            .query_row("SELECT 1 FROM watchlist WHERE id = ?1", [watch_id], |_| {
+                Ok(())
+            })
             .optional()
             .map_err(|error| error.to_string())?
             .is_some();
@@ -137,8 +134,12 @@ mod tests {
         let database = database();
         database.migrate_holdings().unwrap();
         let watch_id = add_watch(&database);
-        database.save_holding(watch_id, Some("123400"), 100).unwrap();
-        database.save_holding(watch_id, Some("125001"), 200).unwrap();
+        database
+            .save_holding(watch_id, Some("123400"), 100)
+            .unwrap();
+        database
+            .save_holding(watch_id, Some("125001"), 200)
+            .unwrap();
 
         assert_eq!(
             database.get_holdings().unwrap(),
@@ -155,7 +156,10 @@ mod tests {
         let database = database();
         let watch_id = add_watch(&database);
         database.save_holding(watch_id, Some("0"), 300).unwrap();
-        assert_eq!(database.get_holdings().unwrap()[0].cost_price.as_deref(), Some("0"));
+        assert_eq!(
+            database.get_holdings().unwrap()[0].cost_price.as_deref(),
+            Some("0")
+        );
 
         database.save_holding(watch_id, None, 300).unwrap();
         let holding = &database.get_holdings().unwrap()[0];

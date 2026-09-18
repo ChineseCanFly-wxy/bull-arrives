@@ -7,12 +7,17 @@ use crate::datasource::eastmoney_universe::{
     self, count_by_board, preferred_source, preset_by_id, preset_infos, Board, FilterCapabilities,
     FilterPreset, MarketFilter, PresetInfo, SnapshotRow, SnapshotSource, DEFAULT_SNAPSHOT_TTL,
 };
+use crate::datasource::market_clock::MarketSession;
+use crate::datasource::market_policy::MarketRequestPolicy;
 use crate::db::Database;
+use crate::domain::KLineData;
+use crate::dynamic_filter;
 use crate::quant::playbook::TradeRule;
 use serde::Serialize;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::State;
+use tokio::{sync::Semaphore, task::JoinSet};
 
 /// 板块分布项（供设置页/自检展示）
 #[derive(Debug, Serialize)]
@@ -44,12 +49,114 @@ pub struct UniverseResponse {
     /// 当前通道是否提供「60 日涨跌幅」。与量比同理 ——
     /// 依赖它的趋势 / 反转类策略在新浪通道下会被跳过，必须让用户看得见。
     pub change_60d_supported: bool,
+    /// 当前通道是否提供上市日期
+    pub listing_date_supported: bool,
     /// 因数据源不支持而被自动忽略的条件名（如 ["量比"]），供前端明确提示
     pub skipped_conditions: Vec<String>,
+    /// 历史技术筛选的执行/降级说明
+    pub history_notice: Option<String>,
+    /// 实际完成本地历史计算的候选数
+    pub history_evaluated: usize,
     /// 全市场板块分布
     pub board_counts: Vec<BoardCount>,
     /// 命中筛选的明细
     pub rows: Vec<SnapshotRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DynamicFilterProposal {
+    pub mode: String,
+    pub state: String,
+    pub auto_eligible: bool,
+    pub observation_days: usize,
+    pub source: SnapshotSource,
+    pub as_of: String,
+    pub date_basis: String,
+    pub filter: MarketFilter,
+    pub candidate_limit: usize,
+    pub preview_count: usize,
+    pub preview_codes: Vec<String>,
+    pub clamped_fields: Vec<String>,
+    pub rationale: String,
+    pub guidance: String,
+}
+
+/// 生成隔离的动态筛选建议。首版只读、不写 universe_filter；缺少可审计的
+/// 28 天配对样本前，confirm/auto 故意不可用。
+#[tauri::command]
+pub async fn generate_dynamic_filter_proposal(
+    db: State<'_, Arc<Database>>,
+) -> Result<DynamicFilterProposal, String> {
+    let session = MarketSession::current();
+    if !matches!(session, MarketSession::PreOpen | MarketSession::Closed) {
+        return Err("动态筛选只在盘前或收盘后生成，盘中参数保持冻结".into());
+    }
+    let schedule = db
+        .get_setting("quote_schedule")
+        .map_err(|error| error.to_string())?;
+    let policy = MarketRequestPolicy::from_quote_schedule_json(schedule.as_deref())?;
+    if !policy.is_trading_day_at(chrono::Utc::now()) {
+        return Err("当前为周末或已配置休市日，不生成动态筛选建议".into());
+    }
+    let configured = db
+        .get_setting("universe_source")
+        .ok()
+        .flatten()
+        .filter(|value| !value.trim().is_empty());
+    let outcome = eastmoney_universe::market_snapshot_with_fallback(
+        DEFAULT_SNAPSHOT_TTL,
+        preferred_source(configured.as_deref()),
+    )
+    .await
+    .map_err(|error| format!("获取动态筛选快照失败：{error}"))?;
+    if outcome.stale {
+        return Err("全市场快照为陈旧兜底数据，拒绝生成可执行参数".into());
+    }
+    let fixed = match db.get_setting("universe_filter").ok().flatten() {
+        Some(value) if !value.trim().is_empty() => serde_json::from_str(&value)
+            .map_err(|error| format!("当前固定筛选条件损坏：{error}"))?,
+        _ => MarketFilter::default(),
+    };
+    let offset = chrono::FixedOffset::east_opt(8 * 3600).expect("UTC+8 is valid");
+    let as_of = chrono::Utc::now()
+        .with_timezone(&offset)
+        .format("%Y-%m-%d")
+        .to_string();
+    let context = serde_json::json!({
+        "as_of": as_of,
+        "date_basis": "local_session_gate_unverified",
+        "source": outcome.source,
+        "fixed_filter": &fixed,
+        "market": dynamic_filter::market_context(&outcome.rows),
+    });
+    let raw = crate::agent::propose_dynamic_filter(&db, context).await?;
+    let rationale = raw.rationale.clone();
+    let safe = dynamic_filter::sanitize(&fixed, &raw);
+    let capabilities = FilterCapabilities::for_source(outcome.source);
+    let mut candidates = safe.filter.apply_with(&outcome.rows, capabilities);
+    candidates.sort_by(|a, b| {
+        b.amount
+            .partial_cmp(&a.amount)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.code.cmp(&b.code))
+    });
+    candidates.truncate(safe.candidate_limit);
+    Ok(DynamicFilterProposal {
+        mode: "advice".into(),
+        state: "observing".into(),
+        auto_eligible: false,
+        observation_days: 0,
+        source: outcome.source,
+        as_of,
+        date_basis: "local_session_gate_unverified".into(),
+        filter: safe.filter,
+        candidate_limit: safe.candidate_limit,
+        preview_count: candidates.len(),
+        preview_codes: candidates.into_iter().map(|row| row.code).collect(),
+        clamped_fields: safe.clamped_fields,
+        rationale,
+        guidance: "仅建议：未写入真实筛选设置。需累计至少 28 天且 20 个闭合配对样本后，才能开放需确认或自动模式。".into(),
+    })
 }
 
 /// 返回行数默认上限。
@@ -62,6 +169,185 @@ const DEFAULT_PAGE_SIZE: u32 = 20;
 
 /// 服务端分页的每页上限（与前端可选的最大值一致）
 const MAX_PAGE_SIZE: u32 = 100;
+
+/// 快照粗筛后最多读取这些候选的本地历史。在线请求始终只有全市场快照，
+/// 不会随股票总数退化成逐只联网。
+const HISTORY_CANDIDATE_LIMIT: usize = 120;
+const HISTORY_CONCURRENCY: usize = 8;
+
+fn history_bars_needed(filter: &MarketFilter) -> usize {
+    [
+        filter.above_ma_days.unwrap_or(0),
+        filter.new_high_days.unwrap_or(0),
+        filter.rise_from_low_days.unwrap_or(0),
+        if filter.macd_bullish { 40 } else { 0 },
+        if filter.kdj_bullish { 9 } else { 0 },
+        if filter.volume_price_rising { 6 } else { 0 },
+    ]
+    .into_iter()
+    .max()
+    .unwrap_or(0)
+    .clamp(2, 250) as usize
+}
+
+fn accepts_history(filter: &MarketFilter, rows: &[KLineData]) -> bool {
+    let closes: Vec<f64> = rows.iter().map(|row| row.close).collect();
+    let highs: Vec<f64> = rows.iter().map(|row| row.high).collect();
+    let lows: Vec<f64> = rows.iter().map(|row| row.low).collect();
+    let Some(&latest_close) = closes.last() else {
+        return false;
+    };
+
+    if let Some(days) = filter.above_ma_days {
+        let days = (days as usize).clamp(2, 250);
+        let ma = crate::quant::indicators::sma(&closes, days);
+        if !ma
+            .last()
+            .is_some_and(|value| value.is_finite() && latest_close >= *value)
+        {
+            return false;
+        }
+    }
+    if let Some(days) = filter.new_high_days {
+        let days = (days as usize).clamp(2, 250);
+        if highs.len() < days
+            || highs[highs.len() - days..]
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max)
+                > *highs.last().unwrap_or(&f64::NEG_INFINITY)
+        {
+            return false;
+        }
+    }
+    if filter.macd_bullish {
+        let macd = crate::quant::indicators::macd(&closes, 12, 26, 9);
+        let Some((&dif, &dea, &hist)) = macd
+            .dif
+            .last()
+            .zip(macd.dea.last())
+            .zip(macd.hist.last())
+            .map(|((dif, dea), hist)| (dif, dea, hist))
+        else {
+            return false;
+        };
+        if !dif.is_finite() || !dea.is_finite() || dif <= dea || hist <= 0.0 {
+            return false;
+        }
+    }
+    if filter.kdj_bullish {
+        let kdj = crate::quant::indicators::kdj(&highs, &lows, &closes, 9);
+        if !kdj
+            .k
+            .last()
+            .zip(kdj.d.last())
+            .is_some_and(|(k, d)| k.is_finite() && d.is_finite() && k > d)
+        {
+            return false;
+        }
+    }
+    if filter.volume_price_rising {
+        if rows.len() < 6 {
+            return false;
+        }
+        let latest = &rows[rows.len() - 1];
+        let previous = &rows[rows.len() - 2];
+        let average = rows[rows.len() - 6..rows.len() - 1]
+            .iter()
+            .map(|row| row.volume as f64)
+            .sum::<f64>()
+            / 5.0;
+        if latest.close <= previous.close || latest.volume as f64 <= average {
+            return false;
+        }
+    }
+    if let Some(days) = filter.rise_from_low_days {
+        let days = (days as usize).clamp(2, 250);
+        if lows.len() < days {
+            return false;
+        }
+        let low = lows[lows.len() - days..]
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+        let rise = (latest_close / low - 1.0) * 100.0;
+        if !MarketFilter::within(rise, filter.rise_from_low_min, filter.rise_from_low_max) {
+            return false;
+        }
+    }
+    true
+}
+
+async fn apply_history_filter(
+    db: Arc<Database>,
+    rows: Vec<SnapshotRow>,
+    filter: &MarketFilter,
+) -> (Vec<SnapshotRow>, usize, Option<String>) {
+    if !filter.has_history_conditions() || rows.is_empty() {
+        return (rows, 0, None);
+    }
+    if let Err(error) = crate::datasource::kline::probe_local_history(&db).await {
+        return (
+            rows,
+            0,
+            Some(format!(
+                "本地历史不可用，历史技术条件已跳过（未逐只回退在线）：{error}"
+            )),
+        );
+    }
+    let coarse_count = rows.len();
+    let candidates: Vec<_> = rows.iter().take(HISTORY_CANDIDATE_LIMIT).cloned().collect();
+    let semaphore = Arc::new(Semaphore::new(HISTORY_CONCURRENCY));
+    let filter = Arc::new(filter.clone());
+    let bars = history_bars_needed(&filter);
+    let mut tasks = JoinSet::new();
+    for row in candidates {
+        let db = db.clone();
+        let semaphore = semaphore.clone();
+        let filter = filter.clone();
+        tasks.spawn(async move {
+            let _permit = semaphore
+                .acquire_owned()
+                .await
+                .expect("semaphore not closed");
+            let symbol = crate::datasource::kline::full_symbol_from(&row.code, row.board);
+            let result = crate::datasource::kline::fetch_history(&db, &symbol, Some(bars), false)
+                .await
+                .map(|history| accepts_history(&filter, &history.klines));
+            (row, result)
+        });
+    }
+
+    let mut passed = Vec::new();
+    let mut evaluated = 0usize;
+    let mut failed = 0usize;
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok((row, Ok(true))) => {
+                evaluated += 1;
+                passed.push(row);
+            }
+            Ok((_, Ok(false))) => evaluated += 1,
+            Ok((_, Err(_))) | Err(_) => failed += 1,
+        }
+    }
+
+    if evaluated == 0 {
+        return (
+            rows,
+            0,
+            Some("本地历史不可用，历史技术条件已跳过（未逐只回退在线）".into()),
+        );
+    }
+    let mut notes = vec![format!("本地历史已计算 {evaluated} 只")];
+    if coarse_count > HISTORY_CANDIDATE_LIMIT {
+        notes.push(format!("仅检查成交额前 {HISTORY_CANDIDATE_LIMIT} 只候选"));
+    }
+    if failed > 0 {
+        notes.push(format!("{failed} 只本地数据缺失，未纳入结果"));
+    }
+    (passed, evaluated, Some(notes.join("；")))
+}
 
 /// 翻页必须继续使用首屏对应的快照；强制刷新始终优先拿新数据。
 fn snapshot_ttl(force_refresh: bool, reuse_snapshot: bool) -> Duration {
@@ -145,6 +431,16 @@ pub async fn get_market_universe(
             .then_with(|| a.code.cmp(&b.code))
     });
 
+    let (mut matched, history_evaluated, history_notice) =
+        apply_history_filter(db.inner().clone(), matched, &filter).await;
+    // 并发本地读取会打乱完成顺序，筛完后恢复稳定分页顺序。
+    matched.sort_by(|a, b| {
+        b.amount
+            .partial_cmp(&a.amount)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.code.cmp(&b.code))
+    });
+
     let board_counts = count_by_board(&outcome.rows)
         .into_iter()
         .map(|(board, count)| BoardCount {
@@ -159,7 +455,9 @@ pub async fn get_market_universe(
     // 分页：传了 page 就按页取；否则退回旧的 limit 截断行为
     let rows: Vec<SnapshotRow> = match (page, page_size) {
         (Some(requested_page), _) => {
-            let size = page_size.unwrap_or(DEFAULT_PAGE_SIZE).clamp(1, MAX_PAGE_SIZE) as usize;
+            let size = page_size
+                .unwrap_or(DEFAULT_PAGE_SIZE)
+                .clamp(1, MAX_PAGE_SIZE) as usize;
             let current = requested_page.max(1) as usize;
             let start = current.saturating_sub(1).saturating_mul(size);
             matched.into_iter().skip(start).take(size).collect()
@@ -196,7 +494,10 @@ pub async fn get_market_universe(
         source_label: outcome.source.label().to_owned(),
         volume_ratio_supported: outcome.source.has_volume_ratio(),
         change_60d_supported: outcome.source.has_change_60d(),
+        listing_date_supported: matches!(outcome.source, SnapshotSource::Eastmoney),
         skipped_conditions,
+        history_notice,
+        history_evaluated,
         board_counts,
         rows,
     })
@@ -259,7 +560,17 @@ fn load_custom_presets(db: &Database) -> Result<Vec<PresetInfo>, String> {
             continue;
         }
         // 规则 id 收敛到已知值：坏数据不能让「打开分析」拿到一个无法解析的规则
+        if TradeRule::try_from_id(&preset.rule).is_err() {
+            log::warn!(
+                "[universe] 自定义策略 {} 的 rule={} 无效，按旧数据兼容为 trend_follow",
+                preset.id,
+                preset.rule
+            );
+        }
         preset.rule = TradeRule::from_id(&preset.rule).id().to_owned();
+        preset.strategy_version_id = None;
+        preset.strategy_version = 0;
+        preset.strategy_status.clear();
         preset.filter.normalize_ranges();
         cleaned.push(preset);
     }
@@ -268,9 +579,7 @@ fn load_custom_presets(db: &Database) -> Result<Vec<PresetInfo>, String> {
 
 /// 写回用户自建策略（整体覆盖）。
 fn store_custom_presets(db: &Database, presets: &[PresetInfo]) -> Result<(), String> {
-    let json = serde_json::to_string(presets).map_err(|e| format!("自定义策略序列化失败：{e}"))?;
-    db.set_setting(CUSTOM_PRESETS_SETTING_KEY, &json)
-        .map_err(|e| e.to_string())
+    db.replace_custom_strategy_presets(presets, None)
 }
 
 /// 生成一个没被占用的自定义策略 id
@@ -339,12 +648,33 @@ fn all_presets_impl(db: &Database) -> Vec<PresetInfo> {
         }
     }
 
+    if let Err(error) = db.sync_strategy_presets(&presets) {
+        log::error!("[strategy] 策略版本库同步失败：{error}");
+    } else if let Ok(library) = db.strategy_library() {
+        let versions: std::collections::HashMap<_, _> = library
+            .cards
+            .into_iter()
+            .map(|card| (card.id.clone(), card))
+            .collect();
+        for preset in &mut presets {
+            if let Some(card) = versions.get(&preset.id) {
+                preset.strategy_version_id = Some(card.version_id);
+                preset.strategy_version = card.current_version;
+                preset.strategy_status = card.status.clone();
+            }
+        }
+    }
+
     log::info!(
         "[universe] get_filter_presets -> 内置 {} + 自建 {}",
         builtin_count,
         presets.len() - builtin_count
     );
     presets
+}
+
+pub(crate) fn sync_strategy_registry(db: &Database) {
+    let _ = all_presets_impl(db);
 }
 
 #[tauri::command]
@@ -404,9 +734,14 @@ fn save_preset_impl(
         label,
         description,
         filter,
-        // 未知 / 缺省一律回落为趋势跟随，保证「打开分析」永远有规则可用
-        rule: TradeRule::from_id(rule.unwrap_or_default()).id().to_owned(),
+        rule: match rule.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => TradeRule::try_from_id(value)?.id().to_owned(),
+            None => TradeRule::TrendFollow.id().to_owned(),
+        },
         builtin: false,
+        strategy_version_id: None,
+        strategy_version: 0,
+        strategy_status: String::new(),
     };
 
     match customs.iter_mut().find(|preset| preset.id == target_id) {
@@ -431,7 +766,7 @@ fn delete_preset_impl(db: &Database, id: &str) -> Result<(), String> {
         return Err("要删除的策略不存在，可能已经被删掉了".into());
     }
 
-    store_custom_presets(db, &customs)
+    db.replace_custom_strategy_presets(&customs, Some(id))
 }
 
 /// 保存一条策略，**新建 / 重命名 / 用当前条件覆盖**三种动作共用这一个命令。
@@ -471,10 +806,11 @@ pub fn delete_filter_preset(db: State<'_, Arc<Database>>, id: String) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::{next_custom_id, normalize_meta, snapshot_ttl, MAX_LABEL_CHARS};
+    use super::{accepts_history, next_custom_id, normalize_meta, snapshot_ttl, MAX_LABEL_CHARS};
     use crate::datasource::eastmoney_universe::{
         preset_infos, MarketFilter, PresetInfo, DEFAULT_SNAPSHOT_TTL,
     };
+    use crate::domain::KLineData;
     use crate::quant::playbook::TradeRule;
     use std::time::Duration;
 
@@ -486,6 +822,9 @@ mod tests {
             filter: MarketFilter::default(),
             rule: TradeRule::TrendFollow.id().to_owned(),
             builtin: false,
+            strategy_version_id: None,
+            strategy_version: 0,
+            strategy_status: String::new(),
         }
     }
 
@@ -494,6 +833,38 @@ mod tests {
         assert_eq!(snapshot_ttl(false, false), DEFAULT_SNAPSHOT_TTL);
         assert_eq!(snapshot_ttl(false, true), Duration::MAX);
         assert_eq!(snapshot_ttl(true, true), Duration::ZERO);
+    }
+
+    #[test]
+    fn history_conditions_accept_a_rising_breakout_and_reject_a_ma_break() {
+        let mut rows: Vec<KLineData> = (0..60)
+            .map(|day| {
+                let close = 10.0 + (day * day) as f64 * 0.01;
+                KLineData {
+                    date: format!("2026-07-{:02}", day % 28 + 1),
+                    open: close - 0.1,
+                    high: close + 0.2,
+                    low: close - 0.3,
+                    close,
+                    volume: if day == 59 { 3_000 } else { 1_000 },
+                    turnover: 0.0,
+                }
+            })
+            .collect();
+        let filter = MarketFilter {
+            above_ma_days: Some(20),
+            new_high_days: Some(20),
+            macd_bullish: true,
+            kdj_bullish: true,
+            volume_price_rising: true,
+            rise_from_low_days: Some(20),
+            rise_from_low_min: Some(0.0),
+            rise_from_low_max: Some(200.0),
+            ..MarketFilter::default()
+        };
+        assert!(accepts_history(&filter, &rows));
+        rows.last_mut().unwrap().close = 5.0;
+        assert!(!accepts_history(&filter, &rows));
     }
 
     /// 内置策略必须被标记为 builtin，否则前端会给出「改名/删除」入口，
@@ -532,16 +903,25 @@ mod tests {
         assert_eq!(label, "我的策略");
         assert_eq!(desc, "说明");
 
-        assert!(normalize_meta("   ", None, "custom_1", &[]).is_err(), "全空白名称应被拒");
+        assert!(
+            normalize_meta("   ", None, "custom_1", &[]).is_err(),
+            "全空白名称应被拒"
+        );
     }
 
     #[test]
     fn duplicate_names_are_rejected_except_for_self() {
-        let others = vec![custom("custom_1", "挖坑策略"), custom("custom_2", "打板策略")];
+        let others = vec![
+            custom("custom_1", "挖坑策略"),
+            custom("custom_2", "打板策略"),
+        ];
 
         // 撞别人的名字 → 拒绝，且错误信息里要带上冲突的名字，便于用户判断
         let err = normalize_meta("挖坑策略", None, "custom_2", &others).unwrap_err();
-        assert!(err.contains("挖坑策略"), "错误信息应指出撞了哪个名字：{err}");
+        assert!(
+            err.contains("挖坑策略"),
+            "错误信息应指出撞了哪个名字：{err}"
+        );
 
         // 改自己的名字（id 相同）→ 放行
         assert!(normalize_meta("挖坑策略", None, "custom_1", &others).is_ok());
@@ -576,10 +956,8 @@ mod tests {
         use super::{all_presets_impl, delete_preset_impl, load_custom_presets, save_preset_impl};
         use crate::db::Database;
 
-        let dir = std::env::temp_dir().join(format!(
-            "bull-arrives-preset-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("bull-arrives-preset-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let db = Database::open(dir.clone()).expect("应能建库");
 
@@ -589,7 +967,11 @@ mod tests {
 
         // 保存三条
         let mut ids = Vec::new();
-        for (label, cap) in [("我的低估值", 50.0), ("我的高换手", 80.0), ("我的超跌", 30.0)] {
+        for (label, cap) in [
+            ("我的低估值", 50.0),
+            ("我的高换手", 80.0),
+            ("我的超跌", 30.0),
+        ] {
             let filter = MarketFilter {
                 market_cap_min_yi: Some(cap),
                 ..MarketFilter::default()
@@ -625,7 +1007,11 @@ mod tests {
         assert_eq!(renamed.rule, "mean_reversion", "规则应随保存一起落库");
         assert_eq!(renamed.filter.pb_max, Some(1.5), "条件应被整体替换");
         assert_eq!(renamed.filter.market_cap_min_yi, None, "旧条件不应残留");
-        assert_eq!(load_custom_presets(&db).expect("读取应成功").len(), 3, "覆盖不该新增");
+        assert_eq!(
+            load_custom_presets(&db).expect("读取应成功").len(),
+            3,
+            "覆盖不该新增"
+        );
 
         // 填反的区间在落库前被交换过来
         let swapped = save_preset_impl(
@@ -657,8 +1043,15 @@ mod tests {
         );
         // 内置策略不能被改
         assert!(
-            save_preset_impl(&db, Some("all"), "偷改内置", None, None, MarketFilter::default())
-                .is_err(),
+            save_preset_impl(
+                &db,
+                Some("all"),
+                "偷改内置",
+                None,
+                None,
+                MarketFilter::default()
+            )
+            .is_err(),
             "内置策略不允许直接修改"
         );
 
@@ -670,7 +1063,10 @@ mod tests {
 
         // 删不存在的、删内置的都要报错
         assert!(delete_preset_impl(&db, &ids[1]).is_err(), "重复删除应报错");
-        assert!(delete_preset_impl(&db, "all").is_err(), "内置策略不允许删除");
+        assert!(
+            delete_preset_impl(&db, "all").is_err(),
+            "内置策略不允许删除"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

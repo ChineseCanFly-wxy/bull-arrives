@@ -1,11 +1,11 @@
+use crate::datasource::market_clock::MarketSession;
+use crate::domain::{IndexQuote, Quote};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 use tokio::sync::Notify;
-use crate::domain::{Quote, IndexQuote};
-use crate::datasource::market_clock::MarketSession;
 
 #[derive(Default)]
 struct AlertScope {
@@ -56,28 +56,48 @@ impl QuoteCache {
         now: chrono::DateTime<chrono::FixedOffset>,
         app_handle: &tauri::AppHandle,
     ) {
-        crate::alerts::evaluate_fresh_quotes(
-            &self.db,
-            quotes,
-            now,
-            rearm_codes,
-            |event| {
-                let title = format!("行情提醒 · {} {}", event.name, event.code);
-                let body = if event.alert_type == "change_pct" {
-                    format!("较昨收 {:+.2}%，达到 {:+.2}% 提醒条件；现价 {:.4}", event.value, event.threshold, event.current_price)
-                } else {
-                    format!("{}穿越目标价 {:.4}；现价 {:.4}", if event.direction == "up" { "向上" } else { "向下" }, event.threshold, event.current_price)
-                };
-                match serde_json::to_value(event) {
-                    Ok(mut payload) => {
-                        payload["title"] = serde_json::Value::String(title);
-                        payload["body"] = serde_json::Value::String(body);
-                        crate::notifications::publish(app_handle, payload);
-                    }
-                    Err(error) => log::warn!("提醒事件序列化失败: {}", error),
+        crate::alerts::evaluate_fresh_quotes(&self.db, quotes, now, rearm_codes, |event| {
+            let title = format!("行情提醒 · {} {}", event.name, event.code);
+            let body = if event.alert_type == "change_pct" {
+                format!(
+                    "较昨收 {:+.2}%，达到 {:+.2}% 提醒条件；现价 {:.4}",
+                    event.value, event.threshold, event.current_price
+                )
+            } else {
+                format!(
+                    "{}穿越目标价 {:.4}；现价 {:.4}",
+                    if event.direction == "up" {
+                        "向上"
+                    } else {
+                        "向下"
+                    },
+                    event.threshold,
+                    event.current_price
+                )
+            };
+            match serde_json::to_value(&event) {
+                Ok(mut payload) => {
+                    payload["signal_id"] = serde_json::Value::String(format!(
+                        "price:{}:{}:{}:{}",
+                        event.id, event.code, event.alert_type, event.triggered_at
+                    ));
+                    payload["signal_tag"] = serde_json::Value::String(
+                        if event.alert_type == "change_pct" {
+                            "涨跌幅"
+                        } else {
+                            "价格穿越"
+                        }
+                        .into(),
+                    );
+                    payload["signal_kind"] = serde_json::Value::String("price".into());
+                    payload["occurred_at"] = serde_json::Value::String(event.triggered_at.clone());
+                    payload["title"] = serde_json::Value::String(title);
+                    payload["body"] = serde_json::Value::String(body);
+                    crate::notifications::publish(app_handle, payload);
                 }
-            },
-        );
+                Err(error) => log::warn!("提醒事件序列化失败: {}", error),
+            }
+        });
 
         // 止损/止盈监控（量化自动算位，复用同一批新鲜行情）
         crate::monitor::evaluate_monitors(&self.db, quotes, now, |event| {
@@ -93,8 +113,22 @@ impl QuoteCache {
                     event.trigger_price, event.reference_price, event.current_price
                 )
             };
-            match serde_json::to_value(event) {
+            match serde_json::to_value(&event) {
                 Ok(mut payload) => {
+                    payload["signal_id"] = serde_json::Value::String(format!(
+                        "monitor:{}:{}:{}:{}",
+                        event.id, event.code, event.trigger_type, event.triggered_at
+                    ));
+                    payload["signal_tag"] = serde_json::Value::String(
+                        if event.trigger_type == "stop_loss" {
+                            "止损"
+                        } else {
+                            "止盈"
+                        }
+                        .into(),
+                    );
+                    payload["signal_kind"] = serde_json::Value::String("risk".into());
+                    payload["occurred_at"] = serde_json::Value::String(event.triggered_at.clone());
                     payload["title"] = serde_json::Value::String(title);
                     payload["body"] = serde_json::Value::String(body);
                     crate::notifications::publish(app_handle, payload);
@@ -178,9 +212,7 @@ impl QuoteCache {
         let cache = self.quotes.lock().unwrap_or_else(|e| e.into_inner());
         codes
             .iter()
-            .filter_map(|(code, market)| {
-                cache.get(&format!("{}:{}", market, code)).cloned()
-            })
+            .filter_map(|(code, market)| cache.get(&format!("{}:{}", market, code)).cloned())
             .collect()
     }
 
@@ -197,16 +229,16 @@ impl QuoteCache {
 
     /// Get cached indices
     pub fn get_indices(&self) -> Vec<IndexQuote> {
-        self.indices.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.indices
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Snapshot current prices (code→price) for change detection
     pub fn get_price_snapshot(&self) -> HashMap<String, f64> {
         let cache = self.quotes.lock().unwrap_or_else(|e| e.into_inner());
-        cache
-            .iter()
-            .map(|(k, v)| (k.clone(), v.price))
-            .collect()
+        cache.iter().map(|(k, v)| (k.clone(), v.price)).collect()
     }
 }
 
@@ -234,12 +266,16 @@ enum PollingState {
 
 impl PollingState {
     fn new() -> Self {
-        Self::Probing { remaining: PROBE_COUNT }
+        Self::Probing {
+            remaining: PROBE_COUNT,
+        }
     }
 
     /// Reset to probing when entering a trading session
     fn on_session_enter(&mut self) {
-        *self = Self::Probing { remaining: PROBE_COUNT };
+        *self = Self::Probing {
+            remaining: PROBE_COUNT,
+        };
     }
 
     /// Update state based on fetch result. Returns the interval for the next cycle.
@@ -248,12 +284,16 @@ impl PollingState {
             Self::Probing { remaining } => {
                 if prices_changed {
                     log::info!("Probe detected price change — market is open");
-                    *self = Self::Normal { unchanged_streak: 0 };
+                    *self = Self::Normal {
+                        unchanged_streak: 0,
+                    };
                     return session.recommended_interval();
                 }
                 *remaining -= 1;
                 if *remaining == 0 {
-                    log::info!("All probes returned no price change — switching to idle (holiday/closure)");
+                    log::info!(
+                        "All probes returned no price change — switching to idle (holiday/closure)"
+                    );
                     *self = Self::Idle;
                     return IDLE_INTERVAL;
                 }
@@ -278,7 +318,9 @@ impl PollingState {
             Self::Idle => {
                 if prices_changed {
                     log::info!("Price change detected in idle mode — resuming normal polling");
-                    *self = Self::Normal { unchanged_streak: 0 };
+                    *self = Self::Normal {
+                        unchanged_streak: 0,
+                    };
                     return session.recommended_interval();
                 }
                 IDLE_INTERVAL
@@ -364,27 +406,29 @@ impl Scheduler {
 
                     if is_trading_enter {
                         state.on_session_enter();
-                        log::info!(
-                            "Entering trading session ({:?}), starting probe",
-                            session
-                        );
+                        log::info!("Entering trading session ({:?}), starting probe", session);
                     }
 
                     last_session = session;
-                    if let Err(e) = app_handle.emit("market-session-changed", serde_json::json!({
-                        "session": session.name(),
-                        "interval_secs": config.resolve(session),
-                        "is_trading": matches!(
-                            session,
-                            MarketSession::MorningTrade | MarketSession::AfternoonTrade
-                        ),
-                    })) {
+                    if let Err(e) = app_handle.emit(
+                        "market-session-changed",
+                        serde_json::json!({
+                            "session": session.name(),
+                            "interval_secs": config.resolve(session),
+                            "is_trading": matches!(
+                                session,
+                                MarketSession::MorningTrade | MarketSession::AfternoonTrade
+                            ),
+                        }),
+                    ) {
                         log::warn!("Failed to emit market-session-changed: {}", e);
                     }
                 }
 
                 // ── Fetch data ──
-                let outcome = Self::fetch_once(&data_manager, &cache, &db, &app_handle, &fetching, false).await;
+                let outcome =
+                    Self::fetch_once(&data_manager, &cache, &db, &app_handle, &fetching, false)
+                        .await;
 
                 // ── Adaptive interval ──
                 // Adaptive polling (probe → normal → idle) is only used during
@@ -393,7 +437,10 @@ impl Scheduler {
                 // we skip the state machine and use the fixed recommended interval.
                 // A user-pinned interval (non-zero) always wins over both.
                 let configured = config.interval_secs();
-                let in_trading = matches!(session, MarketSession::MorningTrade | MarketSession::AfternoonTrade);
+                let in_trading = matches!(
+                    session,
+                    MarketSession::MorningTrade | MarketSession::AfternoonTrade
+                );
                 let new_interval = if configured != 0 {
                     configured
                 } else {
@@ -443,20 +490,24 @@ impl Scheduler {
 
         // 1. Get watchlist codes
         let db_for_codes = db.clone();
-        let codes = match tokio::task::spawn_blocking(move || db_for_codes.get_current_watch_codes()).await
-        {
-            Ok(Ok(c)) => c,
-            Ok(Err(e)) => {
-                log::warn!("Failed to read watchlist from DB: {}", e);
-                Self::fetch_and_emit_indices(manager, cache, app_handle).await;
-                return None;
-            }
-            Err(join_err) => {
-                log::warn!("spawn_blocking join error for get_watch_codes: {}", join_err);
-                Self::fetch_and_emit_indices(manager, cache, app_handle).await;
-                return None;
-            }
-        };
+        let codes =
+            match tokio::task::spawn_blocking(move || db_for_codes.get_current_watch_codes()).await
+            {
+                Ok(Ok(c)) => c,
+                Ok(Err(e)) => {
+                    log::warn!("Failed to read watchlist from DB: {}", e);
+                    Self::fetch_and_emit_indices(manager, cache, app_handle).await;
+                    return None;
+                }
+                Err(join_err) => {
+                    log::warn!(
+                        "spawn_blocking join error for get_watch_codes: {}",
+                        join_err
+                    );
+                    Self::fetch_and_emit_indices(manager, cache, app_handle).await;
+                    return None;
+                }
+            };
 
         // Track membership independently from successful fetches. Leaving and later
         // re-entering a group therefore forces one fresh quote to rearm the rule.
@@ -488,14 +539,18 @@ impl Scheduler {
             }
         }
 
-        if manager.revision() != revision { return None; }
+        if manager.revision() != revision {
+            return None;
+        }
 
         if !cn_codes.is_empty() {
             if let Some(source) = manager.active_source() {
                 // Snapshot prices before fetch for change detection
                 let prices_before = cache.get_price_snapshot();
 
-                if manager.ensure_request_allowed().is_err() { return None; }
+                if manager.ensure_request_allowed().is_err() {
+                    return None;
+                }
                 let response = source.fetch_realtime(&cn_codes, "CN").await;
                 if manager.revision() != revision || manager.ensure_request_allowed().is_err() {
                     manager.wakeup.notify_one();
@@ -515,7 +570,9 @@ impl Scheduler {
                         let quotes_for_db = quotes.to_vec();
                         if let Err(error) = tokio::task::spawn_blocking(move || {
                             cache_for_persist.persist_quotes(&quotes_for_db);
-                        }).await {
+                        })
+                        .await
+                        {
                             log::warn!("行情缓存落盘任务失败: {}", error);
                         }
 
@@ -523,7 +580,9 @@ impl Scheduler {
                         let changed = Self::any_price_changed(&prices_before, &quotes);
 
                         Self::fetch_and_emit_indices(manager, cache, app_handle).await;
-                        return Some(FetchOutcome { prices_changed: changed });
+                        return Some(FetchOutcome {
+                            prices_changed: changed,
+                        });
                     }
                     Err(e) => {
                         log::warn!("Quote fetch failed (will retry): {}", e);
@@ -552,15 +611,20 @@ impl Scheduler {
     /// across backend servers (e.g. 3250.68 vs 3250.680000000001).
     const PRICE_CHANGE_EPSILON: f64 = 0.001;
 
-    fn any_price_changed(snapshot: &std::collections::HashMap<String, f64>, quotes: &[crate::domain::Quote]) -> bool {
+    fn any_price_changed(
+        snapshot: &std::collections::HashMap<String, f64>,
+        quotes: &[crate::domain::Quote],
+    ) -> bool {
         if snapshot.is_empty() {
             return true;
         }
         for q in quotes {
             let key = format!("{}:{}", q.market, q.code);
             match snapshot.get(&key) {
-                Some(&prev_price) if (prev_price - q.price).abs() > Self::PRICE_CHANGE_EPSILON => return true,
-                Some(_) => {} // same price (within tolerance)
+                Some(&prev_price) if (prev_price - q.price).abs() > Self::PRICE_CHANGE_EPSILON => {
+                    return true
+                }
+                Some(_) => {}        // same price (within tolerance)
                 None => return true, // new stock added
             }
         }
@@ -572,7 +636,11 @@ impl Scheduler {
         cache: &Arc<QuoteCache>,
         app_handle: &tauri::AppHandle,
     ) {
-        if !app_handle.get_webview_window("main").and_then(|w| w.is_visible().ok()).unwrap_or(false) {
+        if !app_handle
+            .get_webview_window("main")
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false)
+        {
             return;
         }
         if let Err(reason) = manager.ensure_request_allowed() {
@@ -607,7 +675,9 @@ impl Scheduler {
                     let indices_for_db = current.clone();
                     if let Err(error) = tokio::task::spawn_blocking(move || {
                         cache_for_persist.persist_indices(&indices_for_db);
-                    }).await {
+                    })
+                    .await
+                    {
                         log::warn!("指数缓存落盘任务失败: {}", error);
                     }
                     if changed {

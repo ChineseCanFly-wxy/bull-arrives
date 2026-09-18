@@ -55,7 +55,8 @@ pub async fn fetch_daily_kline(symbol: &str, count: u32) -> Result<Vec<KLineData
 
 /// 解析东财 kline 返回的 JSON 文本
 pub fn parse_kline(text: &str) -> Result<Vec<KLineData>, String> {
-    let json: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("解析JSON失败: {e}"))?;
+    let json: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("解析JSON失败: {e}"))?;
     let arr = json["data"]["klines"]
         .as_array()
         .ok_or_else(|| format!("返回中无 klines 字段: {}", &text[..text.len().min(200)]))?;

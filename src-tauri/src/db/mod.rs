@@ -1,10 +1,15 @@
+pub mod agent;
 pub mod groups;
 pub mod holdings;
 pub mod monitors;
+pub mod news;
+pub mod predictions;
 #[cfg(test)]
 mod regression_tests;
+pub mod simulation;
+pub mod strategies;
 
-use rusqlite::{Connection, Result as SqliteResult, params};
+use rusqlite::{params, Connection, Result as SqliteResult};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -20,13 +25,20 @@ impl Database {
         }
         let db_path = app_dir.join("bull-arrives.db");
         let conn = Connection::open(db_path)?;
-        let db = Self { conn: Mutex::new(conn) };
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
         db.migrate()?;
         db.migrate_groups()?;
         db.migrate_holdings()?;
         db.migrate_monitors()?;
+        db.migrate_news()?;
         db.migrate_price_alerts()?;
         db.migrate_watchlist_codes()?;
+        db.migrate_simulation()?;
+        db.migrate_strategies()?;
+        db.migrate_agent()?;
+        db.migrate_predictions()?;
         db.init_defaults()?;
         Ok(db)
     }
@@ -73,7 +85,7 @@ impl Database {
                 last_value       REAL,
                 last_value_day   TEXT,
                 UNIQUE(code, market, alert_type)
-            );"
+            );",
         )?;
         Ok(())
     }
@@ -122,14 +134,12 @@ impl Database {
                 continue;
             }
             if code.len() == 6 && code.chars().all(|c| c.is_ascii_digit()) {
-                let prefix = if code.starts_with('6')
-                    || code.starts_with('5')
-                    || code.starts_with('9')
-                {
-                    "sh"
-                } else {
-                    "sz"
-                };
+                let prefix =
+                    if code.starts_with('6') || code.starts_with('5') || code.starts_with('9') {
+                        "sh"
+                    } else {
+                        "sz"
+                    };
                 let full = format!("{}{}", prefix, code);
                 conn.execute(
                     "UPDATE watchlist SET code = ?1 WHERE id = ?2",
@@ -161,11 +171,21 @@ impl Database {
             ("quote_schedule_enabled", "0"),
             ("auto_launch", "false"),
             ("alerts_enabled", "1"),
+            // 资讯轮询会联网并可能弹通知，默认关闭。
+            ("news_notifications_enabled", "0"),
+            ("news_flash_initialized", "0"),
+            ("news_announcement_initialized", "0"),
             // AI / 量化智能总开关：关闭后所有「自动运行」的智能功能一并停止。
             // 手动点击触发的功能（个股量化评分、推荐榜）不受它约束。
             ("ai_enabled", "1"),
             // 智能监控（ATR 自动止损/止盈），跟随 ai_enabled
             ("ai_monitor_enabled", "1"),
+            // Claude Code 由应用探测并使用其自身登录；不在应用内保存凭据。
+            ("agent_claude_path", ""),
+            ("agent_timeout_seconds", "90"),
+            ("local_history_enabled", "1"),
+            ("local_history_url", "http://127.0.0.1:7899"),
+            ("local_history_engine_dir", ""),
             // 全市场快照取数通道：auto（东财优先，新浪兜底）/ sina / eastmoney。
             // 实测部分网络下东财 clist 路径被针对性阻断，故默认 auto。
             ("universe_source", "auto"),
@@ -186,7 +206,7 @@ impl Database {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = conn.prepare(
             "SELECT id, code, market, name, sort_order, added_at
-             FROM watchlist ORDER BY sort_order ASC, id ASC"
+             FROM watchlist ORDER BY sort_order ASC, id ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(WatchItem {
@@ -237,8 +257,14 @@ impl Database {
                 params![code, market],
             )?;
         }
-        tx.execute("DELETE FROM price_alerts WHERE code=?1 AND market=?2", params![code, market])?;
-        tx.execute("DELETE FROM quote_cache WHERE code=?1 AND market=?2", params![code, market])?;
+        tx.execute(
+            "DELETE FROM price_alerts WHERE code=?1 AND market=?2",
+            params![code, market],
+        )?;
+        tx.execute(
+            "DELETE FROM quote_cache WHERE code=?1 AND market=?2",
+            params![code, market],
+        )?;
         tx.execute(
             "DELETE FROM watchlist WHERE code = ?1 AND market = ?2",
             params![code, market],
@@ -263,9 +289,8 @@ impl Database {
 
     pub fn get_watch_codes(&self) -> SqliteResult<Vec<(String, String)>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare(
-            "SELECT code, market FROM watchlist ORDER BY sort_order ASC, id ASC"
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT code, market FROM watchlist ORDER BY sort_order ASC, id ASC")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -319,7 +344,9 @@ impl Database {
             let data = serde_json::to_string(q).unwrap_or_else(|e| {
                 log::warn!(
                     "Failed to serialize quote {}:{} for cache: {}",
-                    q.market, q.code, e
+                    q.market,
+                    q.code,
+                    e
                 );
                 String::new()
             });
@@ -345,7 +372,11 @@ impl Database {
             let data = match serde_json::to_string(index) {
                 Ok(data) => data,
                 Err(error) => {
-                    log::warn!("Failed to serialize index {} for cache: {}", index.code, error);
+                    log::warn!(
+                        "Failed to serialize index {} for cache: {}",
+                        index.code,
+                        error
+                    );
                     continue;
                 }
             };
@@ -368,7 +399,9 @@ impl Database {
             if let Ok(data) = row {
                 match serde_json::from_str::<crate::domain::IndexQuote>(&data) {
                     Ok(index) => indices.push(index),
-                    Err(error) => log::warn!("Failed to deserialize cached index (skipping): {}", error),
+                    Err(error) => {
+                        log::warn!("Failed to deserialize cached index (skipping): {}", error)
+                    }
                 }
             }
         }
@@ -383,10 +416,9 @@ impl Database {
     /// All other entries are shifted down by one position.
     pub fn move_watch_top(&self, id: i64) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare(
-            "SELECT id FROM watchlist ORDER BY sort_order ASC, id ASC"
-        )?;
-        let ids: Vec<i64> = stmt.query_map([], |row| row.get(0))?
+        let mut stmt = conn.prepare("SELECT id FROM watchlist ORDER BY sort_order ASC, id ASC")?;
+        let ids: Vec<i64> = stmt
+            .query_map([], |row| row.get(0))?
             .collect::<SqliteResult<Vec<_>>>()?;
 
         let mut sort_order = 0i32;
@@ -410,10 +442,9 @@ impl Database {
     /// Swap the target entry with the one above it (decrease sort_order).
     pub fn move_watch_up(&self, id: i64) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare(
-            "SELECT id FROM watchlist ORDER BY sort_order ASC, id ASC"
-        )?;
-        let ids: Vec<i64> = stmt.query_map([], |row| row.get(0))?
+        let mut stmt = conn.prepare("SELECT id FROM watchlist ORDER BY sort_order ASC, id ASC")?;
+        let ids: Vec<i64> = stmt
+            .query_map([], |row| row.get(0))?
             .collect::<SqliteResult<Vec<_>>>()?;
 
         if let Some(pos) = ids.iter().position(|&x| x == id) {
@@ -437,10 +468,9 @@ impl Database {
     /// Swap the target entry with the one below it (increase sort_order).
     pub fn move_watch_down(&self, id: i64) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare(
-            "SELECT id FROM watchlist ORDER BY sort_order ASC, id ASC"
-        )?;
-        let ids: Vec<i64> = stmt.query_map([], |row| row.get(0))?
+        let mut stmt = conn.prepare("SELECT id FROM watchlist ORDER BY sort_order ASC, id ASC")?;
+        let ids: Vec<i64> = stmt
+            .query_map([], |row| row.get(0))?
             .collect::<SqliteResult<Vec<_>>>()?;
 
         if let Some(pos) = ids.iter().position(|&x| x == id) {
@@ -468,10 +498,7 @@ impl Database {
             if let Ok(data) = row {
                 match serde_json::from_str::<crate::domain::Quote>(&data) {
                     Ok(quote) => quotes.push(quote),
-                    Err(e) => log::warn!(
-                        "Failed to deserialize cached quote (skipping): {}",
-                        e
-                    ),
+                    Err(e) => log::warn!("Failed to deserialize cached quote (skipping): {}", e),
                 }
             }
         }
@@ -547,27 +574,56 @@ impl Database {
                 last_triggered_day=COALESCE(?4,last_triggered_day) WHERE id=?5
                 AND threshold=?6 AND enabled=?7 AND repeat_mode=?8 AND cooldown_minutes=?9
                 AND last_value IS ?10 AND last_triggered_at IS ?11",
-            params![value, value_day, triggered_at, triggered_day, expected.id,
-                expected.threshold, i64::from(expected.enabled), expected.repeat_mode, expected.cooldown_minutes,
-                expected.last_value, expected.last_triggered_at],
+            params![
+                value,
+                value_day,
+                triggered_at,
+                triggered_day,
+                expected.id,
+                expected.threshold,
+                i64::from(expected.enabled),
+                expected.repeat_mode,
+                expected.cooldown_minutes,
+                expected.last_value,
+                expected.last_triggered_at
+            ],
         )?;
-        if changed == 1 { Ok(()) } else { Err(rusqlite::Error::QueryReturnedNoRows) }
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(rusqlite::Error::QueryReturnedNoRows)
+        }
     }
 
-    pub fn delete_price_alert(&self, code: &str, market: &str, alert_type: &str) -> SqliteResult<()> {
+    pub fn delete_price_alert(
+        &self,
+        code: &str,
+        market: &str,
+        alert_type: &str,
+    ) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        conn.execute("DELETE FROM price_alerts WHERE code=?1 AND market=?2 AND alert_type=?3", params![code, market, alert_type])?;
+        conn.execute(
+            "DELETE FROM price_alerts WHERE code=?1 AND market=?2 AND alert_type=?3",
+            params![code, market, alert_type],
+        )?;
         Ok(())
     }
 }
 
 fn price_alert_from_row(row: &rusqlite::Row<'_>) -> SqliteResult<PriceAlert> {
     Ok(PriceAlert {
-        id: row.get(0)?, code: row.get(1)?, market: row.get(2)?, alert_type: row.get(3)?,
-        threshold: row.get(4)?, enabled: row.get::<_, i64>(5)? != 0,
-        repeat_mode: row.get(6)?, cooldown_minutes: row.get(7)?,
-        last_triggered_at: row.get(8)?, last_triggered_day: row.get(9)?,
-        last_value: row.get(10)?, last_value_day: row.get(11)?,
+        id: row.get(0)?,
+        code: row.get(1)?,
+        market: row.get(2)?,
+        alert_type: row.get(3)?,
+        threshold: row.get(4)?,
+        enabled: row.get::<_, i64>(5)? != 0,
+        repeat_mode: row.get(6)?,
+        cooldown_minutes: row.get(7)?,
+        last_triggered_at: row.get(8)?,
+        last_triggered_day: row.get(9)?,
+        last_value: row.get(10)?,
+        last_value_day: row.get(11)?,
     })
 }
 

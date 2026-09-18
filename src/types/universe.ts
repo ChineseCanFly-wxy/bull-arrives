@@ -46,12 +46,15 @@ export interface SnapshotRow {
   pb: number;
   change_60d: number;
   change_ytd: number;
+  listing_date: string | null;
+  listed_days: number | null;
 
   board: Board;
   is_st: boolean;
   is_delisting: boolean;
   suspected_suspended: boolean;
   is_limit_locked: boolean;
+  is_cdr: boolean;
 }
 
 /** 用户可配置的筛选条件（对应 Rust `MarketFilter`）。数值为 null 表示不限制。 */
@@ -62,6 +65,10 @@ export interface MarketFilter {
   exclude_delisting: boolean;
   exclude_suspended: boolean;
   exclude_limit_locked: boolean;
+  exclude_cdr: boolean;
+
+  listed_days_min: number | null;
+  listed_days_max: number | null;
 
   price_min: number | null;
   price_max: number | null;
@@ -91,6 +98,14 @@ export interface MarketFilter {
   pb_max: number | null;
   /** 振幅上限 %（当日振幅，作为波动率代理） */
   amplitude_max: number | null;
+  above_ma_days: number | null;
+  new_high_days: number | null;
+  macd_bullish: boolean;
+  kdj_bullish: boolean;
+  volume_price_rising: boolean;
+  rise_from_low_days: number | null;
+  rise_from_low_min: number | null;
+  rise_from_low_max: number | null;
 }
 
 /** 板块分布项 */
@@ -114,6 +129,9 @@ export function createDefaultFilter(): MarketFilter {
     exclude_delisting: true,
     exclude_suspended: true,
     exclude_limit_locked: true,
+    exclude_cdr: false,
+    listed_days_min: null,
+    listed_days_max: null,
     price_min: null,
     price_max: null,
     market_cap_min_yi: null,
@@ -131,6 +149,14 @@ export function createDefaultFilter(): MarketFilter {
     pb_min: null,
     pb_max: null,
     amplitude_max: null,
+    above_ma_days: null,
+    new_high_days: null,
+    macd_bullish: false,
+    kdj_bullish: false,
+    volume_price_rising: false,
+    rise_from_low_days: null,
+    rise_from_low_min: null,
+    rise_from_low_max: null,
   };
 }
 
@@ -149,6 +175,9 @@ export interface PresetInfo {
   rule: string;
   /** 内置策略随版本维护，不允许改名 / 删除，只能「另存为」自己的副本 */
   builtin: boolean;
+  strategy_version_id: number | null;
+  strategy_version: number;
+  strategy_status: string;
 }
 
 /** `get_market_universe` 的返回 */
@@ -168,8 +197,11 @@ export interface UniverseResponse {
   volume_ratio_supported: boolean;
   /** 当前通道是否提供「60 日涨跌幅」；false 时依赖它的策略条件会被跳过 */
   change_60d_supported: boolean;
+  listing_date_supported: boolean;
   /** 因数据源不支持而被自动忽略的条件名（如 ["量比"]） */
   skipped_conditions: string[];
+  history_notice: string | null;
+  history_evaluated: number;
   board_counts: BoardCount[];
   rows: SnapshotRow[];
 }
@@ -296,11 +328,13 @@ export function summarizeFilterParts(filter: MarketFilter): string[] {
   if (filter.exclude_delisting) excludes.push('退市');
   if (filter.exclude_suspended) excludes.push('停牌');
   if (filter.exclude_limit_locked) excludes.push('一字板');
+  if (filter.exclude_cdr) excludes.push('存托凭证');
   parts.push(excludes.length ? `排除 ${excludes.join('/')}` : '不做排除');
 
   const ranges = [
     rangeText('价格', filter.price_min, filter.price_max, ' 元'),
     rangeText('市值', filter.market_cap_min_yi, filter.market_cap_max_yi, ' 亿'),
+    rangeText('上市天数', filter.listed_days_min, filter.listed_days_max, ' 天'),
     rangeText('换手率', filter.turnover_min, filter.turnover_max, '%'),
     rangeText('涨跌幅', filter.change_pct_min, filter.change_pct_max, '%', true),
     rangeText('60日涨跌幅', filter.change_60d_min, filter.change_60d_max, '%', true),
@@ -309,6 +343,18 @@ export function summarizeFilterParts(filter: MarketFilter): string[] {
     filter.volume_ratio_min == null ? null : `量比 ≥ ${filter.volume_ratio_min}`,
     filter.amplitude_max == null ? null : `振幅 ≤ ${filter.amplitude_max}%`,
     filter.amount_min_wan == null ? null : `成交额 ≥ ${wanText(filter.amount_min_wan)}`,
+    filter.above_ma_days == null ? null : `站上 MA${filter.above_ma_days}`,
+    filter.new_high_days == null ? null : `${filter.new_high_days} 日新高`,
+    filter.macd_bullish ? 'MACD 多头' : null,
+    filter.kdj_bullish ? 'KDJ 多头' : null,
+    filter.volume_price_rising ? '量价齐升' : null,
+    filter.rise_from_low_days == null ? null : rangeText(
+      `距${filter.rise_from_low_days}日低点`,
+      filter.rise_from_low_min,
+      filter.rise_from_low_max,
+      '%',
+      true,
+    ),
   ].filter((item): item is string => item !== null);
   parts.push(...(ranges.length ? ranges : ['不限数值区间']));
 

@@ -7,6 +7,7 @@ const SettingsDialog = defineAsyncComponent(() => import('@/components/settings/
 const UniverseScreenerDialog = defineAsyncComponent(() => import('@/components/screener/UniverseScreenerDialog.vue'));
 const MonitorDialog = defineAsyncComponent(() => import('@/components/monitor/MonitorDialog.vue'));
 const SectorDialog = defineAsyncComponent(() => import('@/components/sector/SectorDialog.vue'));
+const SimulationDialog = defineAsyncComponent(() => import('@/components/simulation/SimulationDialog.vue'));
 const RankDialog = defineAsyncComponent(() => import('@/components/rank/RankDialog.vue'));
 
 const settings = useSettingsStore();
@@ -47,6 +48,11 @@ const showSector = ref(false);
 function openSector() {
   showSector.value = true;
 }
+
+const showSimulation = ref(false);
+function openSimulation() {
+  showSimulation.value = true;
+}
 </script>
 
 <template>
@@ -73,6 +79,17 @@ function openSector() {
           </n-icon>
         </span>
       </n-dropdown>
+
+      <button
+        class="cog-btn"
+        aria-label="打开模拟账户"
+        title="模拟账户"
+        @click="openSimulation"
+      >
+        <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 15.5h14M4.5 13V8.5M8.2 13V5.5M11.8 13V9.5M15.5 13V3" />
+        </svg>
+      </button>
 
       <button
         class="cog-btn"
@@ -128,6 +145,7 @@ function openSector() {
     <UniverseScreenerDialog v-if="showScreener" v-model:show="showScreener" />
     <MonitorDialog v-if="showMonitor" v-model:show="showMonitor" />
     <SectorDialog v-if="showSector" v-model:show="showSector" />
+    <SimulationDialog v-if="showSimulation" v-model:show="showSimulation" />
     <RankDialog
       v-if="rank.visible && rank.activeFilter"
       :show="rank.visible"

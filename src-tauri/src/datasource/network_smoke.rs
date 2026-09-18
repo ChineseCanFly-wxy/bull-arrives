@@ -27,8 +27,13 @@ async fn sina_snapshot_returns_full_market() {
     for row in rows.iter().take(3) {
         println!(
             "  {} {} 价={} 涨跌={}% 成交额={} 换手={} 量比={}",
-            row.code, row.name, row.price, row.change_pct, row.amount,
-            row.turnover_rate, row.volume_ratio
+            row.code,
+            row.name,
+            row.price,
+            row.change_pct,
+            row.amount,
+            row.turnover_rate,
+            row.volume_ratio
         );
     }
     let mut counts = std::collections::BTreeMap::new();
@@ -36,7 +41,11 @@ async fn sina_snapshot_returns_full_market() {
         *counts.entry(row.board.label().to_string()).or_insert(0) += 1;
     }
     println!("板块分布: {counts:?}");
-    assert!(rows.len() > 3000, "全市场应超过 3000 只，实际 {}", rows.len());
+    assert!(
+        rows.len() > 3000,
+        "全市场应超过 3000 只，实际 {}",
+        rows.len()
+    );
 }
 
 /// 自动通道选择：至少有一个通道可用
@@ -127,7 +136,11 @@ async fn falls_back_when_preferred_channel_is_dead() {
     let result = eastmoney_universe::fetch_snapshot_auto(Some(SnapshotSource::Eastmoney)).await;
     match result {
         Ok((rows, source)) => {
-            println!("指定东财 -> 实际通道 = {} 行数 = {}", source.label(), rows.len());
+            println!(
+                "指定东财 -> 实际通道 = {} 行数 = {}",
+                source.label(),
+                rows.len()
+            );
             assert!(!rows.is_empty());
         }
         Err(error) => println!("两个通道都不可用（可接受，取决于网络）: {error}"),
@@ -202,7 +215,10 @@ async fn probe(client: &reqwest::Client, label: &str, url: &str) {
                 headers.get("content-encoding"),
                 headers.get("transfer-encoding")
             );
-            println!("  body 头部 = {:?}", &text.chars().take(180).collect::<String>());
+            println!(
+                "  body 头部 = {:?}",
+                &text.chars().take(180).collect::<String>()
+            );
         }
         Err(error) => println!("[{label}] 请求失败: {error}"),
     }

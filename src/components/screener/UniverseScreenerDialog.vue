@@ -134,6 +134,76 @@ const deleteDialog = ref(false);
 const deleteTarget = ref<PresetInfo | null>(null);
 const deleteBusy = ref(false);
 
+interface StrategyStage { stage: string; status: string; detail: string; checked_at: string }
+interface StrategyCard {
+  id: string; name: string; source: string; current_version: number; active_version_id: number | null;
+  version_id: number; status: string; rule: string; revision: number; updated_at: string; stages: StrategyStage[];
+}
+interface StrategyLibrary {
+  cards: StrategyCard[];
+  counts: { candidate: number; trial: number; rejected: number; active: number };
+}
+const strategyLibraryOpen = ref(false);
+const strategyLibrary = ref<StrategyLibrary | null>(null);
+const strategyLibraryLoading = ref(false);
+const strategyLibraryError = ref<string | null>(null);
+
+interface DynamicFilterProposal {
+  mode: 'advice'; state: 'observing'; auto_eligible: false; observation_days: number;
+  source: string; as_of: string; date_basis: string; filter: MarketFilter;
+  candidate_limit: number; preview_count: number; preview_codes: string[];
+  clamped_fields: string[]; rationale: string; guidance: string;
+}
+const dynamicProposal = ref<DynamicFilterProposal | null>(null);
+const dynamicLoading = ref(false);
+const dynamicError = ref<string | null>(null);
+
+async function generateDynamicProposal() {
+  if (dynamicLoading.value) return;
+  dynamicLoading.value = true;
+  dynamicError.value = null;
+  try {
+    dynamicProposal.value = await invoke<DynamicFilterProposal>('generate_dynamic_filter_proposal');
+  } catch (error) {
+    dynamicError.value = String(error);
+  } finally {
+    dynamicLoading.value = false;
+  }
+}
+
+function applyDynamicProposal() {
+  if (!dynamicProposal.value) return;
+  Object.assign(universe.filter, cloneFilterLocal(dynamicProposal.value.filter));
+  universe.markCustom();
+  strategyNotice.value = '已由你手动采用动态建议；生成建议本身不会修改真实设置。';
+}
+
+const strategyStatusLabel: Record<string, string> = {
+  candidate: '候选', trial: '试用', probation: '考核中', awaiting_confirmation: '待确认',
+  active: '在用', degraded: '已降级', paused: '已暂停', rejected: '淘汰', retired: '已退役', superseded: '已替换',
+};
+const stageLabel: Record<string, string> = {
+  static: '静态校验', causal: '因果审计', historical: '历史验证', admission: '前向前门禁',
+  forward: '实时前向', probation: '考核期',
+};
+
+async function loadStrategyLibrary() {
+  strategyLibraryLoading.value = true;
+  strategyLibraryError.value = null;
+  try {
+    strategyLibrary.value = await invoke<StrategyLibrary>('strategy_library');
+  } catch (error) {
+    strategyLibraryError.value = String(error);
+  } finally {
+    strategyLibraryLoading.value = false;
+  }
+}
+
+function openStrategyLibrary() {
+  strategyLibraryOpen.value = true;
+  void loadStrategyLibrary();
+}
+
 /** 请求删除：先记住目标，再开确认框（删错了没法恢复，必须问一句） */
 function askDeleteStrategy(preset: PresetInfo) {
   deleteTarget.value = preset;
@@ -788,6 +858,12 @@ function num(value: number, digits = 2): string {
   return Number.isFinite(value) ? value.toFixed(digits) : '-';
 }
 
+function setListedDays(max: number | null) {
+  universe.filter.listed_days_min = null;
+  universe.filter.listed_days_max = max;
+  universe.markCustom();
+}
+
 // 虚拟滚动要求提供 row-key；模板里不能写 TS 类型注解，所以放在 script 中
 function rowKey(row: SnapshotRow): string {
   return row.code;
@@ -866,6 +942,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
         return h('span', { class: 'muted' }, statusLoading.value ? '计算中' : '--');
       }
       if (item.ready === true) {
+        const history = item.history ? `；${item.history.source_label} ${item.history.start_date ?? '—'}→${item.history.end_date ?? '—'}，${item.history.bars}根` : '';
         const range =
           item.buy_low != null && item.buy_high != null
             ? `，买入区间 ${num(item.buy_low)}–${num(item.buy_high)}`
@@ -874,17 +951,18 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
           'span',
           {
             class: 'entry-ok',
-            title: `当前满足「${tradeRuleLabel(activeRule.value)}」的入场条件${range}`,
+            title: `当前满足「${tradeRuleLabel(activeRule.value)}」的入场条件${range}${history}`,
           },
           '满足',
         );
       }
       if (item.ready === false) {
+        const history = item.history ? `；${item.history.source_label} ${item.history.bars}根` : '';
         return h(
           'span',
           {
             class: 'entry-no',
-            title: item.waiting_for ? `当前未触发：${item.waiting_for}` : '当前未触发',
+            title: (item.waiting_for ? `当前未触发：${item.waiting_for}` : '当前未触发') + history,
           },
           '未触发',
         );
@@ -938,6 +1016,14 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     key: 'board',
     width: 86,
     render: row => h('span', { class: 'muted' }, BOARD_LABELS[row.board] ?? row.board),
+  },
+  {
+    title: '上市天数',
+    key: 'listed_days',
+    width: 84,
+    align: 'right',
+    sorter: (a, b) => (a.listed_days ?? -1) - (b.listed_days ?? -1),
+    render: row => h('span', { class: 'num mono', title: row.listing_date ?? '当前数据源未提供' }, row.listed_days == null ? '--' : `${row.listed_days}天`),
   },
   {
     // 「加自选 / 分析」固定在右侧：这张表 13 列、横向要滚，
@@ -1007,7 +1093,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
             :title="`${preset.description}\n\n条件：${summarizeFilter(preset.filter)}\n交易规则：${tradeRuleLabel(preset.rule)}`"
           >
             <button class="preset-chip-label" @click="universe.applyPreset(preset.id)">
-              {{ preset.label }}
+              {{ preset.label }}<sup v-if="preset.strategy_version">v{{ preset.strategy_version }}</sup>
             </button>
             <n-dropdown
               trigger="click"
@@ -1025,6 +1111,12 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
             @click="openCreateStrategy"
           >
             ＋ 新建策略
+          </button>
+          <button class="chip" title="查看策略版本、验证门禁和生命周期" @click="openStrategyLibrary">
+            策略闭环
+          </button>
+          <button class="chip" title="仅生成隔离建议，不自动修改当前筛选条件" :disabled="dynamicLoading" @click="generateDynamicProposal">
+            {{ dynamicLoading ? 'Agent 生成中…' : '动态参数建议' }}
           </button>
 
           <button
@@ -1067,6 +1159,13 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
         {{ strategyNotice }}
         <button class="link-btn" @click="strategyNotice = null">知道了</button>
       </div>
+      <div v-if="dynamicError" class="notice-line chip-error">动态建议失败：{{ dynamicError }}</div>
+      <div v-if="dynamicProposal" class="dynamic-advice">
+        <div><b>动态参数 · 仅建议</b><span>{{ dynamicProposal.as_of }} · 候选 {{ dynamicProposal.preview_count }}/{{ dynamicProposal.candidate_limit }}</span></div>
+        <p>{{ dynamicProposal.rationale }}</p>
+        <small>{{ dynamicProposal.guidance }}<template v-if="dynamicProposal.clamped_fields.length"> 已夹限：{{ dynamicProposal.clamped_fields.join('、') }}</template></small>
+        <n-button size="tiny" type="primary" secondary @click="applyDynamicProposal">由我手动采用</n-button>
+      </div>
 
       <!-- 筛选条件 -->
       <div v-show="!filterCollapsed" class="filter-panel">
@@ -1084,10 +1183,21 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
             <n-checkbox v-model:checked="universe.filter.exclude_delisting" @update:checked="universe.markCustom">退市</n-checkbox>
             <n-checkbox v-model:checked="universe.filter.exclude_suspended" @update:checked="universe.markCustom">停牌</n-checkbox>
             <n-checkbox v-model:checked="universe.filter.exclude_limit_locked" @update:checked="universe.markCustom">一字板</n-checkbox>
+            <n-checkbox v-model:checked="universe.filter.exclude_cdr" @update:checked="universe.markCustom">存托凭证</n-checkbox>
           </div>
         </div>
 
         <div class="ranges">
+          <div class="range">
+            <span class="range-label">上市天数</span>
+            <n-input-number v-model:value="universe.filter.listed_days_min" size="small" :show-button="false" :precision="0" :min="0" :disabled="!universe.listingDateSupported" placeholder="不限" clearable @update:value="universe.markCustom" />
+            <span class="tilde">~</span>
+            <n-input-number v-model:value="universe.filter.listed_days_max" size="small" :show-button="false" :precision="0" :min="0" :disabled="!universe.listingDateSupported" placeholder="不限" clearable @update:value="universe.markCustom" />
+            <n-button size="tiny" quaternary :disabled="!universe.listingDateSupported" @click="setListedDays(30)">新股</n-button>
+            <n-button size="tiny" quaternary :disabled="!universe.listingDateSupported" @click="setListedDays(365)">次新</n-button>
+            <n-button size="tiny" quaternary @click="setListedDays(null)">不限</n-button>
+          </div>
+
           <div class="range">
             <span class="range-label">价格(元)</span>
             <n-input-number v-model:value="universe.filter.price_min" size="small" :show-button="false" placeholder="不限" clearable @update:value="universe.markCustom" />
@@ -1179,6 +1289,33 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
             <span class="range-label">成交额 ≥(万)</span>
             <n-input-number v-model:value="universe.filter.amount_min_wan" size="small" :show-button="false" placeholder="不限" clearable @update:value="universe.markCustom" />
           </div>
+
+          <div class="range">
+            <span class="range-label" title="快照粗筛后，仅对成交额前 120 只候选读取本地历史">站上均线 MA</span>
+            <n-input-number v-model:value="universe.filter.above_ma_days" size="small" :show-button="false" :precision="0" :min="2" :max="250" placeholder="日数" clearable @update:value="universe.markCustom" />
+          </div>
+
+          <div class="range">
+            <span class="range-label">N 日新高</span>
+            <n-input-number v-model:value="universe.filter.new_high_days" size="small" :show-button="false" :precision="0" :min="2" :max="250" placeholder="日数" clearable @update:value="universe.markCustom" />
+          </div>
+
+          <div class="range">
+            <span class="range-label">距低点涨幅</span>
+            <n-input-number v-model:value="universe.filter.rise_from_low_days" size="small" :show-button="false" :precision="0" :min="2" :max="250" placeholder="日数" clearable @update:value="universe.markCustom" />
+            <n-input-number v-model:value="universe.filter.rise_from_low_min" size="small" :show-button="false" placeholder="最小%" clearable @update:value="universe.markCustom" />
+            <span class="tilde">~</span>
+            <n-input-number v-model:value="universe.filter.rise_from_low_max" size="small" :show-button="false" placeholder="最大%" clearable @update:value="universe.markCustom" />
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="field-label" title="仅使用本地历史；本地不可用时自动跳过并提示">历史技术</span>
+          <div class="checks">
+            <n-checkbox v-model:checked="universe.filter.macd_bullish" @update:checked="universe.markCustom">MACD 多头</n-checkbox>
+            <n-checkbox v-model:checked="universe.filter.kdj_bullish" @update:checked="universe.markCustom">KDJ 多头</n-checkbox>
+            <n-checkbox v-model:checked="universe.filter.volume_price_rising" @update:checked="universe.markCustom">量价齐升</n-checkbox>
+          </div>
         </div>
       </div>
 
@@ -1268,6 +1405,9 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
         当前数据源（{{ universe.sourceLabel }}）不提供「{{ universe.skippedConditions.join('、') }}」，
         该条件已自动忽略。需要它请把左上角数据源切到「东方财富」。
       </div>
+      <div v-if="universe.hasLoaded && universe.historyNotice" class="notice-line">
+        {{ universe.historyNotice }}
+      </div>
 
       <div v-if="statusError" class="notice-line">{{ statusError }}</div>
 
@@ -1321,6 +1461,40 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
       title="拖动调整窗口大小（会自动记住）"
       @pointerdown.prevent="startResize"
     />
+  </n-modal>
+
+  <n-modal
+    v-model:show="strategyLibraryOpen"
+    preset="card"
+    title="策略闭环"
+    :style="{ width: 'min(900px, calc(100vw - 24px))' }"
+    :bordered="false"
+  >
+    <div class="strategy-library-summary">
+      <n-tag>候选 {{ strategyLibrary?.counts.candidate ?? 0 }}</n-tag>
+      <n-tag type="warning">试用 {{ strategyLibrary?.counts.trial ?? 0 }}</n-tag>
+      <n-tag type="error">淘汰 {{ strategyLibrary?.counts.rejected ?? 0 }}</n-tag>
+      <n-tag type="success">在用 {{ strategyLibrary?.counts.active ?? 0 }}</n-tag>
+      <n-button size="tiny" tertiary :loading="strategyLibraryLoading" @click="loadStrategyLibrary">刷新</n-button>
+    </div>
+    <div v-if="strategyLibraryError" class="error-line">{{ strategyLibraryError }}</div>
+    <p class="notice-line">策略修改会生成新版本，旧版本、验证和状态历史不删除。未通过历史硬门禁、前向和考核期时不能确认采用。</p>
+    <div class="strategy-library-list">
+      <details v-for="card in strategyLibrary?.cards ?? []" :key="card.version_id" class="strategy-card-row">
+        <summary>
+          <b>{{ card.name }}</b>
+          <span>v{{ card.current_version }} · {{ tradeRuleLabel(card.rule) }}</span>
+          <n-tag size="small" :type="card.status === 'active' ? 'success' : card.status === 'rejected' || card.status === 'retired' ? 'error' : 'warning'">
+            {{ strategyStatusLabel[card.status] ?? card.status }}
+          </n-tag>
+        </summary>
+        <div v-for="stage in card.stages" :key="stage.stage" class="strategy-stage" :class="stage.status">
+          {{ stage.status === 'passed' ? '✓' : stage.status === 'failed' ? '✕' : '•' }}
+          {{ stageLabel[stage.stage] ?? stage.stage }}：{{ stage.detail }}
+        </div>
+      </details>
+      <div v-if="!strategyLibraryLoading && !strategyLibrary?.cards.length" class="empty-line">暂无策略版本</div>
+    </div>
   </n-modal>
 
   <AnalysisDialog
@@ -1594,6 +1768,15 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 .preset-chip.active .preset-chip-more {
   color: var(--color-accent);
 }
+.preset-chip-label sup { margin-left: 3px; color: var(--color-text-tertiary); font-size: 9px; }
+.strategy-library-summary { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.strategy-library-list { display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow: auto; }
+.strategy-card-row { border: 1px solid var(--color-border-0); border-radius: var(--radius-sm); padding: 8px 10px; }
+.strategy-card-row summary { cursor: pointer; display: flex; gap: 10px; align-items: center; }
+.strategy-card-row summary span { color: var(--color-text-secondary); }
+.strategy-stage { margin: 7px 0 0 14px; color: var(--color-text-secondary); font-size: var(--text-xs); line-height: 1.5; }
+.strategy-stage.passed { color: var(--color-down); }
+.strategy-stage.failed, .strategy-stage.blocked { color: var(--color-error); }
 /* 自建策略加一个小圆点，和内置策略区分开 */
 .preset-chip.mine .preset-chip-label::after {
   content: '';
@@ -1811,6 +1994,8 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
   font-size: var(--text-xs);
   line-height: 1.55;
 }
+.dynamic-advice { display:grid;grid-template-columns:1fr auto;gap:6px 12px;padding:10px 12px;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface-1); }
+.dynamic-advice div,.dynamic-advice p,.dynamic-advice small{grid-column:1}.dynamic-advice div{display:flex;justify-content:space-between;gap:12px}.dynamic-advice p{margin:0}.dynamic-advice small{color:var(--color-text-secondary)}.dynamic-advice .n-button{grid-column:2;grid-row:1/4;align-self:center}
 
 /* ── 结果表 ── */
 .table-wrap {

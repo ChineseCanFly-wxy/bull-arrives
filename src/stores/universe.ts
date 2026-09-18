@@ -68,6 +68,9 @@ const FALLBACK_PRESETS: PresetInfo[] = (() => {
     rule,
     filter: { ...createDefaultFilter(), ...patch },
     builtin: true,
+    strategy_version_id: null,
+    strategy_version: 0,
+    strategy_status: 'unavailable',
   });
   return [
     entry('all', '全部', '仅做基础排除（ST/退市/停牌/一字板/B股），不限数值区间', 'trend_follow', {}),
@@ -128,6 +131,9 @@ function safeParseFilter(raw: string): MarketFilter | null {
       exclude_delisting: typeof obj.exclude_delisting === 'boolean' ? obj.exclude_delisting : d.exclude_delisting,
       exclude_suspended: typeof obj.exclude_suspended === 'boolean' ? obj.exclude_suspended : d.exclude_suspended,
       exclude_limit_locked: typeof obj.exclude_limit_locked === 'boolean' ? obj.exclude_limit_locked : d.exclude_limit_locked,
+      exclude_cdr: typeof obj.exclude_cdr === 'boolean' ? obj.exclude_cdr : d.exclude_cdr,
+      listed_days_min: numOrNull(obj.listed_days_min),
+      listed_days_max: numOrNull(obj.listed_days_max),
       price_min: numOrNull(obj.price_min),
       price_max: numOrNull(obj.price_max),
       market_cap_min_yi: numOrNull(obj.market_cap_min_yi),
@@ -145,6 +151,14 @@ function safeParseFilter(raw: string): MarketFilter | null {
       pb_min: numOrNull(obj.pb_min),
       pb_max: numOrNull(obj.pb_max),
       amplitude_max: numOrNull(obj.amplitude_max),
+      above_ma_days: numOrNull(obj.above_ma_days),
+      new_high_days: numOrNull(obj.new_high_days),
+      macd_bullish: typeof obj.macd_bullish === 'boolean' ? obj.macd_bullish : d.macd_bullish,
+      kdj_bullish: typeof obj.kdj_bullish === 'boolean' ? obj.kdj_bullish : d.kdj_bullish,
+      volume_price_rising: typeof obj.volume_price_rising === 'boolean' ? obj.volume_price_rising : d.volume_price_rising,
+      rise_from_low_days: numOrNull(obj.rise_from_low_days),
+      rise_from_low_min: numOrNull(obj.rise_from_low_min),
+      rise_from_low_max: numOrNull(obj.rise_from_low_max),
     };
   } catch {
     return null;
@@ -175,8 +189,11 @@ export const useUniverseStore = defineStore('universe', () => {
   const volumeRatioSupported = ref(true);
   /** 当前通道是否提供「60 日涨跌幅」。false 时趋势/反转类策略的条件会被跳过 */
   const change60dSupported = ref(true);
+  const listingDateSupported = ref(true);
   /** 被数据源不支持而自动忽略的条件名 */
   const skippedConditions = ref<string[]>([]);
+  const historyNotice = ref<string | null>(null);
+  const historyEvaluated = ref(0);
   /** 用户选择的取数通道（持久化在 settings） */
   const sourceMode = ref<SourceMode>('auto');
   /** 结果表每页条数（1–100），持久化在 settings */
@@ -365,6 +382,7 @@ export const useUniverseStore = defineStore('universe', () => {
       next.exclude_delisting = current.exclude_delisting;
       next.exclude_suspended = current.exclude_suspended;
       next.exclude_limit_locked = current.exclude_limit_locked;
+      next.exclude_cdr = current.exclude_cdr;
     }
     filter.value = next;
     activePresetId.value = id;
@@ -649,7 +667,10 @@ export const useUniverseStore = defineStore('universe', () => {
     sourceLabel.value = response.source_label;
     volumeRatioSupported.value = response.volume_ratio_supported;
     change60dSupported.value = response.change_60d_supported;
+    listingDateSupported.value = response.listing_date_supported;
     skippedConditions.value = response.skipped_conditions;
+    historyNotice.value = response.history_notice;
+    historyEvaluated.value = response.history_evaluated;
   }
 
   return {
@@ -669,7 +690,10 @@ export const useUniverseStore = defineStore('universe', () => {
     sourceLabel,
     volumeRatioSupported,
     change60dSupported,
+    listingDateSupported,
     skippedConditions,
+    historyNotice,
+    historyEvaluated,
     sourceMode,
     pageSize,
     presetsError,

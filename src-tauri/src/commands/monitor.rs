@@ -43,9 +43,10 @@ pub async fn save_monitor(
     name: String,
     enabled: Option<bool>,
 ) -> Result<Monitor, String> {
-    let klines = crate::datasource::kline::fetch_daily_kline(&code, 120)
+    let klines = crate::datasource::kline::fetch_history(&db, &code, Some(120), true)
         .await
-        .map_err(|e| format!("拉取日K失败：{e}"))?;
+        .map_err(|e| format!("拉取日K失败：{e}"))?
+        .klines;
 
     let reference_price = klines
         .last()
@@ -113,7 +114,10 @@ pub fn set_monitor_enabled(
         .set_monitor_enabled(&code, &market, enabled)
         .map_err(|e| e.to_string())?;
     if !changed {
-        return Err(format!("没有找到 {code} 的监控规则，无法{}", if enabled { "恢复" } else { "停止" }));
+        return Err(format!(
+            "没有找到 {code} 的监控规则，无法{}",
+            if enabled { "恢复" } else { "停止" }
+        ));
     }
     Ok(())
 }

@@ -30,9 +30,23 @@
 //! - 返回裸数组：`[{day, open, high, low, close, volume}]`
 //! - `volume` 单位是**股**，换算成手要 ÷100
 
-use std::time::Duration;
+use std::{
+    collections::BTreeMap,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 
+use crate::db::Database;
+use crate::domain::HistoryMeta;
 use crate::domain::KLineData;
+
+#[derive(Debug, Clone)]
+pub struct HistoryData {
+    pub klines: Vec<KLineData>,
+    /// 与 `klines` 同日期的未复权日 K；仅本地 stockdb 能提供。
+    pub raw_klines: Option<Vec<KLineData>>,
+    pub meta: HistoryMeta,
+}
 
 /// 单次请求超时
 const KLINE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -53,6 +67,9 @@ const TENCENT_URL: &str = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
 /// 新浪日K（不复权）
 const SINA_URL: &str =
     "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData";
+
+/// 上证指数实际日线充当交易日历；成功结果缓存 6 小时，避免每只股票重复探测。
+static TRADING_CALENDAR: OnceLock<tokio::sync::Mutex<Option<(Instant, String)>>> = OnceLock::new();
 
 /// 哪个通道最终提供了数据（供日志与 UI 提示）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -104,6 +121,10 @@ fn val_str(v: &serde_json::Value) -> String {
 
 /// 解析腾讯日K。行格式 `[日期, 开, 收, 高, 低, 量]`。
 pub fn parse_tencent(text: &str, symbol: &str) -> Result<Vec<KLineData>, String> {
+    parse_tencent_mode(text, symbol, true)
+}
+
+fn parse_tencent_mode(text: &str, symbol: &str, allow_raw: bool) -> Result<Vec<KLineData>, String> {
     let json: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("腾讯日K JSON 解析失败: {e}"))?;
     let node = json
@@ -114,9 +135,16 @@ pub fn parse_tencent(text: &str, symbol: &str) -> Result<Vec<KLineData>, String>
     // 前复权优先；北交所等标的只返回不复权的 `day`
     let arr = node
         .get("qfqday")
-        .or_else(|| node.get("day"))
+        .or_else(|| allow_raw.then(|| node.get("day")).flatten())
         .and_then(|v| v.as_array())
-        .ok_or_else(|| "腾讯日K返回中无 qfqday/day 数组".to_string())?;
+        .ok_or_else(|| {
+            if allow_raw {
+                "腾讯日K返回中无 qfqday/day 数组"
+            } else {
+                "腾讯日K未提供前复权 qfqday"
+            }
+            .to_string()
+        })?;
 
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
@@ -201,6 +229,25 @@ async fn tencent_daily(
     parse_tencent(&text, symbol)
 }
 
+async fn tencent_daily_qfq(
+    client: &reqwest::Client,
+    symbol: &str,
+    count: u32,
+) -> Result<Vec<KLineData>, String> {
+    let url = format!("{TENCENT_URL}?param={symbol},day,,,{count},qfq");
+    let text = client
+        .get(&url)
+        .header("Referer", "https://gu.qq.com/")
+        .timeout(KLINE_TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {e}"))?
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {e}"))?;
+    parse_tencent_mode(&text, symbol, false)
+}
+
 async fn sina_daily(
     client: &reqwest::Client,
     symbol: &str,
@@ -241,7 +288,9 @@ fn keep_best(
         return None;
     }
     let enough = rows.len() >= MIN_USABLE_BARS;
-    let better = best.as_ref().map_or(true, |(cur, _)| rows.len() > cur.len());
+    let better = best
+        .as_ref()
+        .map_or(true, |(cur, _)| rows.len() > cur.len());
     if better {
         *best = Some((rows, source));
     }
@@ -314,10 +363,265 @@ pub async fn fetch_daily_kline_with_source(
     ))
 }
 
+/// 量化/回测专用的在线后路：只接受明确的前复权结果。
+/// 新浪和腾讯 `day` 都是未复权，能画图但不能静默进入回测。
+pub async fn fetch_qfq_daily_kline_with_source(
+    symbol: &str,
+    count: u32,
+) -> Result<(Vec<KLineData>, KlineSource), String> {
+    let count = count.clamp(1, MAX_COUNT);
+    let client = crate::datasource::eastmoney_universe::universe_client();
+    let mut errors = Vec::new();
+    let mut best = None;
+    match tencent_daily_qfq(client, symbol, count).await {
+        Ok(rows) => {
+            if let Some(hit) = keep_best(&mut best, rows, KlineSource::Tencent) {
+                return Ok(hit);
+            }
+        }
+        Err(error) => errors.push(format!("腾讯前复权：{error}")),
+    }
+    match crate::datasource::eastmoney_kline::fetch_daily_kline(symbol, count).await {
+        Ok(rows) => {
+            if let Some(hit) = keep_best(&mut best, rows, KlineSource::Eastmoney) {
+                return Ok(hit);
+            }
+        }
+        Err(error) => errors.push(format!("东方财富前复权：{error}")),
+    }
+    best.ok_or_else(|| format!("前复权日K获取失败：{}", errors.join("；")))
+}
+
+fn history_config(
+    db: &Database,
+) -> Result<Option<crate::datasource::history::LocalHistoryConfig>, String> {
+    let enabled = db
+        .get_setting("local_history_enabled")
+        .map_err(|e| e.to_string())?
+        .as_deref()
+        != Some("0");
+    if !enabled {
+        return Ok(None);
+    }
+    let url = db
+        .get_setting("local_history_url")
+        .map_err(|e| e.to_string())?
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:7899".to_string());
+    Ok(Some(crate::datasource::history::LocalHistoryConfig::new(
+        url,
+    )))
+}
+
+/// 批量历史任务的单次可用性探测。先探测再扇出，避免本地服务停掉时让
+/// 120 个候选各自等待连接超时。
+pub async fn probe_local_history(db: &Database) -> Result<(), String> {
+    let config = history_config(db)?.ok_or_else(|| "本地历史数据已关闭".to_string())?;
+    crate::datasource::history::probe(&config).await.map(|_| ())
+}
+
+fn lag_warning(end_date: Option<&str>) -> Option<String> {
+    let end =
+        end_date.and_then(|value| chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").ok())?;
+    let days = (chrono::Local::now().date_naive() - end).num_days();
+    (days > 10).then(|| format!("本地历史数据截止到 {end}，可能尚未更新"))
+}
+
+fn latest_closed_date_at(rows: &[KLineData], now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+    let offset = chrono::FixedOffset::east_opt(8 * 3600).expect("UTC+8 is valid");
+    let local = now.with_timezone(&offset);
+    let today = local.date_naive().format("%Y-%m-%d").to_string();
+    let include_today =
+        local.time() >= chrono::NaiveTime::from_hms_opt(15, 10, 0).expect("15:10 is valid");
+    rows.iter()
+        .map(|row| row.date.as_str())
+        .filter(|date| *date < today.as_str() || (include_today && *date == today.as_str()))
+        .max()
+        .map(str::to_owned)
+}
+
+async fn latest_closed_trading_date() -> Result<String, String> {
+    let cache = TRADING_CALENDAR.get_or_init(|| tokio::sync::Mutex::new(None));
+    let mut guard = cache.lock().await;
+    if let Some((fetched_at, date)) = guard.as_ref() {
+        if fetched_at.elapsed() < Duration::from_secs(6 * 60 * 60) {
+            return Ok(date.clone());
+        }
+    }
+    let (rows, source) = fetch_qfq_daily_kline_with_source("sh000001", 120).await?;
+    let date = latest_closed_date_at(&rows, chrono::Utc::now())
+        .ok_or_else(|| "交易日历没有已收盘日期".to_string())?;
+    log::info!("交易日历更新至 {date}（{}）", source.label());
+    *guard = Some((Instant::now(), date.clone()));
+    Ok(date)
+}
+
+fn merge_daily_unique(local: Vec<KLineData>, online: Vec<KLineData>) -> (Vec<KLineData>, usize) {
+    let local_len = local.len();
+    let mut by_date: BTreeMap<String, KLineData> = local
+        .into_iter()
+        .map(|row| (row.date.clone(), row))
+        .collect();
+    for row in online {
+        // 本地历史口径优先；在线只补不存在的日期。
+        by_date.entry(row.date.clone()).or_insert(row);
+    }
+    let rows: Vec<_> = by_date.into_values().collect();
+    let added = rows.len().saturating_sub(local_len);
+    (rows, added)
+}
+
+/// 统一历史入口。单股允许在线短区间后路；批量任务必须传 `allow_online=false`，
+/// 防止本地不可用时退化成全市场逐只联网。
+pub async fn fetch_history(
+    db: &Database,
+    symbol: &str,
+    count: Option<usize>,
+    allow_online: bool,
+) -> Result<HistoryData, String> {
+    let local = history_config(db)?;
+    let local_error = if let Some(config) = local {
+        match crate::datasource::history::fetch_daily(&config, symbol, None, None).await {
+            Ok(mut result) if !result.klines.is_empty() => {
+                let mut raw_klines = result.raw_klines;
+                let mut source_label = "本地 stockdb".to_string();
+                let mut warning = None;
+                if allow_online {
+                    match latest_closed_trading_date().await {
+                        Ok(latest)
+                            if result
+                                .end_date
+                                .as_deref()
+                                .is_some_and(|end| end < latest.as_str()) =>
+                        {
+                            match fetch_qfq_daily_kline_with_source(symbol, 120).await {
+                                Ok((online, source)) => {
+                                    let end = result.end_date.as_deref().unwrap_or_default();
+                                    let online = online
+                                        .into_iter()
+                                        .filter(|row| {
+                                            row.date.as_str() > end
+                                                && row.date.as_str() <= latest.as_str()
+                                        })
+                                        .collect();
+                                    let (merged, added) = merge_daily_unique(result.klines, online);
+                                    result.klines = merged;
+                                    if added > 0 {
+                                        source_label =
+                                            format!("本地 stockdb + {}增量", source.label());
+                                    }
+                                }
+                                Err(error) => {
+                                    warning = Some(format!("在线日线增量更新失败：{error}"))
+                                }
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            warning = Some(format!("交易日历不可用，未检查在线增量：{error}"))
+                        }
+                    }
+                }
+                if let Some(limit) = count {
+                    if result.klines.len() > limit {
+                        result.klines.drain(..result.klines.len() - limit);
+                    }
+                }
+                let kept_dates: std::collections::HashSet<_> =
+                    result.klines.iter().map(|row| row.date.as_str()).collect();
+                raw_klines.retain(|row| kept_dates.contains(row.date.as_str()));
+                let start_date = result.klines.first().map(|row| row.date.clone());
+                let end_date = result.klines.last().map(|row| row.date.clone());
+                warning = warning.or_else(|| lag_warning(end_date.as_deref()));
+                let stale = warning.is_some();
+                let bars = result.klines.len();
+                return Ok(HistoryData {
+                    klines: result.klines,
+                    raw_klines: Some(raw_klines),
+                    meta: HistoryMeta {
+                        source: "local_stockdb".into(),
+                        source_label,
+                        start_date,
+                        end_date,
+                        bars,
+                        adjustment: "qfq".into(),
+                        stale,
+                        warning,
+                    },
+                });
+            }
+            Ok(_) => Some("本地历史数据为空".to_string()),
+            Err(error) => Some(error),
+        }
+    } else {
+        Some("本地历史数据已关闭".to_string())
+    };
+
+    if !allow_online {
+        return Err(format!(
+            "{}；批量任务不会逐只回退在线历史",
+            local_error.unwrap_or_else(|| "本地历史不可用".into())
+        ));
+    }
+    let online_count = count.unwrap_or(MAX_COUNT as usize).min(MAX_COUNT as usize) as u32;
+    let (klines, source) = fetch_qfq_daily_kline_with_source(symbol, online_count).await?;
+    let start_date = klines.first().map(|row| row.date.clone());
+    let end_date = klines.last().map(|row| row.date.clone());
+    let bars = klines.len();
+    Ok(HistoryData {
+        klines,
+        raw_klines: None,
+        meta: HistoryMeta {
+            source: "online".into(),
+            source_label: source.label().into(),
+            start_date,
+            end_date,
+            bars,
+            adjustment: "qfq".into(),
+            stale: false,
+            warning: local_error.map(|error| format!("本地历史不可用，已回退在线短区间：{error}")),
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::datasource::eastmoney_universe::Board;
+    use chrono::TimeZone;
+
+    fn bar(date: &str, close: f64) -> KLineData {
+        KLineData {
+            date: date.into(),
+            open: close,
+            high: close,
+            low: close,
+            close,
+            volume: 1,
+            turnover: 0.0,
+        }
+    }
+
+    #[test]
+    fn calendar_skips_unclosed_day_and_increment_merge_deduplicates_dates() {
+        let calendar = vec![bar("2026-09-17", 1.0), bar("2026-09-18", 2.0)];
+        let before_close = chrono::Utc
+            .with_ymd_and_hms(2026, 9, 18, 6, 0, 0)
+            .single()
+            .unwrap();
+        assert_eq!(
+            latest_closed_date_at(&calendar, before_close).as_deref(),
+            Some("2026-09-17")
+        );
+
+        let (merged, added) = merge_daily_unique(
+            vec![bar("2026-09-17", 10.0)],
+            vec![bar("2026-09-17", 99.0), bar("2026-09-18", 11.0)],
+        );
+        assert_eq!(added, 1);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].close, 10.0, "重复日期应保留本地口径");
+    }
 
     #[test]
     fn parses_tencent_qfqday_in_open_close_high_low_order() {
@@ -347,6 +651,15 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!((rows[0].close - 13.55).abs() < 1e-9);
         assert_eq!(rows[0].volume, 5428);
+    }
+
+    #[test]
+    fn quant_history_rejects_unadjusted_tencent_day() {
+        let text = r#"{"code":0,"data":{"bj920000":{
+            "day":[["2026-09-11","13.88","13.55","13.96","13.49","5428"]]}}}"#;
+        assert!(parse_tencent_mode(text, "bj920000", false)
+            .unwrap_err()
+            .contains("前复权"));
     }
 
     #[test]
@@ -425,5 +738,75 @@ mod tests {
         let kept = best.unwrap();
         assert_eq!(kept.1, KlineSource::Tencent);
         assert_eq!(kept.0.len(), 3);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local stockdb and public qfq endpoints"]
+    async fn local_history_is_deeper_and_matches_online_samples() {
+        let config = crate::datasource::history::LocalHistoryConfig::new("http://127.0.0.1:7899");
+        for (symbol, require_deeper) in [
+            ("sh600519", true),
+            ("sz000001", true),
+            ("sh600000", true),
+            ("bj920000", false),
+        ] {
+            let local = crate::datasource::history::fetch_daily(&config, symbol, None, None)
+                .await
+                .unwrap_or_else(|error| panic!("{symbol} local: {error}"));
+            let (online, source) = if require_deeper {
+                fetch_qfq_daily_kline_with_source(symbol, MAX_COUNT).await
+            } else {
+                fetch_daily_kline_with_source(symbol, MAX_COUNT).await
+            }
+            .unwrap_or_else(|error| panic!("{symbol} online: {error}"));
+            if require_deeper {
+                assert!(
+                    local.klines.len() > online.len(),
+                    "{symbol}: local={} online={}",
+                    local.klines.len(),
+                    online.len()
+                );
+            }
+            let pair = online
+                .iter()
+                .rev()
+                .find_map(|right| {
+                    local
+                        .klines
+                        .iter()
+                        .rev()
+                        .find(|left| left.date == right.date)
+                        .map(|left| (left, right))
+                })
+                .unwrap_or_else(|| panic!("{symbol}: no overlapping date"));
+            let price_tolerance = (pair.1.close * 0.002).max(0.02);
+            for (left, right) in [
+                (pair.0.open, pair.1.open),
+                (pair.0.high, pair.1.high),
+                (pair.0.low, pair.1.low),
+                (pair.0.close, pair.1.close),
+            ] {
+                assert!(
+                    (left - right).abs() <= price_tolerance,
+                    "{symbol} {} price mismatch: {left} vs {right}",
+                    pair.0.date
+                );
+            }
+            let volume_delta = pair.0.volume.abs_diff(pair.1.volume) as f64;
+            assert!(
+                volume_delta <= (pair.1.volume as f64 * 0.03).max(1.0),
+                "{symbol} {} volume mismatch: {} vs {}",
+                pair.0.date,
+                pair.0.volume,
+                pair.1.volume
+            );
+            eprintln!(
+                "{symbol}: local={} online={} ({:?}), sample={}",
+                local.klines.len(),
+                online.len(),
+                source,
+                pair.0.date
+            );
+        }
     }
 }

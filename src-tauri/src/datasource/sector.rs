@@ -27,6 +27,12 @@ const MEMBER_HOSTS: [&str; 6] = [
     "https://push2.eastmoney.com",
     "https://82.push2.eastmoney.com",
 ];
+const KLINE_HOSTS: [&str; 3] = [
+    "https://push2his.eastmoney.com",
+    "https://17.push2his.eastmoney.com",
+    "https://91.push2his.eastmoney.com",
+];
+const ROTATION_HOST: &str = "https://push2delay.eastmoney.com";
 const UT_TOKEN: &str = "bd1d9ddb04089700cf9c27f6f7426281";
 const PAGE_SIZE: u32 = 100;
 const MAX_PAGES: u32 = 20;
@@ -79,6 +85,15 @@ pub struct SectorSummary {
     pub down_count: Option<u32>,
     pub leader_name: Option<String>,
     pub leader_change_pct: Option<f64>,
+    pub change_pct_3d: Option<f64>,
+    pub change_pct_5d: Option<f64>,
+    pub change_pct_10d: Option<f64>,
+    pub main_net_inflow: Option<f64>,
+    pub main_net_ratio: Option<f64>,
+    pub super_large_net_inflow: Option<f64>,
+    pub large_net_inflow: Option<f64>,
+    pub medium_net_inflow: Option<f64>,
+    pub small_net_inflow: Option<f64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -119,6 +134,54 @@ pub struct SectorMemberPage {
     pub as_of: String,
     pub source: String,
     pub stale: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SectorLimitUpStats {
+    pub sector_code: String,
+    pub limit_up_count: usize,
+    pub member_count: usize,
+    pub as_of: String,
+    pub source: String,
+    pub methodology: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SectorKline {
+    pub date: String,
+    pub open: f64,
+    pub close: f64,
+    pub high: f64,
+    pub low: f64,
+    pub volume: f64,
+    pub amount: f64,
+    pub change_pct: Option<f64>,
+    pub turnover_rate: Option<f64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SectorHistory {
+    pub sector_code: String,
+    pub period: String,
+    pub items: Vec<SectorKline>,
+    pub as_of: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RotationStatus {
+    pub kind: SectorKind,
+    pub ok: bool,
+    pub error: Option<String>,
+    pub as_of: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SectorRotation {
+    pub items: Vec<SectorSummary>,
+    pub statuses: Vec<RotationStatus>,
+    pub source: String,
+    pub request_count: u8,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -203,6 +266,15 @@ fn parse_summary(
         down_count: count_at(row, &["f105"]),
         leader_name: text_at(row, &["f128"]),
         leader_change_pct: number_at(row, &["f136"]),
+        change_pct_3d: number_at(row, &["f127"]),
+        change_pct_5d: number_at(row, &["f109"]),
+        change_pct_10d: number_at(row, &["f160"]),
+        main_net_inflow: number_at(row, &["f62"]),
+        main_net_ratio: number_at(row, &["f184"]),
+        super_large_net_inflow: number_at(row, &["f66"]),
+        large_net_inflow: number_at(row, &["f72"]),
+        medium_net_inflow: number_at(row, &["f78"]),
+        small_net_inflow: number_at(row, &["f84"]),
     })
 }
 
@@ -270,7 +342,7 @@ async fn fetch_page_uncached(
     page_size: u32,
 ) -> Result<(Vec<SectorSummary>, usize), SectorError> {
     let client = universe_client();
-    let fields = "f1,f2,f3,f4,f5,f6,f8,f9,f12,f14,f20,f23,f104,f105,f128,f136";
+    let fields = "f1,f2,f3,f4,f5,f6,f8,f9,f12,f14,f20,f23,f62,f66,f72,f78,f84,f104,f105,f109,f127,f128,f136,f160,f184";
     let params = [
         ("pn", page.to_string()),
         ("pz", page_size.to_string()),
@@ -632,6 +704,211 @@ pub async fn fetch_members(
     }
 }
 
+/// 用一次响应取回全部成分，保证派生数量来自同一快照；接口若截断则拒绝返回局部统计。
+pub async fn fetch_limit_up_stats(sector_code: &str) -> Result<SectorLimitUpStats, String> {
+    let sector_code = sector_code.trim().to_uppercase();
+    if !valid_sector_code(&sector_code) {
+        return Err("板块代码格式无效".into());
+    }
+    let (items, total) = fetch_member_page_uncached(&sector_code, 1, 5_000)
+        .await
+        .map_err(|error| error.to_string())?;
+    if items.len() < total {
+        return Err(format!(
+            "成分股快照被截断（返回 {} / 应有 {}），未生成局部涨停家数",
+            items.len(),
+            total
+        ));
+    }
+    let limit_up_count = items.iter().filter(|item| member_is_limit_up(item)).count();
+    Ok(SectorLimitUpStats {
+        sector_code,
+        limit_up_count,
+        member_count: items.len(),
+        as_of: now_text(),
+        source: "eastmoney_snapshot_derived".into(),
+        methodology: "非官方派生：同一成分股快照按主板10%、ST 5%、创业板/科创板20%、北交所30%阈值统计当前涨停；N/C 无涨跌幅限制新股不计。".into(),
+    })
+}
+
+fn member_is_limit_up(item: &SectorMember) -> bool {
+    use crate::datasource::eastmoney_universe::{is_limit_up, Board};
+
+    let name = item.name.trim().to_uppercase();
+    if name.starts_with('N') || name.starts_with('C') {
+        return false;
+    }
+    item.change_pct.is_some_and(|change| {
+        is_limit_up(change, Board::from_code(&item.code), name.contains("ST"))
+    })
+}
+
+fn parse_kline(line: &str) -> Option<SectorKline> {
+    let values: Vec<_> = line.split(',').collect();
+    if values.len() < 7 {
+        return None;
+    }
+    let parse = |index: usize| values.get(index)?.parse::<f64>().ok();
+    Some(SectorKline {
+        date: values[0].to_owned(),
+        open: parse(1)?,
+        close: parse(2)?,
+        high: parse(3)?,
+        low: parse(4)?,
+        volume: parse(5)?,
+        amount: parse(6)?,
+        change_pct: parse(8),
+        turnover_rate: parse(10),
+    })
+}
+
+pub async fn fetch_history(sector_code: &str, period: &str) -> Result<SectorHistory, String> {
+    let sector_code = sector_code.trim().to_uppercase();
+    if !valid_sector_code(&sector_code) {
+        return Err("板块代码格式无效".into());
+    }
+    let klt = match period {
+        "daily" => "101",
+        "weekly" => "102",
+        "monthly" => "103",
+        _ => return Err("板块 K 线周期必须是 daily / weekly / monthly".into()),
+    };
+    let params = [
+        ("secid", format!("90.{sector_code}")),
+        ("fields1", "f1,f2,f3,f4,f5,f6".to_owned()),
+        (
+            "fields2",
+            "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61".to_owned(),
+        ),
+        ("klt", klt.to_owned()),
+        ("fqt", "0".to_owned()),
+        ("end", "20500101".to_owned()),
+        ("lmt", "180".to_owned()),
+    ];
+    let mut last_error = "板块 K 线接口没有返回有效数据".to_string();
+    for host in KLINE_HOSTS {
+        let url = format!("{host}/api/qt/stock/kline/get");
+        let response =
+            with_browser_headers(universe_client().get(&url), "https://quote.eastmoney.com/")
+                .query(&params)
+                .timeout(REQUEST_TIMEOUT)
+                .send()
+                .await;
+        let response = match response {
+            Ok(response) if response.status().is_success() => response,
+            Ok(response) => {
+                last_error = format!("板块 K 线接口 HTTP {}", response.status());
+                continue;
+            }
+            Err(error) => {
+                last_error = format!("板块 K 线请求失败：{error}");
+                continue;
+            }
+        };
+        let value: serde_json::Value = match response.json().await {
+            Ok(value) => value,
+            Err(error) => {
+                last_error = format!("板块 K 线解析失败：{error}");
+                continue;
+            }
+        };
+        let items: Vec<_> = value
+            .pointer("/data/klines")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .filter_map(parse_kline)
+            .collect();
+        if !items.is_empty() {
+            return Ok(SectorHistory {
+                sector_code,
+                period: period.to_owned(),
+                as_of: items
+                    .last()
+                    .map(|item| item.date.clone())
+                    .unwrap_or_default(),
+                items,
+                source: "eastmoney · 90.BK · unadjusted".to_owned(),
+            });
+        }
+    }
+    Err(last_error)
+}
+
+async fn fetch_rotation_kind(kind: SectorKind) -> Result<Vec<SectorSummary>, String> {
+    // 单次取完整目录，确保行业/概念轮动合计最多两个按需请求。
+    let fields = "f2,f3,f12,f14,f62,f66,f72,f78,f84,f109,f127,f160,f184";
+    let params = [
+        ("pn", "1".to_owned()),
+        ("pz", "500".to_owned()),
+        ("po", "1".to_owned()),
+        ("np", "1".to_owned()),
+        ("ut", UT_TOKEN.to_owned()),
+        ("fltt", "2".to_owned()),
+        ("invt", "2".to_owned()),
+        ("fid", "f62".to_owned()),
+        ("fs", kind.market_filter().to_owned()),
+        ("fields", fields.to_owned()),
+    ];
+    let url = format!("{ROTATION_HOST}/api/qt/clist/get");
+    let response = with_browser_headers(universe_client().get(&url), "https://data.eastmoney.com/")
+        .query(&params)
+        .timeout(REQUEST_TIMEOUT)
+        .send()
+        .await
+        .map_err(|error| format!("轮动请求失败：{error}"))?
+        .error_for_status()
+        .map_err(|error| format!("轮动接口 HTTP 错误：{error}"))?
+        .json::<ClistResponse>()
+        .await
+        .map_err(|error| format!("轮动响应解析失败：{error}"))?;
+    let rows = diff_rows(kind, response.data.and_then(|data| data.diff));
+    if rows.is_empty() {
+        Err("轮动接口没有返回有效数据".into())
+    } else {
+        Ok(rows)
+    }
+}
+
+pub async fn fetch_rotation() -> SectorRotation {
+    let (industry, concept) = tokio::join!(
+        fetch_rotation_kind(SectorKind::Industry),
+        fetch_rotation_kind(SectorKind::Concept)
+    );
+    let as_of = now_text();
+    let mut items = Vec::new();
+    let mut statuses = Vec::with_capacity(2);
+    for (kind, result) in [
+        (SectorKind::Industry, industry),
+        (SectorKind::Concept, concept),
+    ] {
+        match result {
+            Ok(mut rows) => {
+                items.append(&mut rows);
+                statuses.push(RotationStatus {
+                    kind,
+                    ok: true,
+                    error: None,
+                    as_of: as_of.clone(),
+                });
+            }
+            Err(error) => statuses.push(RotationStatus {
+                kind,
+                ok: false,
+                error: Some(error),
+                as_of: as_of.clone(),
+            }),
+        }
+    }
+    SectorRotation {
+        items,
+        statuses,
+        source: "eastmoney · f127/f109/f160 · f62/f184".to_owned(),
+        request_count: 2,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,7 +920,8 @@ mod tests {
             "f1": 2, "f2": 8423.96, "f3": 5.88, "f4": 467.83,
             "f6": 12945516510_i64, "f8": 6.27, "f12": "BK1625", "f14": "钨",
             "f20": 264683053000_i64, "f104": 4, "f105": 0,
-            "f128": "翔鹭钨业", "f136": 9.06
+            "f62": 1200000000_i64, "f109": 8.2, "f127": 6.1, "f160": 10.4,
+            "f184": 5.6, "f128": "翔鹭钨业", "f136": 9.06
         });
         let parsed = parse_summary(SectorKind::Industry, &row, 1).unwrap();
         assert_eq!(parsed.code, "BK1625");
@@ -655,6 +933,24 @@ mod tests {
         assert_eq!(parsed.down_count, Some(0));
         assert_eq!(parsed.leader_name.as_deref(), Some("翔鹭钨业"));
         assert_eq!(parsed.leader_change_pct, Some(9.06));
+        assert_eq!(parsed.change_pct_3d, Some(6.1));
+        assert_eq!(parsed.change_pct_5d, Some(8.2));
+        assert_eq!(parsed.change_pct_10d, Some(10.4));
+        assert_eq!(parsed.main_net_inflow, Some(1_200_000_000.0));
+        assert_eq!(parsed.main_net_ratio, Some(5.6));
+    }
+
+    #[test]
+    fn parses_sector_kline_and_rejects_broken_rows() {
+        let row = parse_kline(
+            "2026-09-18,2800.87,2888.23,2892.38,2791.27,28564253,223590676304,3.68,5.02,137.99,3.25",
+        )
+        .unwrap();
+        assert_eq!(row.date, "2026-09-18");
+        assert_eq!(row.close, 2888.23);
+        assert_eq!(row.change_pct, Some(5.02));
+        assert_eq!(row.turnover_rate, Some(3.25));
+        assert!(parse_kline("2026-09-18,1,2").is_none());
     }
 
     #[test]
@@ -724,5 +1020,23 @@ mod tests {
         assert!(parse_member(&json!({"f12":"600000"})).is_none());
         assert!(valid_sector_code("BK1001"));
         assert!(!valid_sector_code("600000"));
+    }
+
+    #[test]
+    fn derived_limit_up_excludes_no_limit_new_stock_prefixes() {
+        let regular =
+            parse_member(&json!({"f2":11.0,"f3":10.0,"f12":"600000","f14":"普通股票"})).unwrap();
+        let new_stock =
+            parse_member(&json!({"f2":20.0,"f3":45.0,"f12":"600001","f14":"N新股"})).unwrap();
+        assert!(member_is_limit_up(&regular));
+        assert!(!member_is_limit_up(&new_stock));
+    }
+
+    #[tokio::test]
+    #[ignore = "需要东方财富实时网络"]
+    async fn live_limit_up_snapshot_smoke() {
+        let stats = fetch_limit_up_stats("BK0475").await.unwrap();
+        assert!(stats.member_count > 0);
+        assert!(stats.limit_up_count <= stats.member_count);
     }
 }

@@ -18,9 +18,7 @@ pub fn save_holding(
 }
 
 #[tauri::command]
-pub fn delete_holding(
-    db: State<'_, Arc<Database>>,
-    watch_id: i64,
-) -> Result<(), String> {
-    db.delete_holding(watch_id).map_err(|error| error.to_string())
+pub fn delete_holding(db: State<'_, Arc<Database>>, watch_id: i64) -> Result<(), String> {
+    db.delete_holding(watch_id)
+        .map_err(|error| error.to_string())
 }

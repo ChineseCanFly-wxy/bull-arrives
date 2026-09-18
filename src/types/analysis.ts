@@ -50,6 +50,117 @@ export interface StockAnalysis {
   levels: PriceLevel[];
   /** 按市场状态自动匹配到的规则，以及三条规则各自的状态 */
   rule_match: RuleMatch | null;
+  /** 本次量化计算使用的历史数据口径 */
+  history: HistoryMeta | null;
+  /** 后端冻结的 Agent 输入指纹，不回传可篡改的量化对象 */
+  agent_context_fingerprint: string | null;
+}
+
+export interface AgentStatus {
+  installed: boolean;
+  state: 'ready' | 'not_found' | 'misconfigured';
+  path: string | null;
+  message: string;
+  guidance: string;
+}
+
+export interface AgentEvidence {
+  field: string;
+  value: string;
+  source: string;
+  as_of: string;
+}
+
+export interface AgentInvalidation {
+  field: string;
+  operator: 'lt' | 'lte' | 'gt' | 'gte' | 'cross_below' | 'cross_above';
+  reference_field: string;
+}
+
+export interface AgentAnalysisResponse {
+  status: 'ready' | 'unavailable' | 'failed';
+  provider: 'claude_code';
+  cached: boolean;
+  conclusion: string | null;
+  evidence: AgentEvidence[];
+  confidence: number | null;
+  invalidation_conditions: AgentInvalidation[];
+  error: string | null;
+  guidance: string | null;
+  generated_at: string;
+  context_fingerprint: string;
+}
+
+export interface AgentRoleResult {
+  role: 'technical' | 'bull' | 'bear' | 'risk';
+  round: 1 | 2;
+  status: 'ready' | 'failed';
+  cached: boolean;
+  conclusion: 'bullish' | 'neutral' | 'bearish' | 'cautious' | null;
+  evidence: AgentEvidence[];
+  confidence: number | null;
+  argument: string | null;
+  error: string | null;
+}
+
+export interface PredictionCalibration {
+  status: 'observing' | 'ready';
+  verified: number;
+  span_days: number;
+  required_verified: number;
+  required_span_days: number;
+  buckets: Array<{ confidence_min: number; confidence_max: number; count: number; actual_hit_rate: number }>;
+}
+
+export interface AgentTeamResponse {
+  status: 'ready' | 'failed';
+  roles: AgentRoleResult[];
+  final_conclusion: AgentRoleResult['conclusion'];
+  confidence: number | null;
+  prediction_saved: boolean;
+  calibration: PredictionCalibration;
+}
+
+export interface ResearchReport {
+  bars: number;
+  horizon_days: number;
+  causal_audit_passed: boolean;
+  factors: Array<{
+    id: string;
+    label: string;
+    samples: number;
+    rank_ic: number | null;
+    quantiles: Array<{
+      quantile: number;
+      samples: number;
+      avg_return_pct: number;
+      positive_probability: number;
+    }>;
+  }>;
+  patterns: Array<{
+    id: string;
+    label: string;
+    samples: number;
+    positive_probability: number | null;
+    avg_return_pct: number | null;
+    max_drawdown_pct: number | null;
+  }>;
+  stratification_status: 'unavailable' | 'ready';
+  stratification_note: string;
+  intraday_status: 'unavailable' | 'ready';
+  intraday_note: string;
+  runtime: string;
+}
+
+export interface HistoryMeta {
+  source: 'local_stockdb' | 'online';
+  source_label: string;
+  start_date: string | null;
+  end_date: string | null;
+  bars: number;
+  adjustment: 'qfq';
+  stale: boolean;
+  warning: string | null;
 }
 
 /** 一条规则在当前这只股票上的状态 */
@@ -191,6 +302,7 @@ export interface StockStatusItem {
   risk_reward: number | null;
   /** 失败原因；成功时为 null */
   error: string | null;
+  history: HistoryMeta | null;
 }
 
 /** 一只股票在某条规则下的操作计划 */
@@ -240,6 +352,29 @@ export interface BacktestStats {
   avg_hold_days: number;
   /** 已扣除的双边交易成本 % */
   cost_pct: number;
+  causal_audit: {
+    passed: boolean;
+    static_checks: number;
+    dynamic_checks: number;
+    message: string;
+  };
+  trust: {
+    eligible: boolean;
+    status: string;
+    methodology: string[];
+    gates: Array<{ key: string; label: string; passed: boolean; detail: string }>;
+    raw_execution: boolean;
+    oos_trades: number;
+    oos_expectancy_pct: number;
+    profit_probability: number;
+    doubled_cost_expectancy_pct: number;
+    cost_flip: boolean;
+    parameter_min_expectancy_pct: number;
+    benchmark_return_pct: number | null;
+    excess_return_pct: number | null;
+    period_returns_pct: number[];
+    residual_position: boolean;
+  };
   note: string;
 }
 
@@ -253,6 +388,16 @@ export function evaluateBacktest(stats: BacktestStats): {
   tone: 'good' | 'warn' | 'bad';
   text: string;
 } {
+  if (!stats.trust.eligible) {
+    const failed = stats.trust.gates.filter(gate => !gate.passed).map(gate => gate.label);
+    return {
+      tone: 'bad',
+      text: `${stats.trust.status}：未通过 ${failed.join('、')}`,
+    };
+  }
+  if (!stats.causal_audit.passed) {
+    return { tone: 'bad', text: `因果审计未通过：${stats.causal_audit.message}` };
+  }
   if (stats.trades === 0) {
     return { tone: 'warn', text: `过去 ${stats.bars} 根日 K 里这套规则一次都没触发 —— 它挑的不是当前这种走势` };
   }

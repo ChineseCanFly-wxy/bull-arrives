@@ -200,7 +200,6 @@ bull-arrives/
 ├── scripts/
 │   ├── build.mjs                 # 跨平台构建脚本（代理自动检测）
 │   ├── extract-changelog.mjs     # CI 提取 CHANGELOG 指定版本条目
-│   └── make-latest-json.mjs      # CI 生成更新清单 latest.json
 ├── .github/workflows/
 │   └── release.yml               # CI/CD 自动构建发布
 ├── index.html                    # 主窗口 HTML

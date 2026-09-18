@@ -1,7 +1,7 @@
-use tauri::{Emitter, State};
-use std::sync::Arc;
-use crate::db::{Database, WatchItem, PriceAlert};
 use crate::datasource::DataSourceManager;
+use crate::db::{Database, PriceAlert, WatchItem};
+use std::sync::Arc;
+use tauri::{Emitter, State};
 
 #[tauri::command]
 pub fn get_watchlist(db: State<'_, Arc<Database>>) -> Result<Vec<WatchItem>, String> {
@@ -32,8 +32,7 @@ pub fn remove_watch(
     code: String,
     market: String,
 ) -> Result<(), String> {
-    db.remove_watch(&code, &market)
-        .map_err(|e| e.to_string())?;
+    db.remove_watch(&code, &market).map_err(|e| e.to_string())?;
     manager.invalidate_requests();
     let _ = app_handle.emit("watchlist-changed", ());
     Ok(())
@@ -84,14 +83,26 @@ pub fn move_watch_down(
 }
 
 #[tauri::command]
-pub fn get_price_alerts(db: State<'_, Arc<Database>>, code: String, market: String) -> Result<Vec<PriceAlert>, String> {
-    db.get_price_alerts(&code, &market).map_err(|e| e.to_string())
+pub fn get_price_alerts(
+    db: State<'_, Arc<Database>>,
+    code: String,
+    market: String,
+) -> Result<Vec<PriceAlert>, String> {
+    db.get_price_alerts(&code, &market)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn save_price_alert(app_handle: tauri::AppHandle, db: State<'_, Arc<Database>>, alert: PriceAlert) -> Result<(), String> {
+pub fn save_price_alert(
+    app_handle: tauri::AppHandle,
+    db: State<'_, Arc<Database>>,
+    alert: PriceAlert,
+) -> Result<(), String> {
     validate_price_alert(&alert)?;
-    if !db.watch_exists(&alert.code, &alert.market).map_err(|e| e.to_string())? {
+    if !db
+        .watch_exists(&alert.code, &alert.market)
+        .map_err(|e| e.to_string())?
+    {
         return Err("只能为自选股保存提醒".to_string());
     }
     db.upsert_price_alert(&alert).map_err(|e| e.to_string())?;
@@ -100,8 +111,15 @@ pub fn save_price_alert(app_handle: tauri::AppHandle, db: State<'_, Arc<Database
 }
 
 #[tauri::command]
-pub fn delete_price_alert(app_handle: tauri::AppHandle, db: State<'_, Arc<Database>>, code: String, market: String, alert_type: String) -> Result<(), String> {
-    db.delete_price_alert(&code, &market, &alert_type).map_err(|e| e.to_string())?;
+pub fn delete_price_alert(
+    app_handle: tauri::AppHandle,
+    db: State<'_, Arc<Database>>,
+    code: String,
+    market: String,
+    alert_type: String,
+) -> Result<(), String> {
+    db.delete_price_alert(&code, &market, &alert_type)
+        .map_err(|e| e.to_string())?;
     let _ = app_handle.emit("price-alerts-changed", ());
     Ok(())
 }
@@ -112,7 +130,10 @@ fn validate_price_alert(alert: &PriceAlert) -> Result<(), String> {
     if !matches!(alert.alert_type.as_str(), "change_pct" | "fixed_price") {
         return Err("提醒类型无效".to_string());
     }
-    if !matches!(alert.repeat_mode.as_str(), "daily" | "crossing" | "cooldown") {
+    if !matches!(
+        alert.repeat_mode.as_str(),
+        "daily" | "crossing" | "cooldown"
+    ) {
         return Err("重复模式无效".to_string());
     }
     if !alert.threshold.is_finite() {
@@ -125,7 +146,9 @@ fn validate_price_alert(alert: &PriceAlert) -> Result<(), String> {
         return Err("涨跌幅阈值不能为 0".to_string());
     }
     if !(0..=MAX_ALERT_COOLDOWN_MINUTES).contains(&alert.cooldown_minutes) {
-        return Err(format!("冷却时间必须在 0 到 {MAX_ALERT_COOLDOWN_MINUTES} 分钟之间"));
+        return Err(format!(
+            "冷却时间必须在 0 到 {MAX_ALERT_COOLDOWN_MINUTES} 分钟之间"
+        ));
     }
     if alert.repeat_mode == "cooldown" && alert.cooldown_minutes == 0 {
         return Err("冷却模式的冷却时间必须大于 0".to_string());
@@ -145,7 +168,10 @@ pub async fn search_stocks(
         Ok(results) if !results.is_empty() => {
             return Ok(results);
         }
-        Ok(_) => log::info!("Sina suggest returned empty for '{}', trying Tencent", keyword),
+        Ok(_) => log::info!(
+            "Sina suggest returned empty for '{}', trying Tencent",
+            keyword
+        ),
         Err(e) => log::warn!("Sina suggest failed: {}, falling back to Tencent", e),
     }
 
@@ -154,7 +180,10 @@ pub async fn search_stocks(
         Ok(results) if !results.is_empty() => {
             return Ok(results);
         }
-        Ok(_) => log::info!("Tencent smartbox returned empty for '{}', falling back to DataSource", keyword),
+        Ok(_) => log::info!(
+            "Tencent smartbox returned empty for '{}', falling back to DataSource",
+            keyword
+        ),
         Err(e) => log::warn!("Tencent smartbox failed: {}, falling back to DataSource", e),
     }
 

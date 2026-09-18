@@ -4,12 +4,24 @@
 // + 支撑压力位（quant::levels）」暴露给前端。
 
 use crate::datasource::kline;
+use crate::db::Database;
+use crate::domain::HistoryMeta;
 use crate::quant::playbook::TradeRule;
 use crate::quant::scorer::StockAnalysis;
 use serde::Serialize;
 use std::sync::Arc;
+use tauri::State;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+
+#[tauri::command]
+pub async fn run_stock_research(
+    db: State<'_, Arc<Database>>,
+    symbol: String,
+) -> Result<crate::quant::research::ResearchReport, String> {
+    let history = kline::fetch_history(&db, &symbol, None, true).await?;
+    crate::quant::research::analyze(&history.klines)
+}
 
 /// 分析单只股票：拉取日 K，给出技术评分、**自动匹配的交易规则**、操作计划、
 /// 规则回测与支撑压力位。
@@ -32,24 +44,57 @@ use tokio::task::JoinSet;
 /// 说明：日 K 分析是盘前/盘后也要用的能力，因此**不走** `DataSourceManager`
 /// 的交易时段门禁（`ensure_request_allowed`），直接走东财历史 K 线接口。
 #[tauri::command]
-pub async fn analyze_stock(symbol: String, rule: Option<String>) -> Result<StockAnalysis, String> {
-    let klines = kline::fetch_daily_kline(&symbol, 250).await?;
+pub async fn analyze_stock(
+    db: State<'_, Arc<Database>>,
+    symbol: String,
+    rule: Option<String>,
+) -> Result<StockAnalysis, String> {
+    let mut analysis = analyze_stock_impl(&db, &symbol, rule.as_deref()).await?;
+    match crate::agent::freeze_snapshot(&db, &symbol, &analysis) {
+        Ok(fingerprint) => analysis.agent_context_fingerprint = Some(fingerprint),
+        Err(error) => log::warn!("[agent] 冻结 {symbol} 量化快照失败：{error}"),
+    }
+    Ok(analysis)
+}
+
+pub(crate) async fn analyze_stock_impl(
+    db: &Database,
+    symbol: &str,
+    rule: Option<&str>,
+) -> Result<StockAnalysis, String> {
+    let (history, benchmark) = tokio::join!(
+        kline::fetch_history(db, symbol, None, true),
+        kline::fetch_history(db, "sh000300", None, false),
+    );
+    let history = history?;
+    let klines = history.klines;
+    let raw_klines = history.raw_klines;
+    let history_meta = history.meta;
+    // 基准失败不阻断个股分析，但可信度门禁会明确判为未通过。
+    let benchmark = benchmark.ok().map(|history| history.klines);
+    if let Err(error) = db.settle_agent_predictions(symbol, &klines) {
+        log::warn!("[agent] 结算 {symbol} 历史预测失败：{error}");
+    }
 
     // 按市场状态自动匹配规则（纯计算，不额外拉数据）
     let rule_match = crate::quant::playbook::match_rule(&klines);
     // 用户显式指定了就尊重它；否则用自动匹配的结果
     let manual = rule
-        .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty() && *s != "auto")
-        .map(TradeRule::from_id);
+        .map(TradeRule::try_from_id)
+        .transpose()?;
     let rule = manual.unwrap_or_else(|| {
         rule_match
             .as_ref()
             .map(|m| m.recommended)
             .unwrap_or(TradeRule::TrendFollow)
     });
-    let rule_source = if manual.is_some() { "手动指定" } else { "自动匹配" };
+    let rule_source = if manual.is_some() {
+        "手动指定"
+    } else {
+        "自动匹配"
+    };
 
     let mut analysis = crate::quant::scorer::analyze(&klines).ok_or_else(|| {
         format!(
@@ -62,13 +107,19 @@ pub async fn analyze_stock(symbol: String, rule: Option<String>) -> Result<Stock
     // 绝不给一个凑出来的止损价
     analysis.trade_plan = crate::quant::playbook::plan(&klines, rule);
     // 规则回测：让「胜率」这个词落到这只股票自己的历史上，而不是引一个别人的数字
-    analysis.backtest = crate::quant::backtest::run(&klines, rule);
+    analysis.backtest = crate::quant::backtest::run_with_evidence(
+        &klines,
+        raw_klines.as_deref(),
+        benchmark.as_deref(),
+        rule,
+    );
 
     // 支撑/压力位：只吃价格自己走出来的东西（均线 / 布林 / 摆动点 / 前 20 日高低），
     // 按当前规则加权。⚠️ 不掺筹码分布 —— A 股没有公开的筹码原始数据，
     // 各软件的"筹码峰"都是各自的模型算的、互相之间对不上（见 CHANGELOG v1.5.1）。
     analysis.levels = crate::quant::levels::detect(&klines, rule);
     analysis.rule_match = rule_match;
+    analysis.history = Some(history_meta);
 
     if analysis.trade_plan.is_none() {
         log::warn!("[analysis] {symbol} 未能生成操作计划（K 线不足或价格异常）");
@@ -78,7 +129,11 @@ pub async fn analyze_stock(symbol: String, rule: Option<String>) -> Result<Stock
         rule.id(),
         analysis.total_score,
         klines.len(),
-        if analysis.trade_plan.is_some() { "有" } else { "无" },
+        if analysis.trade_plan.is_some() {
+            "有"
+        } else {
+            "无"
+        },
         analysis
             .backtest
             .as_ref()
@@ -113,6 +168,7 @@ pub struct StockStatusItem {
     pub risk_reward: Option<f64>,
     /// 失败原因；成功时为 None
     pub error: Option<String>,
+    pub history: Option<HistoryMeta>,
 }
 
 impl StockStatusItem {
@@ -130,6 +186,7 @@ impl StockStatusItem {
             take_profit: None,
             risk_reward: None,
             error: Some(error),
+            history: None,
         }
     }
 }
@@ -152,16 +209,21 @@ const BATCH_CONCURRENCY: usize = 5;
 /// 否则会出现「用超跌反弹策略选出来、却按趋势规则判断入场」的错配。
 #[tauri::command]
 pub async fn batch_stock_status(
+    db: State<'_, Arc<Database>>,
     symbols: Vec<String>,
     rule: Option<String>,
 ) -> Result<Vec<StockStatusItem>, String> {
     if symbols.is_empty() {
         return Ok(Vec::new());
     }
-    let rule = rule
+    let rule = match rule
         .as_deref()
-        .map(TradeRule::from_id)
-        .unwrap_or(TradeRule::TrendFollow);
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => TradeRule::try_from_id(value)?,
+        None => TradeRule::TrendFollow,
+    };
 
     // 去重：同一页里不该出现重复符号，真出现了也只算一次
     let mut seen = std::collections::HashSet::new();
@@ -176,12 +238,14 @@ pub async fn batch_stock_status(
 
     for symbol in targets {
         let sem = sem.clone();
+        let db = db.inner().clone();
         set.spawn(async move {
             let _permit = sem.acquire_owned().await.expect("semaphore not closed");
-            let klines = match kline::fetch_daily_kline(&symbol, 250).await {
-                Ok(klines) => klines,
+            let history = match kline::fetch_history(&db, &symbol, Some(250), false).await {
+                Ok(history) => history,
                 Err(e) => return StockStatusItem::failed(symbol, e),
             };
+            let klines = history.klines;
             let analysis = match crate::quant::scorer::analyze(&klines) {
                 Some(a) => a,
                 None => {
@@ -203,6 +267,7 @@ pub async fn batch_stock_status(
                 take_profit: plan.as_ref().map(|p| p.take_profit),
                 risk_reward: plan.as_ref().map(|p| p.risk_reward),
                 error: None,
+                history: Some(history.meta),
             }
         });
     }

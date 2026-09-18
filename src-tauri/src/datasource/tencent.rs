@@ -1,9 +1,9 @@
-use async_trait::async_trait;
-use reqwest::Client;
-use encoding_rs::GBK;
-use crate::domain::*;
+use super::{headers, DataSource, INDEX_CODES};
 use crate::domain::AppError;
-use super::{DataSource, INDEX_CODES, headers};
+use crate::domain::*;
+use async_trait::async_trait;
+use encoding_rs::GBK;
+use reqwest::Client;
 
 const TENCENT_URL: &str = "http://qt.gtimg.cn/q=";
 
@@ -22,7 +22,10 @@ const TENCENT_URL: &str = "http://qt.gtimg.cn/q=";
 ///   两种格式均为行业惯例，直接透传即可，无需时间偏移修正。
 /// `span_minutes` 控制：Some(span) 为分钟 K（date 格式转换 + 时间偏移修正 + turnover 扫描 6-7），
 /// None 为日/周/月 K（date 直接使用为 `t.to_string()` + turnover 仅 index 6）。
-fn parse_kline_bar(arr: &[serde_json::Value], span_minutes: Option<u32>) -> Option<crate::domain::KLineData> {
+fn parse_kline_bar(
+    arr: &[serde_json::Value],
+    span_minutes: Option<u32>,
+) -> Option<crate::domain::KLineData> {
     // 必须字段：date, open, close, high, low, volume（索引 0-5）
     if arr.len() < 6 {
         return None;
@@ -106,7 +109,13 @@ impl TencentAdapter {
         let eq_pos = line.find('=')?;
         let var_part = &line[..eq_pos];
         let code_raw = var_part.strip_prefix("v_")?;
-        let market = if code_raw.starts_with("sh") { "CN" } else if code_raw.starts_with("sz") { "CN" } else { "CN" };
+        let market = if code_raw.starts_with("sh") {
+            "CN"
+        } else if code_raw.starts_with("sz") {
+            "CN"
+        } else {
+            "CN"
+        };
         // Preserve the full symbol (sh/sz + code) so ambiguous codes that map to
         // both an index and a stock (e.g. 000852) remain distinguishable.
         let code = code_raw.to_string();
@@ -116,7 +125,9 @@ impl TencentAdapter {
         let data = &line[quote_start..quote_start + quote_end];
         let fields: Vec<&str> = data.split('~').collect();
 
-        if fields.len() < 38 { return None; }
+        if fields.len() < 38 {
+            return None;
+        }
 
         let name = fields[1].to_string();
         let price = fields[3].parse::<f64>().unwrap_or(0.0);
@@ -151,7 +162,10 @@ impl TencentAdapter {
             volume: volume_shares,
             turnover: (super::normalize_turnover(turnover) * 100.0).round() / 100.0,
             turnover_rate,
-            timestamp: crate::domain::parse_quote_timestamp(fields.get(30).copied().unwrap_or(""), "%Y%m%d%H%M%S"),
+            timestamp: crate::domain::parse_quote_timestamp(
+                fields.get(30).copied().unwrap_or(""),
+                "%Y%m%d%H%M%S",
+            ),
         })
     }
 
@@ -169,7 +183,9 @@ impl TencentAdapter {
         let data = &line[quote_start..quote_start + quote_end];
         let fields: Vec<&str> = data.split('~').collect();
 
-        if fields.len() < 6 { return None; }
+        if fields.len() < 6 {
+            return None;
+        }
 
         let name = fields[1].to_string();
         let price = fields[3].parse::<f64>().unwrap_or(0.0);
@@ -199,40 +215,40 @@ impl TencentAdapter {
 
 #[async_trait]
 impl DataSource for TencentAdapter {
-    fn name(&self) -> &str { "tencent" }
+    fn name(&self) -> &str {
+        "tencent"
+    }
 
-    fn display_name(&self) -> &str { "腾讯证券" }
+    fn display_name(&self) -> &str {
+        "腾讯证券"
+    }
 
-    async fn fetch_realtime(
-        &self,
-        codes: &[String],
-        market: &str,
-    ) -> Result<Vec<Quote>, AppError> {
+    async fn fetch_realtime(&self, codes: &[String], market: &str) -> Result<Vec<Quote>, AppError> {
         let tenc_codes: Vec<String> = codes
             .iter()
             .map(|c| Self::code_to_tencent(c, market))
             .collect();
         let url = format!("{}{}", TENCENT_URL, tenc_codes.join(","));
 
-        let resp = headers::with_browser_headers(
-            self.client.get(&url),
-            "https://gu.qq.com",
-        )
+        let resp = headers::with_browser_headers(self.client.get(&url), "https://gu.qq.com")
             .send()
             .await
             .map_err(|e| AppError::network("tencent", format!("请求失败: {:#}", e)))?;
 
         if !resp.status().is_success() {
-            return Err(AppError::network("tencent", format!("HTTP {}", resp.status())));
+            return Err(AppError::network(
+                "tencent",
+                format!("HTTP {}", resp.status()),
+            ));
         }
 
-        let body_bytes = resp.bytes().await.map_err(|e| AppError::network("tencent", format!("读取响应失败: {:#}", e)))?;
+        let body_bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| AppError::network("tencent", format!("读取响应失败: {:#}", e)))?;
         let (body, _, _) = GBK.decode(&body_bytes);
 
-        let quotes: Vec<Quote> = body
-            .lines()
-            .filter_map(Self::parse_quote_line)
-            .collect();
+        let quotes: Vec<Quote> = body.lines().filter_map(Self::parse_quote_line).collect();
         Ok(quotes)
     }
 
@@ -240,45 +256,41 @@ impl DataSource for TencentAdapter {
         let index_codes = INDEX_CODES;
         let url = format!("{}{}", TENCENT_URL, index_codes);
 
-        let resp = headers::with_browser_headers(
-            self.client.get(&url),
-            "https://gu.qq.com",
-        )
+        let resp = headers::with_browser_headers(self.client.get(&url), "https://gu.qq.com")
             .send()
             .await
             .map_err(|e| AppError::network("tencent", format!("指数请求失败: {:#}", e)))?;
 
         if !resp.status().is_success() {
-            return Err(AppError::network("tencent", format!("指数 HTTP {}", resp.status())));
+            return Err(AppError::network(
+                "tencent",
+                format!("指数 HTTP {}", resp.status()),
+            ));
         }
 
-        let body_bytes = resp.bytes().await.map_err(|e| AppError::network("tencent", format!("读取响应失败: {:#}", e)))?;
+        let body_bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| AppError::network("tencent", format!("读取响应失败: {:#}", e)))?;
         let (body, _, _) = GBK.decode(&body_bytes);
 
-        let indices: Vec<IndexQuote> = body
-            .lines()
-            .filter_map(Self::parse_index_line)
-            .collect();
+        let indices: Vec<IndexQuote> = body.lines().filter_map(Self::parse_index_line).collect();
         Ok(indices)
     }
 
-    async fn search(
-        &self,
-        keyword: &str,
-        market: &str,
-    ) -> Result<Vec<StockBrief>, AppError> {
+    async fn search(&self, keyword: &str, market: &str) -> Result<Vec<StockBrief>, AppError> {
         let trimmed = keyword.trim();
         if trimmed.len() == 6 && trimmed.chars().all(|c| c.is_ascii_digit()) {
             let tc_code = Self::code_to_tencent(trimmed, market);
             let url = format!("{}{}", TENCENT_URL, tc_code);
-            let resp = headers::with_browser_headers(
-                self.client.get(&url),
-                "https://gu.qq.com",
-            )
+            let resp = headers::with_browser_headers(self.client.get(&url), "https://gu.qq.com")
                 .send()
                 .await
                 .map_err(|e| AppError::network("tencent", format!("搜索请求失败: {:#}", e)))?;
-            let body_bytes = resp.bytes().await.map_err(|e| AppError::network("tencent", format!("读取响应失败: {:#}", e)))?;
+            let body_bytes = resp
+                .bytes()
+                .await
+                .map_err(|e| AppError::network("tencent", format!("读取响应失败: {:#}", e)))?;
             let (body, _, _) = GBK.decode(&body_bytes);
 
             for line in body.lines() {
@@ -311,18 +323,21 @@ impl DataSource for TencentAdapter {
         };
         // Use 1-min K-line endpoint — gives finer-grained intraday data (240 bars
         // covers exactly one trading day: 9:30-11:30 + 13:00-15:00 = 240 min).
-        let url = format!("http://ifzq.gtimg.cn/appstock/app/kline/mkline?param={},m1,,242", tc_code);
+        let url = format!(
+            "http://ifzq.gtimg.cn/appstock/app/kline/mkline?param={},m1,,242",
+            tc_code
+        );
 
-        let resp = headers::with_browser_headers(
-            self.client.get(&url),
-            "https://gu.qq.com",
-        )
+        let resp = headers::with_browser_headers(self.client.get(&url), "https://gu.qq.com")
             .send()
             .await
             .map_err(|e| AppError::network("tencent", format!("K线请求失败: {:#}", e)))?;
 
         if !resp.status().is_success() {
-            return Err(AppError::network("tencent", format!("K线 HTTP {}", resp.status())));
+            return Err(AppError::network(
+                "tencent",
+                format!("K线 HTTP {}", resp.status()),
+            ));
         }
 
         let body: serde_json::Value = resp
@@ -344,7 +359,9 @@ impl DataSource for TencentAdapter {
             .iter()
             .filter_map(|pt| {
                 let arr = pt.as_array()?;
-                if arr.len() < 6 { return None; }
+                if arr.len() < 6 {
+                    return None;
+                }
                 let time_raw = arr[0].as_str()?;
                 // "202606180935" → "09:35"
                 let time = if time_raw.len() >= 12 {
@@ -409,7 +426,10 @@ impl DataSource for TencentAdapter {
                 .await
                 .map_err(|e| AppError::network("tencent", format!("分钟K线请求失败: {}", e)))?;
             if !resp.status().is_success() {
-                return Err(AppError::network("tencent", format!("分钟K线 HTTP {}", resp.status())));
+                return Err(AppError::network(
+                    "tencent",
+                    format!("分钟K线 HTTP {}", resp.status()),
+                ));
             }
             let body: serde_json::Value = resp
                 .json()
@@ -424,9 +444,14 @@ impl DataSource for TencentAdapter {
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
             if lines.is_empty() {
-                log::warn!("Tencent minute kline empty for code={} span={}", tc_code, span);
+                log::warn!(
+                    "Tencent minute kline empty for code={} span={}",
+                    tc_code,
+                    span
+                );
             }
-            return Ok(lines.iter()
+            return Ok(lines
+                .iter()
                 .filter_map(|pt| parse_kline_bar(pt.as_array()?, Some(span)))
                 .collect());
         }
@@ -447,10 +472,7 @@ impl DataSource for TencentAdapter {
             tc_code, period_param, end_date_str, cnt
         );
 
-        let resp = headers::with_browser_headers(
-            self.client.get(&url),
-            "https://gu.qq.com",
-        )
+        let resp = headers::with_browser_headers(self.client.get(&url), "https://gu.qq.com")
             .send()
             .await
             .map_err(|e| AppError::network("tencent", format!("K线请求失败: {}", e)))?;
@@ -467,7 +489,8 @@ impl DataSource for TencentAdapter {
 
         let klines = stock_data
             .and_then(|stock| {
-                stock.get(period_param)
+                stock
+                    .get(period_param)
                     .or_else(|| stock.get(&format!("qfq{}", period_param)))
             })
             .and_then(|arr| arr.as_array())
@@ -475,7 +498,11 @@ impl DataSource for TencentAdapter {
             .unwrap_or_default();
 
         if klines.is_empty() {
-            log::warn!("Tencent kline empty for code={} period={}", tc_code, period_param);
+            log::warn!(
+                "Tencent kline empty for code={} period={}",
+                tc_code,
+                period_param
+            );
         }
 
         let data: Vec<crate::domain::KLineData> = klines
@@ -496,19 +523,22 @@ impl DataSource for TencentAdapter {
         let tc_code = Self::code_to_tencent(code, market);
         let url = format!("{}{}", TENCENT_URL, tc_code);
 
-        let resp = headers::with_browser_headers(
-            self.client.get(&url),
-            "https://gu.qq.com",
-        )
+        let resp = headers::with_browser_headers(self.client.get(&url), "https://gu.qq.com")
             .send()
             .await
             .map_err(|e| AppError::network("tencent", format!("深度数据请求失败: {:#}", e)))?;
 
         if !resp.status().is_success() {
-            return Err(AppError::network("tencent", format!("深度数据 HTTP {}", resp.status())));
+            return Err(AppError::network(
+                "tencent",
+                format!("深度数据 HTTP {}", resp.status()),
+            ));
         }
 
-        let body_bytes = resp.bytes().await.map_err(|e| AppError::network("tencent", format!("读取响应失败: {:#}", e)))?;
+        let body_bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| AppError::network("tencent", format!("读取响应失败: {:#}", e)))?;
         let (body, _, _) = GBK.decode(&body_bytes);
 
         let mut bids = Vec::new();
@@ -531,12 +561,14 @@ impl DataSource for TencentAdapter {
                     for i in 0..5 {
                         let pi = 9 + i * 2;
                         let vi = pi + 1;
-                        if let (Ok(price), Ok(vol)) = (
-                            fields[pi].parse::<f64>(),
-                            fields[vi].parse::<u64>(),
-                        ) {
+                        if let (Ok(price), Ok(vol)) =
+                            (fields[pi].parse::<f64>(), fields[vi].parse::<u64>())
+                        {
                             if price > 0.0 && vol > 0 {
-                                bids.push(Level { price, volume: super::normalize_volume(vol) });
+                                bids.push(Level {
+                                    price,
+                                    volume: super::normalize_volume(vol),
+                                });
                             }
                         }
                     }
@@ -544,12 +576,14 @@ impl DataSource for TencentAdapter {
                     for i in 0..5 {
                         let pi = 19 + i * 2;
                         let vi = pi + 1;
-                        if let (Ok(price), Ok(vol)) = (
-                            fields[pi].parse::<f64>(),
-                            fields[vi].parse::<u64>(),
-                        ) {
+                        if let (Ok(price), Ok(vol)) =
+                            (fields[pi].parse::<f64>(), fields[vi].parse::<u64>())
+                        {
                             if price > 0.0 && vol > 0 {
-                                asks.push(Level { price, volume: super::normalize_volume(vol) });
+                                asks.push(Level {
+                                    price,
+                                    volume: super::normalize_volume(vol),
+                                });
                             }
                         }
                     }
@@ -558,7 +592,11 @@ impl DataSource for TencentAdapter {
             }
         }
 
-        Ok(crate::domain::Depth { code: code.to_string(), bids, asks })
+        Ok(crate::domain::Depth {
+            code: code.to_string(),
+            bids,
+            asks,
+        })
     }
 
     async fn health_check(&self) -> Result<bool, AppError> {
@@ -589,13 +627,13 @@ mod tests {
         for _ in 0..25 {
             fields.push("0");
         }
-        fields.push("9.98");  // 32 change_pct
-        fields.push("6.06");  // 33 high
-        fields.push("5.68");  // 34 low
-        fields.push("0");     // 35
-        fields.push("0");     // 36
+        fields.push("9.98"); // 32 change_pct
+        fields.push("6.06"); // 33 high
+        fields.push("5.68"); // 34 low
+        fields.push("0"); // 35
+        fields.push("0"); // 36
         fields.push("34829"); // 37 turnover(万元)
-        fields.push("1.84");  // 38 turnover_rate
+        fields.push("1.84"); // 38 turnover_rate
         let line = format!("v_sz000852=\"{}\"", fields.join("~"));
 
         let q = TencentAdapter::parse_quote_line(&line).unwrap();
@@ -647,10 +685,9 @@ mod tests {
     #[test]
     fn parses_kline_bar_minute_no_turnover() {
         // turnover 缺失: 回退 0
-        let val: serde_json::Value = serde_json::from_str(
-            r#"["202606180935","10.00","10.20","10.30","9.90","1500"]"#,
-        )
-        .unwrap();
+        let val: serde_json::Value =
+            serde_json::from_str(r#"["202606180935","10.00","10.20","10.30","9.90","1500"]"#)
+                .unwrap();
         let out = parse_kline_bar(val.as_array().unwrap(), Some(1)).unwrap();
         assert_eq!(out.turnover, 0.0);
     }

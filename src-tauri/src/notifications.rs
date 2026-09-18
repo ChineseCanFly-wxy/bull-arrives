@@ -79,11 +79,7 @@ fn send_native(title: &str, body: &str) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn send_native_with_app(
-    app: &tauri::AppHandle,
-    title: &str,
-    body: &str,
-) -> Result<(), String> {
+fn send_native_with_app(app: &tauri::AppHandle, title: &str, body: &str) -> Result<(), String> {
     app.notification()
         .builder()
         .title(title)
@@ -161,9 +157,11 @@ fn update_delivery_status(app: &tauri::AppHandle, status: &DeliveryStatus) {
         // Completion never inserts. Version + id prevent pre-clear work from
         // resurrecting a record after the clear watermark advances.
         if inner.version == status.history_version {
-            if let Some(entry) = inner.entries.iter_mut().find(|entry| {
-                entry.get("id").and_then(Value::as_str) == Some(&status.id)
-            }) {
+            if let Some(entry) = inner
+                .entries
+                .iter_mut()
+                .find(|entry| entry.get("id").and_then(Value::as_str) == Some(&status.id))
+            {
                 entry["delivery"] = serde_json::to_value(status).unwrap_or(Value::Null);
                 emitted = true;
             }
@@ -191,6 +189,36 @@ fn queue_failure(id: String, history_version: u64, message: &str) -> DeliverySta
     }
 }
 
+fn record_history(app: &tauri::AppHandle, payload: &mut Value, pending: bool) -> (String, u64) {
+    let id = format!(
+        "{}-{}",
+        chrono::Utc::now().timestamp_millis(),
+        NEXT_ID.fetch_add(1, Ordering::Relaxed)
+    );
+    payload["id"] = Value::String(id.clone());
+    payload["received_at"] = Value::Number(chrono::Utc::now().timestamp_millis().into());
+    let version = {
+        let history = app.state::<NotificationHistory>();
+        let mut inner = history.0.lock().unwrap_or_else(|e| e.into_inner());
+        payload["history_version"] = Value::Number(inner.version.into());
+        payload["delivery"] = if pending {
+            serde_json::json!({ "id": id, "history_version": inner.version, "native": "pending", "desktop": "pending" })
+        } else {
+            serde_json::json!({ "id": id, "history_version": inner.version, "native": "not-requested", "desktop": "not-requested" })
+        };
+        inner.entries.push_front(payload.clone());
+        inner.entries.truncate(HISTORY_LIMIT);
+        inner.version
+    };
+    let _ = app.emit("price-alert-triggered", &payload);
+    (id, version)
+}
+
+/// 只写入现有提醒记录，不弹系统/桌面通知。
+pub fn record_only(app: &tauri::AppHandle, mut payload: Value) {
+    record_history(app, &mut payload, false);
+}
+
 pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
     let title = payload
         .get("title")
@@ -202,24 +230,7 @@ pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
         .and_then(Value::as_str)
         .unwrap_or("股票已达到提醒条件")
         .to_string();
-    let id = format!(
-        "{}-{}",
-        chrono::Utc::now().timestamp_millis(),
-        NEXT_ID.fetch_add(1, Ordering::Relaxed)
-    );
-    payload["id"] = Value::String(id.clone());
-    payload["received_at"] = Value::Number(chrono::Utc::now().timestamp_millis().into());
-    payload["delivery"] =
-        serde_json::json!({ "id": id, "native": "pending", "desktop": "pending" });
-    let version = {
-        let history = app.state::<NotificationHistory>();
-        let mut inner = history.0.lock().unwrap_or_else(|e| e.into_inner());
-        payload["history_version"] = Value::Number(inner.version.into());
-        inner.entries.push_front(payload.clone());
-        inner.entries.truncate(HISTORY_LIMIT);
-        inner.version
-    };
-    let _ = app.emit("price-alert-triggered", &payload);
+    let (id, version) = record_history(app, &mut payload, true);
     let job = DeliveryJob {
         id: id.clone(),
         title,
@@ -302,9 +313,7 @@ mod tests {
     #[test]
     fn clear_watermark_rejects_old_delivery() {
         let mut inner = HistoryInner::default();
-        inner
-            .entries
-            .push_back(serde_json::json!({"id": "old"}));
+        inner.entries.push_back(serde_json::json!({"id": "old"}));
         let old = inner.version;
         inner.entries.clear();
         inner.version += 1;

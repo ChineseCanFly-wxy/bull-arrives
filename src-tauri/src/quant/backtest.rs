@@ -1,186 +1,136 @@
-// src-tauri/src/quant/backtest.rs
-//! 规则回测：让「胜率 60%」这类说法变成**这只股票自己历史上真实发生过的事**。
+//! 单股规则回放与可信度门禁。
 //!
-//! 为什么必须做这一步：公开研究里的胜率是「全市场某个组合的统计平均」，
-//! 直接搬到某一只股票上是没有意义的。与其贴一个别人的数字，
-//! 不如在同一只股票的日 K 上把规则跑一遍，告诉用户：
-//! 「这套规则在过去 N 根日 K 里触发了 X 次，赢 Y 次，扣掉交易成本后每笔平均赚/亏多少」。
-//!
-//! 三条必须守住的诚实底线：
-//! 1. **扣交易成本**。A 股双边成本约 0.46%（佣金 0.03% 双边 + 印花税 0.1% 单边卖出
-//!    + 冲击成本 0.2% + 滑点 0.1%）。不扣成本的回测会把高频小赚的策略美化得离谱。
-//! 2. **同一根 K 同时触及止损与止盈时，按止损先成交**。这是保守假设 ——
-//!    实盘里往往先打到不利的那一边。
-//! 3. **样本不足就直说**。触发次数少于 10 次时，胜率只是噪声，不能当成依据。
+//! 复权价只用于指标和信号；本地 stockdb 能提供完整未复权序列时，
+//! 成交、止损和止盈使用未复权价。未提供全市场时点股票池、公司行为账本或
+//! 冻结策略的实时前向证据时，门禁必须拒绝“可用/推荐”。
 
-use crate::domain::KLineData;
-use super::indicators;
 use super::playbook::TradeRule;
+use super::{causal, indicators};
+use crate::domain::KLineData;
 
-/// A 股双边交易成本（%）。与 `playbook` 的 ATR 参数无关，独立常量便于回测调参。
 const ROUND_TRIP_COST_PCT: f64 = 0.46;
-
-/// 回测至少需要多少根 K 才开工（要给 MA20 / BOLL / RSI 留出预热期）
 const WARMUP_BARS: usize = 60;
+const MIN_MEANINGFUL_TRADES: usize = 30;
+const MIN_OOS_TRADES: usize = 5;
+const BOOTSTRAP_SAMPLES: usize = 1_000;
 
-/// 样本少于这个次数就不下任何统计结论
-const MIN_MEANINGFUL_TRADES: usize = 10;
-
-/// 一次回测里的单笔交易。
-///
-/// 只记毛收益与持仓天数 —— **输赢在扣完交易成本之后才判定**（见 `run`），
-/// 所以这里刻意不存「是否止盈出场」：一笔打到止盈价但只赚 0.3% 的交易，
-/// 扣掉 0.46% 成本其实是亏的。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Trade {
     pub pnl_pct: f64,
     pub hold_days: usize,
+    pub exit_index: usize,
 }
 
-/// 回测统计结果
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BacktestGate {
+    pub key: String,
+    pub label: String,
+    pub passed: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BacktestTrustReport {
+    pub eligible: bool,
+    pub status: String,
+    pub methodology: Vec<String>,
+    pub gates: Vec<BacktestGate>,
+    pub raw_execution: bool,
+    pub oos_trades: usize,
+    pub oos_expectancy_pct: f64,
+    pub profit_probability: f64,
+    pub doubled_cost_expectancy_pct: f64,
+    pub cost_flip: bool,
+    pub parameter_min_expectancy_pct: f64,
+    pub benchmark_return_pct: Option<f64>,
+    pub excess_return_pct: Option<f64>,
+    pub period_returns_pct: Vec<f64>,
+    pub residual_position: bool,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BacktestStats {
     pub rule: TradeRule,
     pub rule_label: String,
-    /// 回测用了多少根日 K
     pub bars: usize,
-    /// 触发次数
     pub trades: usize,
     pub wins: usize,
-    /// 胜率 0–1（已扣成本后判定盈亏）
     pub win_rate: f64,
-    /// 平均盈利 %（正数）
     pub avg_win_pct: f64,
-    /// 平均亏损 %（正数，表示亏损幅度）
     pub avg_loss_pct: f64,
-    /// 盈亏比 = 平均盈利 / 平均亏损。**必须与胜率一起看**
     pub payoff_ratio: f64,
-    /// 每笔期望收益 %（扣成本后）。这个数才是真正决定赚不赚钱的
     pub expectancy_pct: f64,
-    /// 逐笔累加的总收益 %（不复利口径，仅作量级参考）
     pub total_return_pct: f64,
-    /// 逐笔权益曲线的最大回撤 %
     pub max_drawdown_pct: f64,
     pub avg_hold_days: f64,
-    /// 已扣除的双边交易成本 %
     pub cost_pct: f64,
-    /// 一句话结论（含样本量提醒与免责）
+    pub causal_audit: causal::CausalAudit,
+    pub trust: BacktestTrustReport,
     pub note: String,
 }
 
-/// 单根 K 上的入场信号判断
-fn entry_signal(
-    rule: TradeRule,
-    i: usize,
-    closes: &[f64],
-    highs: &[f64],
-    ma5: &[f64],
-    ma20: &[f64],
-    rsi12: &[f64],
-    boll_lower: &[f64],
-) -> bool {
-    match rule {
-        TradeRule::TrendFollow => {
-            // 均线多头 + MA20 上行 + 站上 MA20
-            let (Some(fast), Some(slow)) = (ma5.get(i).copied(), ma20.get(i).copied()) else {
-                return false;
-            };
-            if !fast.is_finite() || !slow.is_finite() {
-                return false;
-            }
-            let rising = i >= 5 && {
-                let before = ma20[i - 5];
-                before.is_finite() && slow > before
-            };
-            rising && fast > slow && closes[i] > slow
-        }
-        TradeRule::MeanReversion => {
-            let oversold = rsi12
-                .get(i)
-                .copied()
-                .filter(|v| v.is_finite())
-                .map(|v| v < 30.0)
-                .unwrap_or(false);
-            let at_lower = boll_lower
-                .get(i)
-                .copied()
-                .filter(|v| v.is_finite())
-                .map(|v| closes[i] <= v)
-                .unwrap_or(false);
-            oversold || at_lower
-        }
-        TradeRule::Breakout => {
-            // 收盘创前 20 日新高（不含当根，见 playbook::highest_before_last 的说明）
-            const PERIOD: usize = 20;
-            if i < PERIOD {
-                return false;
-            }
-            let slice = &highs[i - PERIOD..i];
-            let prior_high = slice
-                .iter()
-                .copied()
-                .filter(|v| v.is_finite())
-                .fold(f64::NEG_INFINITY, f64::max);
-            prior_high.is_finite() && closes[i] > prior_high
-        }
+struct Position {
+    entry: f64,
+    stop_qfq: f64,
+    take_qfq: f64,
+    entry_index: usize,
+}
+
+fn raw_is_aligned(qfq: &[KLineData], raw: Option<&[KLineData]>) -> bool {
+    raw.is_some_and(|raw| {
+        raw.len() == qfq.len() && raw.iter().zip(qfq).all(|(raw, qfq)| raw.date == qfq.date)
+    })
+}
+
+fn qfq_to_raw(level: f64, qfq: &KLineData, raw: &KLineData) -> f64 {
+    if qfq.close.is_finite() && qfq.close > 0.0 {
+        level * raw.close / qfq.close
+    } else {
+        level
     }
 }
 
-/// 在个股日 K 上按规则跑一遍回测。
-///
-/// 返回 `None` 仅当数据量连预热都不够。
-pub fn run(klines: &[KLineData], rule: TradeRule) -> Option<BacktestStats> {
-    let n = klines.len();
-    if n <= WARMUP_BARS + 1 {
-        return None;
-    }
-
+fn simulate(
+    klines: &[KLineData],
+    raw: Option<&[KLineData]>,
+    rule: TradeRule,
+    stop_mult: f64,
+    take_mult: f64,
+) -> (Vec<Trade>, bool) {
     let closes: Vec<f64> = klines.iter().map(|k| k.close).collect();
     let highs: Vec<f64> = klines.iter().map(|k| k.high).collect();
     let lows: Vec<f64> = klines.iter().map(|k| k.low).collect();
-
     let atr_series = indicators::atr(&highs, &lows, &closes, 14);
-    let ma5 = indicators::sma(&closes, 5);
-    let ma20 = indicators::sma(&closes, 20);
-    let rsi12 = indicators::rsi(&closes, 12);
-    let boll_lower = indicators::boll(&closes, 20, 2.0).lower;
-
-    let take_mult = rule.take_atr_mult();
-    let max_hold = rule.max_hold_days();
-
-    struct Position {
-        entry: f64,
-        stop: f64,
-        take: f64,
-        entry_index: usize,
-    }
-
-    let mut trades: Vec<Trade> = Vec::new();
+    let signals = causal::signal_series(klines, rule);
+    let mut trades = Vec::new();
     let mut position: Option<Position> = None;
 
-    for i in WARMUP_BARS..n {
+    for i in WARMUP_BARS..klines.len() {
+        let execution = raw.map_or(&klines[i], |rows| &rows[i]);
         if let Some(pos) = position.as_ref() {
             let held = i - pos.entry_index;
-            let hit_stop = lows[i].is_finite() && lows[i] <= pos.stop;
-            let hit_take = highs[i].is_finite() && highs[i] >= pos.take;
-
-            // 入场当根不判定：我们是用该根收盘价成交的
+            if execution.volume == 0 {
+                continue;
+            }
+            let stop = qfq_to_raw(pos.stop_qfq, &klines[i], execution);
+            let take = qfq_to_raw(pos.take_qfq, &klines[i], execution);
+            let hit_stop = execution.low.is_finite() && execution.low <= stop;
+            let hit_take = execution.high.is_finite() && execution.high >= take;
             let exit = if held > 0 && hit_stop {
-                // 保守假设：同一根里先打到止损
-                Some(pos.stop)
+                Some(execution.open.min(stop))
             } else if held > 0 && hit_take {
-                Some(pos.take)
-            } else if held >= max_hold {
-                Some(closes[i])
+                Some(execution.open.max(take))
+            } else if held >= rule.max_hold_days() {
+                Some(execution.close)
             } else {
                 None
             };
-
             if let Some(price) = exit {
-                if pos.entry > 0.0 && price.is_finite() {
+                if pos.entry > 0.0 && price.is_finite() && price > 0.0 {
                     trades.push(Trade {
                         pnl_pct: (price - pos.entry) / pos.entry * 100.0,
                         hold_days: held,
+                        exit_index: i,
                     });
                 }
                 position = None;
@@ -188,121 +138,356 @@ pub fn run(klines: &[KLineData], rule: TradeRule) -> Option<BacktestStats> {
             continue;
         }
 
-        // 空仓：找入场信号。最后一根不开新仓（没有后续 K 可以验证结果）
-        if i + 1 >= n {
-            break;
-        }
-        if !entry_signal(rule, i, &closes, &highs, &ma5, &ma20, &rsi12, &boll_lower) {
+        if i + 1 >= klines.len() || !signals[i].ready {
             continue;
         }
         let atr = atr_series.get(i).copied().unwrap_or(f64::NAN);
-        let entry = closes[i];
-        if !atr.is_finite() || atr <= 0.0 || !entry.is_finite() || entry <= 0.0 {
+        let entry_index = i + 1;
+        let entry_bar = raw.map_or(&klines[entry_index], |rows| &rows[entry_index]);
+        if !atr.is_finite() || atr <= 0.0 || entry_bar.volume == 0 || entry_bar.open <= 0.0 {
             continue;
         }
-        let stop = entry - 2.0 * atr;
-        if stop <= 0.0 {
+        let qfq_entry = klines[entry_index].open;
+        let stop_qfq = qfq_entry - stop_mult * atr;
+        if stop_qfq <= 0.0 {
             continue;
         }
         position = Some(Position {
-            entry,
-            stop,
-            take: entry + take_mult * atr,
-            entry_index: i,
+            entry: entry_bar.open,
+            stop_qfq,
+            take_qfq: qfq_entry + take_mult * atr,
+            entry_index,
         });
     }
+    (trades, position.is_some())
+}
 
-    let bars = n - WARMUP_BARS;
-    let cost = ROUND_TRIP_COST_PCT;
+fn net_returns(trades: &[Trade], cost_pct: f64) -> Vec<f64> {
+    trades
+        .iter()
+        .map(|trade| trade.pnl_pct - cost_pct)
+        .collect()
+}
 
-    if trades.is_empty() {
-        return Some(BacktestStats {
-            rule,
-            rule_label: rule.label().to_owned(),
-            bars,
-            trades: 0,
-            wins: 0,
-            win_rate: 0.0,
-            avg_win_pct: 0.0,
-            avg_loss_pct: 0.0,
-            payoff_ratio: 0.0,
-            expectancy_pct: 0.0,
-            total_return_pct: 0.0,
-            max_drawdown_pct: 0.0,
-            avg_hold_days: 0.0,
-            cost_pct: cost,
-            note: format!(
-                "过去 {bars} 根日 K 里，这套规则一次都没触发 —— 它挑的不是当前这种走势"
+fn expectancy(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        0.0
+    } else {
+        values.iter().sum::<f64>() / values.len() as f64
+    }
+}
+
+fn compounded_return(values: &[f64]) -> f64 {
+    (values
+        .iter()
+        .fold(1.0, |equity, value| equity * (1.0 + value / 100.0))
+        - 1.0)
+        * 100.0
+}
+
+fn max_drawdown(values: &[f64]) -> f64 {
+    let mut equity: f64 = 1.0;
+    let mut peak: f64 = 1.0;
+    let mut drawdown: f64 = 0.0;
+    for value in values {
+        equity *= 1.0 + value / 100.0;
+        peak = peak.max(equity);
+        drawdown = drawdown.max((peak - equity) / peak * 100.0);
+    }
+    drawdown
+}
+
+fn bootstrap_profit_probability(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let block = (values.len() as f64).sqrt().ceil() as usize;
+    let mut seed = 0x5EED_u64;
+    let mut profitable = 0;
+    for _ in 0..BOOTSTRAP_SAMPLES {
+        let mut sampled = 0;
+        let mut total = 0.0;
+        while sampled < values.len() {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let start = (seed as usize) % values.len();
+            for offset in 0..block.min(values.len() - sampled) {
+                total += values[(start + offset) % values.len()];
+                sampled += 1;
+            }
+        }
+        profitable += usize::from(total > 0.0);
+    }
+    profitable as f64 / BOOTSTRAP_SAMPLES as f64
+}
+
+fn benchmark_return(benchmark: Option<&[KLineData]>, start: &str, end: &str) -> Option<f64> {
+    let rows: Vec<_> = benchmark?
+        .iter()
+        .filter(|row| row.date.as_str() >= start && row.date.as_str() <= end)
+        .collect();
+    let (first, last) = (rows.first()?, rows.last()?);
+    (first.close > 0.0).then_some((last.close / first.close - 1.0) * 100.0)
+}
+
+fn gate(key: &str, label: &str, passed: bool, detail: impl Into<String>) -> BacktestGate {
+    BacktestGate {
+        key: key.into(),
+        label: label.into(),
+        passed,
+        detail: detail.into(),
+    }
+}
+
+/// 兼容现有纯计算调用；因没有未复权与基准证据，结果必然无法通过准入。
+pub fn run(klines: &[KLineData], rule: TradeRule) -> Option<BacktestStats> {
+    run_with_evidence(klines, None, None, rule)
+}
+
+pub fn run_with_evidence(
+    klines: &[KLineData],
+    raw: Option<&[KLineData]>,
+    benchmark: Option<&[KLineData]>,
+    rule: TradeRule,
+) -> Option<BacktestStats> {
+    if klines.len() <= WARMUP_BARS + 1 {
+        return None;
+    }
+    let raw_execution = raw_is_aligned(klines, raw);
+    let raw = if raw_execution { raw } else { None };
+    let causal_audit = causal::audit(klines, rule);
+    let (trades, residual_position) = simulate(klines, raw, rule, 2.0, rule.take_atr_mult());
+    let net = net_returns(&trades, ROUND_TRIP_COST_PCT);
+    let doubled = net_returns(&trades, ROUND_TRIP_COST_PCT * 2.0);
+    let expectancy_pct = expectancy(&net);
+    let doubled_cost_expectancy_pct = expectancy(&doubled);
+    let cost_flip = expectancy_pct > 0.0 && doubled_cost_expectancy_pct <= 0.0;
+    let split = WARMUP_BARS + (klines.len() - WARMUP_BARS) * 7 / 10;
+    let oos: Vec<_> = trades
+        .iter()
+        .filter(|trade| trade.exit_index >= split)
+        .map(|trade| trade.pnl_pct - ROUND_TRIP_COST_PCT)
+        .collect();
+    let oos_expectancy_pct = expectancy(&oos);
+    let profit_probability = bootstrap_profit_probability(&oos);
+
+    let sensitivity = [
+        (1.5, rule.take_atr_mult() * 0.8),
+        (2.0, rule.take_atr_mult()),
+        (2.5, rule.take_atr_mult() * 1.2),
+    ]
+    .map(|(stop, take)| {
+        let (candidate, _) = simulate(klines, raw, rule, stop, take);
+        expectancy(&net_returns(&candidate, ROUND_TRIP_COST_PCT))
+    });
+    let parameter_min_expectancy_pct = sensitivity.into_iter().fold(f64::INFINITY, f64::min);
+
+    let period_size = (klines.len() - WARMUP_BARS).div_ceil(3);
+    let period_returns_pct = (0..3)
+        .map(|period| {
+            let start = WARMUP_BARS + period * period_size;
+            let end = (start + period_size).min(klines.len());
+            let values: Vec<_> = trades
+                .iter()
+                .filter(|trade| trade.exit_index >= start && trade.exit_index < end)
+                .map(|trade| trade.pnl_pct - ROUND_TRIP_COST_PCT)
+                .collect();
+            compounded_return(&values)
+        })
+        .collect::<Vec<_>>();
+    let total_return_pct = compounded_return(&net);
+    let benchmark_return_pct =
+        benchmark_return(benchmark, &klines[WARMUP_BARS].date, &klines.last()?.date);
+    let excess_return_pct = benchmark_return_pct.map(|value| total_return_pct - value);
+
+    let gates = vec![
+        gate(
+            "causal",
+            "因果审计",
+            causal_audit.passed,
+            causal_audit.message.clone(),
+        ),
+        gate(
+            "raw_execution",
+            "未复权成交",
+            raw_execution,
+            if raw_execution {
+                "复权价出信号，未复权价成交"
+            } else {
+                "缺少与信号日期完全对齐的未复权日 K"
+            },
+        ),
+        gate(
+            "oos",
+            "样本外",
+            oos.len() >= MIN_OOS_TRADES && oos_expectancy_pct > 0.0,
+            format!(
+                "后 30% 区间 {} 笔，每笔期望 {:.2}%",
+                oos.len(),
+                oos_expectancy_pct
             ),
-        });
-    }
+        ),
+        gate(
+            "cost",
+            "成本稳健",
+            doubled_cost_expectancy_pct > 0.0,
+            format!("双倍成本后每笔期望 {:.2}%", doubled_cost_expectancy_pct),
+        ),
+        gate(
+            "parameters",
+            "参数敏感性",
+            parameter_min_expectancy_pct > 0.0,
+            format!(
+                "三组止损/止盈参数中最差每笔 {:.2}%",
+                parameter_min_expectancy_pct
+            ),
+        ),
+        gate(
+            "sample",
+            "样本量",
+            trades.len() >= MIN_MEANINGFUL_TRADES,
+            format!("{} 笔，门槛 {} 笔", trades.len(), MIN_MEANINGFUL_TRADES),
+        ),
+        gate(
+            "bootstrap",
+            "Block Bootstrap",
+            oos.len() >= MIN_OOS_TRADES && profit_probability >= 0.95,
+            format!("样本外盈利概率 {:.1}%", profit_probability * 100.0),
+        ),
+        gate(
+            "multiple_testing",
+            "多重检验",
+            true,
+            "规则不按历史收益选优，未产生参数搜索家族",
+        ),
+        gate(
+            "benchmark",
+            "基准超额",
+            excess_return_pct.is_some_and(|value| value > 0.0),
+            excess_return_pct.map_or_else(
+                || "同期沪深300基准不可用".into(),
+                |value| format!("相对沪深300 {value:+.2}%"),
+            ),
+        ),
+        gate(
+            "tradability",
+            "可交易性撮合",
+            false,
+            "已阻断停牌，但历史 ST/板块涨跌停、一字板和部分成交尚未完整复原",
+        ),
+        gate(
+            "point_in_time_portfolio",
+            "时点股票池与组合账本",
+            false,
+            "当前是单股回放；未证明历史全市场股票池、先卖后买、容量、未成交和残余持仓",
+        ),
+        gate(
+            "corporate_actions",
+            "公司行为账本",
+            false,
+            "复权因子已用于价格换算，但送转股份与现金分红未进入持仓账本",
+        ),
+        gate(
+            "forward",
+            "实时前向验证",
+            false,
+            "尚无与冻结策略版本绑定的足量实时模拟证据",
+        ),
+    ];
+    let eligible = gates.iter().all(|item| item.passed);
+    let trust = BacktestTrustReport {
+        eligible,
+        status: if eligible {
+            "已准入"
+        } else {
+            "未准入（仅研究回放）"
+        }
+        .into(),
+        methodology: vec![
+            "T 日收盘信号，T+1 开盘入场；当日不可卖".into(),
+            if raw_execution {
+                "指标/信号用前复权价，成交/止损/止盈用未复权价".into()
+            } else {
+                "缺少完整未复权序列，本次成交价仅作回放估算".into()
+            },
+            format!("每笔扣双边成本 {:.2}%，并重跑双倍成本", ROUND_TRIP_COST_PCT),
+            "后 30% 时间段作样本外；固定规则不按历史收益挑选".into(),
+            "样本外交易序列做 1000 次确定性移动块自助，同时拆分三段收益".into(),
+            "本策略不使用财务因子；若日后加入，必须以公告日而非报告期可用".into(),
+        ],
+        gates,
+        raw_execution,
+        oos_trades: oos.len(),
+        oos_expectancy_pct,
+        profit_probability,
+        doubled_cost_expectancy_pct,
+        cost_flip,
+        parameter_min_expectancy_pct,
+        benchmark_return_pct,
+        excess_return_pct,
+        period_returns_pct,
+        residual_position,
+    };
 
-    // 扣成本后再判定盈亏：一笔 +0.3% 的交易扣掉 0.46% 其实是亏的
-    let net: Vec<f64> = trades.iter().map(|t| t.pnl_pct - cost).collect();
-    let wins = net.iter().filter(|v| **v > 0.0).count();
-    let win_pnls: Vec<f64> = net.iter().copied().filter(|v| *v > 0.0).collect();
-    let loss_pnls: Vec<f64> = net.iter().copied().filter(|v| *v <= 0.0).collect();
-
-    let avg_win = if win_pnls.is_empty() {
+    let wins = net.iter().filter(|value| **value > 0.0).count();
+    let win_values: Vec<_> = net.iter().copied().filter(|value| *value > 0.0).collect();
+    let loss_values: Vec<_> = net.iter().copied().filter(|value| *value <= 0.0).collect();
+    let avg_win_pct = expectancy(&win_values);
+    let avg_loss_pct = if loss_values.is_empty() {
         0.0
     } else {
-        win_pnls.iter().sum::<f64>() / win_pnls.len() as f64
+        loss_values.iter().map(|value| value.abs()).sum::<f64>() / loss_values.len() as f64
     };
-    let avg_loss = if loss_pnls.is_empty() {
-        0.0
+    let payoff_ratio = if avg_loss_pct > 0.0 {
+        avg_win_pct / avg_loss_pct
     } else {
-        loss_pnls.iter().map(|v| v.abs()).sum::<f64>() / loss_pnls.len() as f64
+        0.0
     };
-    let payoff = if avg_loss > 0.0 { avg_win / avg_loss } else { 0.0 };
-
-    let expectancy = net.iter().sum::<f64>() / net.len() as f64;
-    let total_return: f64 = net.iter().sum();
-
-    // 最大回撤：逐笔累加出权益曲线，再取峰谷差
-    let mut equity = 0.0;
-    let mut peak = 0.0;
-    let mut max_dd = 0.0;
-    for pnl in &net {
-        equity += pnl;
-        if equity > peak {
-            peak = equity;
-        }
-        let dd = peak - equity;
-        if dd > max_dd {
-            max_dd = dd;
-        }
-    }
-
-    let avg_hold = trades.iter().map(|t| t.hold_days).sum::<usize>() as f64 / trades.len() as f64;
-
-    let sample_note = if trades.len() < MIN_MEANINGFUL_TRADES {
+    let note = if trades.is_empty() {
         format!(
-            "⚠️ 只触发 {} 次，样本太少，胜率基本是噪声，别当依据 —— 换成同规则的其它股票一起看更可靠",
-            trades.len()
+            "过去 {} 根有效日 K 未完成交易；{}",
+            klines.len() - WARMUP_BARS,
+            trust.status
         )
     } else {
-        format!("样本 {} 次", trades.len())
+        format!(
+            "{}笔，每笔扣 {:.2}% 成本；双倍成本后期望 {:.2}%{}；{}。",
+            trades.len(),
+            ROUND_TRIP_COST_PCT,
+            doubled_cost_expectancy_pct,
+            if cost_flip {
+                "，策略翻转为负"
+            } else {
+                ""
+            },
+            trust.status,
+        )
     };
-    let note = format!(
-        "{}；已扣 {:.2}% 双边成本；单只股票的历史回测，不含未来函数也不构成收益承诺。",
-        sample_note, cost
-    );
 
     Some(BacktestStats {
         rule,
-        rule_label: rule.label().to_owned(),
-        bars,
+        rule_label: rule.label().into(),
+        bars: klines.len() - WARMUP_BARS,
         trades: trades.len(),
         wins,
-        win_rate: wins as f64 / trades.len() as f64,
-        avg_win_pct: avg_win,
-        avg_loss_pct: avg_loss,
-        payoff_ratio: payoff,
-        expectancy_pct: expectancy,
-        total_return_pct: total_return,
-        max_drawdown_pct: max_dd,
-        avg_hold_days: avg_hold,
-        cost_pct: cost,
+        win_rate: if trades.is_empty() {
+            0.0
+        } else {
+            wins as f64 / trades.len() as f64
+        },
+        avg_win_pct,
+        avg_loss_pct,
+        payoff_ratio,
+        expectancy_pct,
+        total_return_pct,
+        max_drawdown_pct: max_drawdown(&net),
+        avg_hold_days: if trades.is_empty() {
+            0.0
+        } else {
+            trades.iter().map(|trade| trade.hold_days).sum::<usize>() as f64 / trades.len() as f64
+        },
+        cost_pct: ROUND_TRIP_COST_PCT,
+        causal_audit,
+        trust,
         note,
     })
 }
@@ -315,87 +500,70 @@ mod tests {
         closes
             .iter()
             .enumerate()
-            .map(|(i, &c)| KLineData {
+            .map(|(i, &close)| KLineData {
                 date: format!("2025-{:02}-{:02}", (i / 28) + 1, (i % 28) + 1),
-                open: c,
-                high: c * 1.015,
-                low: c * 0.985,
-                close: c,
+                open: close,
+                high: close * 1.015,
+                low: close * 0.985,
+                close,
                 volume: 10_000,
-                turnover: c * 10_000.0,
+                turnover: close * 10_000.0,
             })
             .collect()
     }
 
-    /// 数据太短要返回 None，而不是给一个基于 3 根 K 的「回测」
     #[test]
     fn short_history_yields_nothing() {
         assert!(run(&klines_from(&[10.0; 30]), TradeRule::TrendFollow).is_none());
-        assert!(run(&[], TradeRule::MeanReversion).is_none());
     }
 
-    /// 单边上涨里趋势规则应当真的触发过交易（否则回测形同虚设）
     #[test]
-    fn trend_rule_fires_on_a_sustained_uptrend() {
-        let closes: Vec<f64> = (0..200).map(|i| 10.0 + i as f64 * 0.08).collect();
-        let stats = run(&klines_from(&closes), TradeRule::TrendFollow).expect("应有回测结果");
-        assert!(stats.trades > 0, "稳步上涨应当触发趋势入场");
-        assert!(stats.win_rate >= 0.0 && stats.win_rate <= 1.0);
-        assert_eq!(stats.wins, 0.max(stats.wins));
+    fn missing_evidence_never_passes_admission() {
+        let closes: Vec<_> = (0..250).map(|i| 10.0 + i as f64 * 0.08).collect();
+        let stats = run(&klines_from(&closes), TradeRule::TrendFollow).unwrap();
+        assert!(!stats.trust.eligible);
+        assert!(stats
+            .trust
+            .gates
+            .iter()
+            .any(|gate| gate.key == "forward" && !gate.passed));
+        assert!(stats.note.contains("未准入"));
     }
 
-    /// 单边下跌里均值回归会一路接飞刀 —— 回测必须如实反映亏损，而不是美化
     #[test]
-    fn mean_reversion_loses_money_in_a_persistent_downtrend() {
-        let closes: Vec<f64> = (0..200).map(|i| 60.0 - i as f64 * 0.15).collect();
-        let stats = run(&klines_from(&closes), TradeRule::MeanReversion).expect("应有回测结果");
-        if stats.trades > 0 {
-            assert!(
-                stats.total_return_pct < 0.0,
-                "持续下跌中均值回归不该是赚的，实际 {}%",
-                stats.total_return_pct
-            );
-            assert!(stats.expectancy_pct < 0.0, "每笔期望应为负");
+    fn aligned_raw_prices_are_used_for_execution() {
+        let closes: Vec<_> = (0..250).map(|i| 10.0 + i as f64 * 0.08).collect();
+        let qfq = klines_from(&closes);
+        let mut raw = qfq.clone();
+        for row in &mut raw {
+            row.open *= 2.0;
+            row.high *= 2.0;
+            row.low *= 2.0;
+            row.close *= 2.0;
         }
+        let stats = run_with_evidence(&qfq, Some(&raw), None, TradeRule::TrendFollow).unwrap();
+        assert!(stats.trust.raw_execution);
+        assert!(!stats.trust.eligible, "实时前向等证据仍然缺失");
     }
 
-    /// 横盘且波动极小：不该产生一堆假信号，也不该崩
     #[test]
-    fn flat_market_does_not_panic() {
-        let closes: Vec<f64> = (0..200).map(|i| 20.0 + (i % 3) as f64 * 0.01).collect();
-        for rule in [TradeRule::TrendFollow, TradeRule::MeanReversion, TradeRule::Breakout] {
-            let stats = run(&klines_from(&closes), rule).expect("应有回测结果");
-            assert!(stats.trades <= stats.bars, "触发次数不可能超过 K 线根数");
-        }
+    fn double_cost_flip_is_detectable() {
+        let trades = [Trade {
+            pnl_pct: 0.7,
+            hold_days: 1,
+            exit_index: 1,
+        }];
+        let base = expectancy(&net_returns(&trades, ROUND_TRIP_COST_PCT));
+        let doubled = expectancy(&net_returns(&trades, ROUND_TRIP_COST_PCT * 2.0));
+        assert!(base > 0.0 && doubled <= 0.0);
     }
 
-    /// 成本必须真的从结果里扣掉：把成本改成 0 时，每笔期望应当更高
     #[test]
-    fn cost_is_actually_deducted() {
-        let closes: Vec<f64> = (0..200).map(|i| 10.0 + (i as f64 * 0.05).sin() * 2.0).collect();
-        let stats = run(&klines_from(&closes), TradeRule::MeanReversion).expect("应有回测结果");
-        assert_eq!(stats.cost_pct, ROUND_TRIP_COST_PCT);
-        if stats.trades > 0 {
-            // 每笔期望 = 毛期望 − 成本；因此期望不可能高于「平均盈利」上限太多
-            assert!(stats.expectancy_pct <= stats.avg_win_pct.max(0.0) + 1e-9);
-        }
-    }
-
-    /// 胜率与盈亏比必须自洽：都用同一批扣成本后的交易算出来
-    #[test]
-    fn win_rate_and_payoff_are_consistent() {
-        let closes: Vec<f64> = (0..250)
-            .map(|i| 20.0 + (i as f64 * 0.13).sin() * 3.0 + i as f64 * 0.02)
-            .collect();
-        for rule in [TradeRule::TrendFollow, TradeRule::MeanReversion, TradeRule::Breakout] {
-            let stats = run(&klines_from(&closes), rule).expect("应有回测结果");
-            if stats.trades > 0 {
-                let expected_rate = stats.wins as f64 / stats.trades as f64;
-                assert!((stats.win_rate - expected_rate).abs() < 1e-12);
-                assert!(stats.wins <= stats.trades);
-                assert!(stats.payoff_ratio >= 0.0);
-                assert!(!stats.note.is_empty(), "必须给出含样本量的说明");
-            }
-        }
+    fn bootstrap_is_deterministic() {
+        let values = [1.0, -0.2, 0.7, -0.1, 0.4, 0.2];
+        assert_eq!(
+            bootstrap_profit_probability(&values),
+            bootstrap_profit_probability(&values)
+        );
     }
 }

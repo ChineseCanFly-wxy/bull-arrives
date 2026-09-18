@@ -151,6 +151,14 @@ const columns = computed<DataTableColumns<RankItem>>(() => [
         : h('span', { class: 'muted', title: row.error ?? '' }, '评分失败'),
   },
   {
+    title: '历史',
+    key: 'history',
+    width: 112,
+    render: row => row.analysis?.history
+      ? h('span', { class: 'muted', title: row.analysis.history.warning ?? '' }, `${row.analysis.history.source_label} · ${row.analysis.history.bars}根`)
+      : h('span', { class: 'muted' }, '—'),
+  },
+  {
     title: '板块',
     key: 'board',
     width: 78,

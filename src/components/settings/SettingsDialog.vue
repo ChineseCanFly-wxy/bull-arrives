@@ -37,9 +37,24 @@ const savingKeys = ref(new Set<string>());
 interface NotificationIdentityStatus { supported: boolean; registered: boolean; shortcut_path?: string; detail: string }
 interface NotificationTestStatus { native: 'accepted' | 'failed'; native_error?: string; desktop: string; desktop_error?: string }
 interface BuildInfo { version: string; built_at: string; profile: string; exe_path: string }
+interface LocalHistoryStatus {
+  state: 'connected' | 'not_started' | 'not_found' | 'unavailable';
+  message: string;
+  source_format?: string;
+  start_date?: string;
+  end_date?: string;
+  sample_count?: number;
+  candidates: string[];
+}
+interface AgentStatus { installed: boolean; state: string; path: string | null; message: string; guidance: string }
 const notificationIdentity = ref<NotificationIdentityStatus | null>(null);
 const notificationResult = ref<NotificationTestStatus | null>(null);
 const buildInfo = ref<BuildInfo | null>(null);
+const localHistoryStatus = ref<LocalHistoryStatus | null>(null);
+const localHistoryUrlDraft = ref('http://127.0.0.1:7899');
+const localHistoryDirDraft = ref('');
+const agentStatus = ref<AgentStatus | null>(null);
+const agentPathDraft = ref('');
 
 const capturing = ref(false);
 const capturedCombo = ref<string | null>(null);
@@ -56,9 +71,14 @@ watch(() => props.show, (open) => {
       ? (settings.marketSession.interval_secs || 3)
       : settings.refreshInterval;
     actionError.value = null;
+    localHistoryUrlDraft.value = settings.localHistoryUrl;
+    localHistoryDirDraft.value = settings.localHistoryEngineDir;
+    agentPathDraft.value = settings.settings['agent_claude_path'] || '';
     safelyRun('session', () => settings.fetchMarketSession());
+    void loadLocalHistoryStatus();
     void loadNotificationIdentity();
     void loadBuildInfo();
+    void loadAgentStatus();
   } else {
     stopCapture();
   }
@@ -173,11 +193,39 @@ async function loadBuildInfo() {
   try { buildInfo.value = await invoke<BuildInfo>('get_build_info'); }
   catch (error) { console.warn('[settings] 读取构建信息失败:', error); }
 }
+async function loadLocalHistoryStatus() {
+  try { localHistoryStatus.value = await invoke<LocalHistoryStatus>('get_local_history_status'); }
+  catch (error) { localHistoryStatus.value = { state: 'unavailable', message: String(error), candidates: [] }; }
+}
+async function testLocalHistory() {
+  localHistoryStatus.value = await invoke<LocalHistoryStatus>('test_local_history', { url: localHistoryUrlDraft.value });
+}
+async function scanLocalHistory() {
+  localHistoryStatus.value = await invoke<LocalHistoryStatus>('scan_local_history');
+  if (!localHistoryDirDraft.value && localHistoryStatus.value.candidates[0]) {
+    localHistoryDirDraft.value = localHistoryStatus.value.candidates[0];
+  }
+}
+async function saveLocalHistoryUrl() {
+  if (!await settings.setSetting('local_history_url', localHistoryUrlDraft.value.trim())) return false;
+  await testLocalHistory();
+}
+async function saveLocalHistoryDir() {
+  return settings.setSetting('local_history_engine_dir', localHistoryDirDraft.value.trim());
+}
 async function registerNotificationIdentity() {
   notificationIdentity.value = await invoke<NotificationIdentityStatus>('register_notification_identity');
 }
 async function sendTestNotification() {
   notificationResult.value = await invoke<NotificationTestStatus>('test_notification');
+}
+async function loadAgentStatus() {
+  try { agentStatus.value = await invoke<AgentStatus>('get_agent_status'); }
+  catch (error) { agentStatus.value = { installed: false, state: 'unavailable', path: null, message: String(error), guidance: '请手动检查 Claude Code。' }; }
+}
+async function saveAgentPath() {
+  if (!await settings.setSetting('agent_claude_path', agentPathDraft.value.trim())) return false;
+  await loadAgentStatus();
 }
 function close() {
   stopCapture();
@@ -251,6 +299,22 @@ onBeforeUnmount(stopCapture);
               </select>
             </div>
           </article>
+          <article class="setting-card">
+            <div class="card-title-row">
+              <div><h3>本地历史数据</h3><p>长周期分析优先读取本机 stockdb；不可用时，单股分析回退在线短区间。</p></div>
+              <button class="switch" :class="{ on: settings.localHistoryEnabled }" role="switch" :aria-checked="settings.localHistoryEnabled" :disabled="isSaving('local-history-enabled')" @click="safelyRun('local-history-enabled', () => settings.setSetting('local_history_enabled', settings.localHistoryEnabled ? '0' : '1'))"><span /></button>
+            </div>
+            <div class="history-status" :class="localHistoryStatus?.state">
+              <b>{{ localHistoryStatus?.state === 'connected' ? '已连接' : localHistoryStatus?.state === 'not_started' ? '未启动' : localHistoryStatus?.state === 'not_found' ? '未找到' : '不可用' }}</b>
+              <span>{{ localHistoryStatus?.message || '正在检测…' }}</span>
+              <small v-if="localHistoryStatus?.start_date && localHistoryStatus?.end_date">样本区间 {{ localHistoryStatus.start_date }} → {{ localHistoryStatus.end_date }} · {{ localHistoryStatus.sample_count }} 根 · {{ localHistoryStatus.source_format }}</small>
+            </div>
+            <label class="history-field"><span>服务地址</span><input v-model="localHistoryUrlDraft" type="url" placeholder="http://127.0.0.1:7899" /><button class="minor-btn" :disabled="isSaving('local-history-url')" @click="safelyRun('local-history-url', saveLocalHistoryUrl)">保存并测试</button></label>
+            <label class="history-field"><span>引擎目录</span><input v-model="localHistoryDirDraft" type="text" placeholder="stockdb.exe 所在目录，可手动填写" /><button class="minor-btn" :disabled="isSaving('local-history-dir')" @click="safelyRun('local-history-dir', saveLocalHistoryDir)">保存</button></label>
+            <div class="history-actions"><button class="minor-btn" :disabled="isSaving('local-history-test')" @click="safelyRun('local-history-test', testLocalHistory)">测试连接</button><button class="minor-btn" :disabled="isSaving('local-history-scan')" @click="safelyRun('local-history-scan', scanLocalHistory)">重新扫描</button></div>
+            <div v-if="localHistoryStatus?.candidates.length" class="candidate-list"><button v-for="candidate in localHistoryStatus.candidates" :key="candidate" class="minor-btn" @click="localHistoryDirDraft = candidate">{{ candidate }}</button></div>
+            <p class="card-desc">数据更新：先退出 stockdb，再运行同目录的“数据更新.exe”。应用只提供指引，不会自动启动、关闭或更新引擎。</p>
+          </article>
         </section>
 
         <section v-else-if="activeSection === 'alerts'" class="settings-panel">
@@ -265,6 +329,13 @@ onBeforeUnmount(stopCapture);
               <p>在自选表格双击股票，或右键选择“设置行情提醒”。涨跌幅按昨收每日重新计数；固定价格规则长期有效。</p>
               <p>仅监控当前分组中的股票，切换分组后其他股票暂停监控。</p>
             </div>
+          </article>
+          <article class="setting-card">
+            <div class="card-title-row">
+              <div><h3>资讯摘要与时序盯盘</h3><p>默认关闭。交易日按规则检查关注池资讯；命中后尝试 Agent 摘要，失败回退原文。盘前、盘后和夜间卡片统一进入提醒记录，额外休市日不触发。</p></div>
+              <button class="switch" :class="{ on: settings.newsNotificationsEnabled }" role="switch" :aria-checked="settings.newsNotificationsEnabled" :disabled="isSaving('news-notifications')" @click="safelyRun('news-notifications', () => settings.setSetting('news_notifications_enabled', settings.newsNotificationsEnabled ? '0' : '1'))"><span /></button>
+            </div>
+            <p class="card-desc">来源：东方财富上市公司快讯与公司公告。首次开启只建立当前水位，不推送历史内容。</p>
           </article>
           <article class="setting-card compact-card">
             <h3>Windows 通知身份</h3>
@@ -311,6 +382,18 @@ onBeforeUnmount(stopCapture);
                 @click="safelyRun('ai-monitor', () => settings.setSetting('ai_monitor_enabled', settings.aiMonitorEnabled ? '0' : '1'))"
               ><span /></button>
             </div>
+          </article>
+          <article class="setting-card">
+            <h3>本地 Agent · Claude Code</h3>
+            <p class="card-desc">仅在你点击“生成 Agent 解读”时运行；输入只含代码计算的量化快照，应用不读取或保存凭据。</p>
+            <div class="history-status" :class="agentStatus?.installed ? 'connected' : 'not_found'">
+              <b>{{ agentStatus?.installed ? '已就绪' : '不可用' }}</b>
+              <span>{{ agentStatus?.message || '正在检测…' }}</span>
+              <small v-if="agentStatus?.path">{{ agentStatus.path }}</small>
+            </div>
+            <label class="history-field"><span>可执行文件</span><input v-model="agentPathDraft" type="text" placeholder="留空自动检测 claude.cmd / claude.exe" /><button class="minor-btn" :disabled="isSaving('agent-path')" @click="safelyRun('agent-path', saveAgentPath)">保存并检测</button></label>
+            <div class="history-actions"><button class="minor-btn" :disabled="isSaving('agent-scan')" @click="safelyRun('agent-scan', loadAgentStatus)">重新检测</button></div>
+            <p class="card-desc">{{ agentStatus?.guidance }}。固定单并发、90 秒超时，可中断并回收进程树；失败时仅保留纯量化结果。</p>
           </article>
           <article class="setting-card compact-card">
             <h3>手动触发，无需开关</h3>
@@ -451,6 +534,14 @@ onBeforeUnmount(stopCapture);
 .exe-line code { max-width: 62%; overflow-wrap: anywhere; text-align: right; color: var(--color-text-secondary); font-size: 10px; }
 .build-hint { margin-top: 8px; color: var(--color-text-tertiary); font-size: 10px; line-height: 1.5; }
 .page-size-label { color: var(--color-text-secondary); font-size: var(--text-xs); }
+.history-status { display: flex; flex-direction: column; gap: 3px; margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-tertiary); font-size: var(--text-xs); }
+.history-status.connected b { color: #3fb950; }
+.history-status.unavailable b, .history-status.not_started b { color: #d29922; }
+.history-status small { font-family: var(--font-mono); font-size: 10px; }
+.history-field { display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 10px; color: var(--color-text-secondary); font-size: var(--text-xs); }
+.history-field input { min-width: 0; min-height: 32px; padding: 0 9px; border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-primary); }
+.history-actions, .candidate-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.candidate-list button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-size-select {
   min-height: 30px;
   padding: 0 8px;

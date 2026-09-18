@@ -22,8 +22,9 @@
 //!
 //! 因此界面上**不允许只显示胜率** —— 一个 70% 胜率、盈亏比 0.5 的规则是亏钱的。
 
-use crate::domain::KLineData;
+use super::causal;
 use super::indicators::{self, latest_finite};
+use crate::domain::KLineData;
 
 /// ATR 周期（与 `monitor.rs` 的自动止损止盈保持一致，避免同一只股票两处给不同止损）
 const ATR_PERIOD: usize = 14;
@@ -73,6 +74,16 @@ impl TradeRule {
             "mean_reversion" => Self::MeanReversion,
             "breakout" => Self::Breakout,
             _ => Self::TrendFollow,
+        }
+    }
+
+    /// 用户新输入必须严格解析；旧存量仍可通过 `from_id` 兼容降级。
+    pub fn try_from_id(id: &str) -> Result<Self, String> {
+        match id.trim() {
+            "trend_follow" => Ok(Self::TrendFollow),
+            "mean_reversion" => Ok(Self::MeanReversion),
+            "breakout" => Ok(Self::Breakout),
+            value => Err(format!("rule 字段包含未知规则：{value}")),
         }
     }
 
@@ -177,30 +188,15 @@ pub fn plan(klines: &[KLineData], rule: TradeRule) -> Option<TradePlan> {
         return None;
     }
 
-    let ma5 = latest_finite(&indicators::sma(&closes, 5));
     let ma20 = latest_finite(&indicators::sma(&closes, 20));
-    let ma20_series = indicators::sma(&closes, 20);
-    let rsi12 = latest_finite(&indicators::rsi(&closes, 12));
     let boll = indicators::boll(&closes, 20, 2.0);
     let boll_lower = latest_finite(&boll.lower);
     let boll_upper = latest_finite(&boll.upper);
     let boll_mid = latest_finite(&boll.mid);
+    let signal = causal::latest_signal(klines, rule)?;
 
     let mut notes: Vec<String> = Vec::new();
     notes.push(format!("ATR(14) = {:.3}，波动越大止损越宽", atr));
-
-    // MA20 是否在上行 —— 趋势跟随的必备前提，用 5 日前比较避免被单日噪声带偏
-    let ma20_rising = {
-        let n = ma20_series.len();
-        if n > 5 {
-            match (latest_finite(&ma20_series), ma20_series.get(n - 6).copied()) {
-                (Some(now), Some(before)) if before.is_finite() => now > before,
-                _ => false,
-            }
-        } else {
-            false
-        }
-    };
 
     let (buy_low, buy_high, stop_loss, take_profit, ready, waiting_for) = match rule {
         TradeRule::TrendFollow => {
@@ -214,24 +210,18 @@ pub fn plan(klines: &[KLineData], rule: TradeRule) -> Option<TradePlan> {
                 "买点取 MA20（{:.2}）附近：均线是趋势票的天然支撑，回踩买比追高买成本低",
                 anchor
             ));
-            notes.push("止损用 2×ATR 且跌破 MA20 一并视为离场信号，避免在趋势破坏后硬扛".to_string());
+            notes.push(
+                "止损用 2×ATR 且跌破 MA20 一并视为离场信号，避免在趋势破坏后硬扛".to_string(),
+            );
 
-            let above_ma20 = ma20.map(|v| close > v).unwrap_or(false);
-            let (ready, waiting) = if ma20.is_none() {
-                (false, Some("日 K 不足 20 根，算不出 MA20".to_string()))
-            } else if !ma20_rising {
-                (false, Some("MA20 仍在下行，趋势尚未走稳".to_string()))
-            } else if !above_ma20 {
-                (false, Some(format!("现价还没站上 MA20（{:.2}）", anchor)))
-            } else {
-                let ma5_ok = ma5.map(|v| v > anchor).unwrap_or(false);
-                if ma5_ok {
-                    (true, None)
-                } else {
-                    (false, Some("MA5 尚未上穿 MA20".to_string()))
-                }
-            };
-            (low, high, stop, take, ready, waiting)
+            (
+                low,
+                high,
+                stop,
+                take,
+                signal.ready,
+                signal.waiting_for.clone(),
+            )
         }
         TradeRule::MeanReversion => {
             // 买点挂在布林下轨：均值回归的经典入场位
@@ -269,21 +259,14 @@ pub fn plan(klines: &[KLineData], rule: TradeRule) -> Option<TradePlan> {
                 rule.max_hold_days()
             ));
 
-            let (ready, waiting) = if rsi12.is_none() && boll_lower.is_none() {
-                (false, Some("日 K 不足，算不出 RSI / 布林轨道".to_string()))
-            } else {
-                let oversold_rsi = rsi12.map(|v| v < 30.0).unwrap_or(false);
-                let at_lower = boll_lower.map(|v| close <= v * 1.01).unwrap_or(false);
-                if oversold_rsi || at_lower {
-                    (true, None)
-                } else {
-                    let rsi_text = rsi12
-                        .map(|v| format!("{:.0}", v))
-                        .unwrap_or_else(|| "-".to_string());
-                    (false, Some(format!("RSI(12) 为 {rsi_text}，尚未进入超卖区（<30）；也未触及布林下轨")))
-                }
-            };
-            (low, high, stop, take, ready, waiting)
+            (
+                low,
+                high,
+                stop,
+                take,
+                signal.ready,
+                signal.waiting_for.clone(),
+            )
         }
         TradeRule::Breakout => {
             // 买点挂在「前 20 日最高价」上方 —— 突破了才算数
@@ -296,23 +279,19 @@ pub fn plan(klines: &[KLineData], rule: TradeRule) -> Option<TradePlan> {
                 "买点取前 20 日最高价（{:.2}）上方：突破前高才是突破，没破之前的都不算",
                 prior_high
             ));
-            notes.push("放量是突破的验证条件 —— 没有量能配合的突破假信号率很高，别只价格破就上".to_string());
+            notes.push(
+                "放量是突破的验证条件 —— 没有量能配合的突破假信号率很高，别只价格破就上"
+                    .to_string(),
+            );
 
-            let (ready, waiting) = {
-                let broke = close > prior_high * 0.995;
-                if broke {
-                    (true, None)
-                } else {
-                    (
-                        false,
-                        Some(format!(
-                            "现价 {:.2} 尚未突破前 20 日高点 {:.2}",
-                            close, prior_high
-                        )),
-                    )
-                }
-            };
-            (low, high, stop, take, ready, waiting)
+            (
+                low,
+                high,
+                stop,
+                take,
+                signal.ready,
+                signal.waiting_for.clone(),
+            )
         }
     };
 
@@ -378,7 +357,9 @@ pub(crate) fn highest_before_last(highs: &[f64], period: usize) -> Option<f64> {
         .iter()
         .copied()
         .filter(|v| v.is_finite())
-        .fold(None, |acc: Option<f64>, v| Some(acc.map_or(v, |a| a.max(v))))
+        .fold(None, |acc: Option<f64>, v| {
+            Some(acc.map_or(v, |a| a.max(v)))
+        })
 }
 
 // ── 为个股自动挑规则 ───────────────────────────────────────────────
@@ -620,7 +601,11 @@ mod tests {
     fn trend_rule_is_ready_on_a_steady_uptrend() {
         let closes: Vec<f64> = (0..120).map(|i| 10.0 + i as f64 * 0.1).collect();
         let plan = plan(&klines_from(&closes), TradeRule::TrendFollow).expect("应能算出计划");
-        assert!(plan.ready, "稳步上涨时趋势规则应可入场：{:?}", plan.waiting_for);
+        assert!(
+            plan.ready,
+            "稳步上涨时趋势规则应可入场：{:?}",
+            plan.waiting_for
+        );
         assert!(plan.take_profit > plan.reference_price);
         assert!(plan.stop_loss < plan.reference_price);
         assert!(plan.risk_reward > 0.0);
@@ -639,14 +624,26 @@ mod tests {
     #[test]
     fn stop_loss_is_always_sane() {
         for closes in [
-            (0..120).map(|i| 10.0 + i as f64 * 0.1).collect::<Vec<f64>>(),
-            (0..120).map(|i| 30.0 - i as f64 * 0.1).collect::<Vec<f64>>(),
+            (0..120)
+                .map(|i| 10.0 + i as f64 * 0.1)
+                .collect::<Vec<f64>>(),
+            (0..120)
+                .map(|i| 30.0 - i as f64 * 0.1)
+                .collect::<Vec<f64>>(),
             vec![50.0; 120],
         ] {
-            for rule in [TradeRule::TrendFollow, TradeRule::MeanReversion, TradeRule::Breakout] {
+            for rule in [
+                TradeRule::TrendFollow,
+                TradeRule::MeanReversion,
+                TradeRule::Breakout,
+            ] {
                 if let Some(plan) = plan(&klines_from(&closes), rule) {
                     assert!(plan.stop_loss > 0.0, "{:?} 止损价为负", rule);
-                    assert!(plan.stop_loss < plan.reference_price, "{:?} 止损不低于现价", rule);
+                    assert!(
+                        plan.stop_loss < plan.reference_price,
+                        "{:?} 止损不低于现价",
+                        rule
+                    );
                     assert!(plan.position_pct >= 1.0 && plan.position_pct <= MAX_POSITION_PCT);
                 }
             }
@@ -673,11 +670,19 @@ mod tests {
     /// 规则 id 往返稳定，未知 id 安全回落（前端持久化依赖这一点）
     #[test]
     fn rule_ids_round_trip_and_fall_back_safely() {
-        for rule in [TradeRule::TrendFollow, TradeRule::MeanReversion, TradeRule::Breakout] {
+        for rule in [
+            TradeRule::TrendFollow,
+            TradeRule::MeanReversion,
+            TradeRule::Breakout,
+        ] {
             assert_eq!(TradeRule::from_id(rule.id()), rule);
+            assert_eq!(TradeRule::try_from_id(rule.id()).unwrap(), rule);
         }
         assert_eq!(TradeRule::from_id("不存在的规则"), TradeRule::TrendFollow);
         assert_eq!(TradeRule::from_id(""), TradeRule::TrendFollow);
+        assert!(TradeRule::try_from_id("不存在的规则")
+            .unwrap_err()
+            .contains("rule 字段"));
     }
 
     // ── 按状态自动挑规则 ──
@@ -724,9 +729,17 @@ mod tests {
             .map(|i| 20.0 - i as f64 * 0.03 + (i as f64 * 0.5).sin() * 1.0)
             .collect();
         let m = match_rule(&klines_from(&closes)).expect("应能给出匹配结果");
-        let states: Vec<(&str, bool)> = m.candidates.iter().map(|c| (c.rule.id(), c.ready)).collect();
+        let states: Vec<(&str, bool)> = m
+            .candidates
+            .iter()
+            .map(|c| (c.rule.id(), c.ready))
+            .collect();
         assert!(m.none_ready, "缓慢阴跌三条都不该成立，实际：{states:?}");
-        assert!(m.reason.contains("都还没成立"), "理由要说清楚现状：{}", m.reason);
+        assert!(
+            m.reason.contains("都还没成立"),
+            "理由要说清楚现状：{}",
+            m.reason
+        );
         // 但仍要给出「最接近触发」的那条，而不是拒绝回答
         assert!(m.candidates.iter().any(|c| c.rule == m.recommended));
     }
@@ -738,7 +751,9 @@ mod tests {
         let cases: Vec<Vec<f64>> = vec![
             (0..150).map(|i| 10.0 + i as f64 * 0.1).collect(),
             (0..150).map(|i| 30.0 - i as f64 * 0.1).collect(),
-            (0..150).map(|i| 15.0 + (i as f64 * 0.3).sin() * 2.0).collect(),
+            (0..150)
+                .map(|i| 15.0 + (i as f64 * 0.3).sin() * 2.0)
+                .collect(),
         ];
         for closes in cases {
             let m = match_rule(&klines_from(&closes)).unwrap();

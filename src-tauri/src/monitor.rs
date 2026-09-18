@@ -49,10 +49,7 @@ pub fn compute_stop_take(klines: &[KLineData], reference_price: f64) -> Option<(
     let highs: Vec<f64> = klines.iter().map(|k| k.high).collect();
     let lows: Vec<f64> = klines.iter().map(|k| k.low).collect();
     let atr = crate::quant::indicators::latest_finite(&crate::quant::indicators::atr(
-        &highs,
-        &lows,
-        &closes,
-        ATR_PERIOD,
+        &highs, &lows, &closes, ATR_PERIOD,
     ))?;
     if atr <= 0.0 {
         return None;
@@ -135,7 +132,13 @@ pub fn evaluate_monitors<F>(
                 log::warn!("Failed to mark monitor triggered: {error}");
                 continue;
             }
-            publish(event(&monitor, "stop_loss", monitor.stop_price, price, &now_rfc3339));
+            publish(event(
+                &monitor,
+                "stop_loss",
+                monitor.stop_price,
+                price,
+                &now_rfc3339,
+            ));
             continue;
         }
 
@@ -145,7 +148,13 @@ pub fn evaluate_monitors<F>(
                 log::warn!("Failed to mark monitor triggered: {error}");
                 continue;
             }
-            publish(event(&monitor, "take_profit", monitor.take_price, price, &now_rfc3339));
+            publish(event(
+                &monitor,
+                "take_profit",
+                monitor.take_price,
+                price,
+                &now_rfc3339,
+            ));
         }
     }
 }

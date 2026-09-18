@@ -56,12 +56,17 @@ fn detect_http_proxy_port() -> Option<u16> {
 /// a development server). Probe the CONNECT handshake before using it.
 fn probe_connect(port: u16) -> bool {
     let address = SocketAddr::from(([127, 0, 0, 1], port));
-    let mut stream = match TcpStream::connect_timeout(&address, std::time::Duration::from_millis(75)) {
-        Ok(stream) => stream,
-        Err(_) => return false,
-    };
-    if stream.set_write_timeout(Some(std::time::Duration::from_millis(250))).is_err()
-        || stream.set_read_timeout(Some(std::time::Duration::from_millis(250))).is_err()
+    let mut stream =
+        match TcpStream::connect_timeout(&address, std::time::Duration::from_millis(75)) {
+            Ok(stream) => stream,
+            Err(_) => return false,
+        };
+    if stream
+        .set_write_timeout(Some(std::time::Duration::from_millis(250)))
+        .is_err()
+        || stream
+            .set_read_timeout(Some(std::time::Duration::from_millis(250)))
+            .is_err()
     {
         return false;
     }
@@ -89,14 +94,17 @@ fn probe_connect(port: u16) -> bool {
 fn system_proxy_port() -> Option<u16> {
     use windows::core::w;
     use windows::Win32::Foundation::ERROR_SUCCESS;
-    use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ};
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
+    };
 
     const INTERNET_SETTINGS: windows::core::PCWSTR =
         w!("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings");
 
     unsafe {
         let mut hkey = HKEY::default();
-        if RegOpenKeyExW(HKEY_CURRENT_USER, INTERNET_SETTINGS, 0, KEY_READ, &mut hkey) != ERROR_SUCCESS
+        if RegOpenKeyExW(HKEY_CURRENT_USER, INTERNET_SETTINGS, 0, KEY_READ, &mut hkey)
+            != ERROR_SUCCESS
         {
             return None;
         }
@@ -169,7 +177,10 @@ unsafe fn reg_read_string(
         return None;
     }
 
-    let end = buffer.iter().position(|unit| *unit == 0).unwrap_or(buffer.len());
+    let end = buffer
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(buffer.len());
     Some(String::from_utf16_lossy(&buffer[..end]))
 }
 
@@ -227,9 +238,16 @@ async fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Upd
 
     // 环境变量优先级最高：reqwest 默认就会读 HTTP(S)_PROXY / ALL_PROXY，
     // 这里只要探测到有，就不要再覆盖用户的显式配置。
-    let explicit_proxy = ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "ALL_PROXY", "all_proxy"]
-        .into_iter()
-        .find(|key| std::env::var_os(key).is_some());
+    let explicit_proxy = [
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "https_proxy",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ]
+    .into_iter()
+    .find(|key| std::env::var_os(key).is_some());
 
     match explicit_proxy {
         Some(key) => log::info!("[updater] 使用环境变量 {} 指定的代理", key),
@@ -238,7 +256,8 @@ async fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Upd
                 .await
                 .map_err(|e| format!("更新代理探测失败：{}", e))?;
             if let Some(port) = port {
-                let proxy = format!("http://127.0.0.1:{}", port).parse()
+                let proxy = format!("http://127.0.0.1:{}", port)
+                    .parse()
                     .map_err(|e| format!("更新代理地址无效：{}", e))?;
                 builder = builder.proxy(proxy);
             } else {
@@ -248,7 +267,9 @@ async fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Upd
     }
 
     // updater_builder 保留插件默认的 cleanup_before_exit 回调，不自行退出进程。
-    builder.build().map_err(|e| format!("Updater init failed: {}", e))
+    builder
+        .build()
+        .map_err(|e| format!("Updater init failed: {}", e))
 }
 
 #[cfg(test)]
@@ -260,7 +281,9 @@ mod tests {
         assert!(is_successful_proxy_connect(
             b"HTTP/1.1 200 Connection Established\r\n\r\n"
         ));
-        assert!(!is_successful_proxy_connect(b"HTTP/1.1 400 Bad Request\r\n\r\n"));
+        assert!(!is_successful_proxy_connect(
+            b"HTTP/1.1 400 Bad Request\r\n\r\n"
+        ));
         assert!(!is_successful_proxy_connect(
             b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n"
         ));
@@ -310,15 +333,15 @@ pub async fn do_check_update(app: &AppHandle) -> Result<Option<UpdateInfo>, Stri
 
     let updater = configured_updater(app).await?;
 
-    let Some(update) = updater
-        .check()
-        .await
-        .map_err(|e| {
-            log::error!("[updater] Check failed: {}", e);
-            format!("Update check failed: {}", e)
-        })?
+    let Some(update) = updater.check().await.map_err(|e| {
+        log::error!("[updater] Check failed: {}", e);
+        format!("Update check failed: {}", e)
+    })?
     else {
-        log::info!("[updater] No update available (current: {})", current_version);
+        log::info!(
+            "[updater] No update available (current: {})",
+            current_version
+        );
         return Ok(None);
     };
 
@@ -390,13 +413,10 @@ pub async fn install_update(
     let updater = configured_updater(&app).await?;
 
     log::info!("[updater] Checking for update before download...");
-    let Some(update) = updater
-        .check()
-        .await
-        .map_err(|e| {
-            log::error!("[updater] Pre-download check failed: {}", e);
-            format!("Update check failed: {}", e)
-        })?
+    let Some(update) = updater.check().await.map_err(|e| {
+        log::error!("[updater] Pre-download check failed: {}", e);
+        format!("Update check failed: {}", e)
+    })?
     else {
         log::warn!("[updater] No update available for download");
         return Err("No update available".into());
@@ -427,8 +447,8 @@ pub async fn install_update(
             move |chunk_size, total| {
                 // chunk_size is the size of this individual chunk, NOT cumulative.
                 // Accumulate to get real downloaded bytes.
-                let cumulative = cum_bytes.fetch_add(chunk_size as u64, Ordering::Relaxed)
-                    + chunk_size as u64;
+                let cumulative =
+                    cum_bytes.fetch_add(chunk_size as u64, Ordering::Relaxed) + chunk_size as u64;
 
                 let count = cc.fetch_add(1, Ordering::Relaxed);
 
@@ -447,9 +467,8 @@ pub async fn install_update(
                 let last = llp.load(Ordering::Relaxed);
                 let milestone = pct / 10;
                 let last_milestone = last / 10;
-                let should_log = count == 0
-                    || milestone > last_milestone
-                    || (count > 0 && count % 200 == 0);
+                let should_log =
+                    count == 0 || milestone > last_milestone || (count > 0 && count % 200 == 0);
 
                 if should_log {
                     llp.store(pct, Ordering::Relaxed);

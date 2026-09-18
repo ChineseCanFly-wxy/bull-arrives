@@ -27,8 +27,7 @@ use tokio::task::JoinSet;
 use super::eastmoney_universe::{Board, EmError, SnapshotRow};
 
 /// 新浪行情列表接口基址
-const SINA_BASE: &str =
-    "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php";
+const SINA_BASE: &str = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php";
 
 /// 全市场节点：沪深 A 股 + 北交所
 const SINA_NODE: &str = "hs_a";
@@ -134,6 +133,7 @@ fn parse_row(v: &RawRow) -> Option<SnapshotRow> {
     let upper_name = name.to_uppercase();
     let board = Board::from_code(&code);
     let is_st = upper_name.contains("ST");
+    let is_cdr = code.starts_with("689");
 
     Some(SnapshotRow {
         code,
@@ -161,6 +161,8 @@ fn parse_row(v: &RawRow) -> Option<SnapshotRow> {
         pb: f64_field(v, "pb"),
         change_60d: 0.0,
         change_ytd: 0.0,
+        listing_date: None,
+        listed_days: None,
         board,
         is_st,
         is_delisting: upper_name.contains("退"),
@@ -172,6 +174,7 @@ fn parse_row(v: &RawRow) -> Option<SnapshotRow> {
             board,
             is_st,
         ),
+        is_cdr,
     })
 }
 
@@ -192,9 +195,7 @@ fn sina_client() -> reqwest::Client {
 
 /// 全市场股票总数
 async fn fetch_count(client: &reqwest::Client) -> Result<u32, EmError> {
-    let url = format!(
-        "{SINA_BASE}/Market_Center.getHQNodeStockCount?node={SINA_NODE}"
-    );
+    let url = format!("{SINA_BASE}/Market_Center.getHQNodeStockCount?node={SINA_NODE}");
     let resp = client
         .get(&url)
         .header("Referer", "https://finance.sina.com.cn/")
@@ -241,7 +242,10 @@ async fn fetch_page(
                 return Err(EmError::RateLimited(status));
             }
 
-            let text = resp.text().await.map_err(|source| EmError::Page { page, source })?;
+            let text = resp
+                .text()
+                .await
+                .map_err(|source| EmError::Page { page, source })?;
             // 空页 / 越界页返回空体或 `null`，都视为空而不是解析错误
             let trimmed = text.trim();
             if trimmed.is_empty() || trimmed == "null" {
@@ -330,9 +334,7 @@ async fn fetch_page_range(
 }
 
 /// 拉取全市场快照（自动分页 + 有界并发）。
-pub async fn fetch_market_snapshot(
-    client: &reqwest::Client,
-) -> Result<Vec<SnapshotRow>, EmError> {
+pub async fn fetch_market_snapshot(client: &reqwest::Client) -> Result<Vec<SnapshotRow>, EmError> {
     let total = fetch_count(client).await?;
     if total == 0 {
         return Err(EmError::EmptyPayload);

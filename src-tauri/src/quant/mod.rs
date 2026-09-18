@@ -3,7 +3,9 @@
 // 与「数据接入层（datasource）」解耦 —— 只吃纯数据（K 线序列），不碰网络。
 
 pub mod backtest;
+pub mod causal;
 pub mod indicators;
 pub mod levels;
 pub mod playbook;
+pub mod research;
 pub mod scorer;

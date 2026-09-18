@@ -359,33 +359,83 @@ mod tests {
     #[test]
     fn percentage_uses_previous_close_and_preserves_sign() {
         let up = alert("change_pct", 5.0, "daily");
-        assert_eq!(decide(&up, 105.0, 100.0, at("2026-09-10T10:00:00"), true, false).unwrap().trigger, Some(AlertDirection::Up));
-        assert_eq!(decide(&up, 95.0, 100.0, at("2026-09-10T10:00:00"), true, false).unwrap().trigger, None);
+        assert_eq!(
+            decide(&up, 105.0, 100.0, at("2026-09-10T10:00:00"), true, false)
+                .unwrap()
+                .trigger,
+            Some(AlertDirection::Up)
+        );
+        assert_eq!(
+            decide(&up, 95.0, 100.0, at("2026-09-10T10:00:00"), true, false)
+                .unwrap()
+                .trigger,
+            None
+        );
 
         let down = alert("change_pct", -5.0, "daily");
-        assert_eq!(decide(&down, 95.0, 100.0, at("2026-09-10T10:00:00"), true, false).unwrap().trigger, Some(AlertDirection::Down));
-        assert_eq!(decide(&down, 105.0, 100.0, at("2026-09-10T10:00:00"), true, false).unwrap().trigger, None);
+        assert_eq!(
+            decide(&down, 95.0, 100.0, at("2026-09-10T10:00:00"), true, false)
+                .unwrap()
+                .trigger,
+            Some(AlertDirection::Down)
+        );
+        assert_eq!(
+            decide(&down, 105.0, 100.0, at("2026-09-10T10:00:00"), true, false)
+                .unwrap()
+                .trigger,
+            None
+        );
     }
 
     #[test]
     fn fixed_price_crosses_both_directions_and_handles_jumps() {
         let mut rule = alert("fixed_price", 10.0, "crossing");
         rule.last_value = Some(9.0);
-        assert_eq!(decide(&rule, 11.0, 9.0, at("2026-09-10T10:00:00"), true, false).unwrap().trigger, Some(AlertDirection::Up));
+        assert_eq!(
+            decide(&rule, 11.0, 9.0, at("2026-09-10T10:00:00"), true, false)
+                .unwrap()
+                .trigger,
+            Some(AlertDirection::Up)
+        );
         rule.last_value = Some(11.0);
-        assert_eq!(decide(&rule, 9.0, 11.0, at("2026-09-10T10:01:00"), true, false).unwrap().trigger, Some(AlertDirection::Down));
+        assert_eq!(
+            decide(&rule, 9.0, 11.0, at("2026-09-10T10:01:00"), true, false)
+                .unwrap()
+                .trigger,
+            Some(AlertDirection::Down)
+        );
     }
 
     #[test]
     fn equality_does_not_repeat_until_recrossed() {
         let mut rule = alert("fixed_price", 10.0, "crossing");
         rule.last_value = Some(9.0);
-        assert!(decide(&rule, 10.0, 9.0, at("2026-09-10T10:00:00"), true, false).unwrap().trigger.is_some());
+        assert!(
+            decide(&rule, 10.0, 9.0, at("2026-09-10T10:00:00"), true, false)
+                .unwrap()
+                .trigger
+                .is_some()
+        );
         rule.last_value = Some(10.0);
-        assert!(decide(&rule, 10.0, 10.0, at("2026-09-10T10:01:00"), true, false).unwrap().trigger.is_none());
-        assert!(decide(&rule, 11.0, 10.0, at("2026-09-10T10:02:00"), true, false).unwrap().trigger.is_none());
+        assert!(
+            decide(&rule, 10.0, 10.0, at("2026-09-10T10:01:00"), true, false)
+                .unwrap()
+                .trigger
+                .is_none()
+        );
+        assert!(
+            decide(&rule, 11.0, 10.0, at("2026-09-10T10:02:00"), true, false)
+                .unwrap()
+                .trigger
+                .is_none()
+        );
         rule.last_value = Some(11.0);
-        assert_eq!(decide(&rule, 10.0, 11.0, at("2026-09-10T10:03:00"), true, false).unwrap().trigger, Some(AlertDirection::Down));
+        assert_eq!(
+            decide(&rule, 10.0, 11.0, at("2026-09-10T10:03:00"), true, false)
+                .unwrap()
+                .trigger,
+            Some(AlertDirection::Down)
+        );
     }
 
     #[test]
@@ -393,25 +443,50 @@ mod tests {
         let mut pct = alert("change_pct", 5.0, "crossing");
         pct.last_value = Some(4.0);
         pct.last_value_day = Some("2026-09-09".into());
-        assert!(decide(&pct, 106.0, 100.0, at("2026-09-10T10:00:00"), true, false).unwrap().trigger.is_none());
+        assert!(
+            decide(&pct, 106.0, 100.0, at("2026-09-10T10:00:00"), true, false)
+                .unwrap()
+                .trigger
+                .is_none()
+        );
 
         let mut price = alert("fixed_price", 10.0, "crossing");
         price.last_value = Some(9.0);
         price.last_value_day = Some("2026-09-09".into());
-        assert!(decide(&price, 11.0, 9.0, at("2026-09-10T10:00:00"), true, false).unwrap().trigger.is_some());
+        assert!(
+            decide(&price, 11.0, 9.0, at("2026-09-10T10:00:00"), true, false)
+                .unwrap()
+                .trigger
+                .is_some()
+        );
     }
 
     #[test]
     fn daily_and_cooldown_limits_are_enforced() {
         let mut daily = alert("change_pct", 5.0, "daily");
         daily.last_triggered_day = Some("2026-09-10".into());
-        assert!(decide(&daily, 106.0, 100.0, at("2026-09-10T10:00:00"), true, false).unwrap().trigger.is_none());
+        assert!(
+            decide(&daily, 106.0, 100.0, at("2026-09-10T10:00:00"), true, false)
+                .unwrap()
+                .trigger
+                .is_none()
+        );
 
         let mut cooldown = alert("fixed_price", 10.0, "cooldown");
         cooldown.last_value = Some(9.0);
         cooldown.last_triggered_at = Some(at("2026-09-10T10:00:00").to_rfc3339());
-        assert!(decide(&cooldown, 11.0, 9.0, at("2026-09-10T10:04:59"), true, false).unwrap().trigger.is_none());
-        assert!(decide(&cooldown, 11.0, 9.0, at("2026-09-10T10:05:00"), true, false).unwrap().trigger.is_some());
+        assert!(
+            decide(&cooldown, 11.0, 9.0, at("2026-09-10T10:04:59"), true, false)
+                .unwrap()
+                .trigger
+                .is_none()
+        );
+        assert!(
+            decide(&cooldown, 11.0, 9.0, at("2026-09-10T10:05:00"), true, false)
+                .unwrap()
+                .trigger
+                .is_some()
+        );
     }
 
     #[test]
