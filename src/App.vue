@@ -64,6 +64,7 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
 onMounted(async () => {
   try {
     await settings.fetchSettings();
+    await settings.initStockDbListener();
     settings.applyTheme(settings.theme);
     await watchlist.fetchWatchlist();
     await quote.startListening();
@@ -86,6 +87,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   quote.stopListening();
+  settings.stopStockDbListener();
   if (unlistenSession) unlistenSession();
 });
 

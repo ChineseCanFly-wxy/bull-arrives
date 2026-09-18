@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, defineAsyncComponent } from 'vue';
+import { computed, ref, defineAsyncComponent, onMounted, onUnmounted } from 'vue';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useSettingsStore } from '@/stores/settings';
 import { useRankStore } from '@/stores/rank';
-import { NIcon, NDropdown } from 'naive-ui';
+import { NIcon, NDropdown, useMessage } from 'naive-ui';
 const SettingsDialog = defineAsyncComponent(() => import('@/components/settings/SettingsDialog.vue'));
 const UniverseScreenerDialog = defineAsyncComponent(() => import('@/components/screener/UniverseScreenerDialog.vue'));
 const MonitorDialog = defineAsyncComponent(() => import('@/components/monitor/MonitorDialog.vue'));
@@ -12,6 +13,30 @@ const RankDialog = defineAsyncComponent(() => import('@/components/rank/RankDial
 
 const settings = useSettingsStore();
 const rank = useRankStore();
+const message = useMessage();
+let unlistenQuitBlocked: UnlistenFn | null = null;
+onMounted(async () => {
+  unlistenQuitBlocked = await listen('stockdb-quit-blocked', () => {
+    message.warning('数据更新正在进行，请等待更新窗口关闭后再退出应用');
+  });
+});
+onUnmounted(() => unlistenQuitBlocked?.());
+const stockDbUpdating = computed(() =>
+  ['updating', 'restarting'].includes(settings.stockDbStatus?.state || '')
+);
+const stockDbUpdateTitle = computed(() => {
+  if (!settings.stockDbStatus?.updaterAvailable) return '请先在设置中选择“数据更新.exe”';
+  return stockDbUpdating.value ? settings.stockDbStatus?.message || '正在更新本地数据' : '更新本地 stockdb 数据';
+});
+
+async function updateStockDb() {
+  try {
+    const result = await settings.runStockDbUpdate();
+    message.success(result);
+  } catch (error) {
+    message.error(String(error), { duration: 6000 });
+  }
+}
 
 const dsDisplayName = computed(() => {
   const found = settings.datasources.find(([id]) => id === settings.activeDatasource);
@@ -129,6 +154,24 @@ function openSimulation() {
       </button>
 
       <button
+        v-if="settings.localHistoryEnabled && settings.stockDbStatus?.platformSupported !== false"
+        class="cog-btn"
+        :class="{ spinning: stockDbUpdating }"
+        aria-label="更新本地 stockdb 数据"
+        :title="stockDbUpdateTitle"
+        :disabled="stockDbUpdating || settings.stockDbStatus?.busy || !settings.stockDbStatus?.updaterAvailable"
+        @click="updateStockDb"
+      >
+        <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <ellipse cx="10" cy="4" rx="6" ry="2.5" />
+          <path d="M4 4v4c0 1.4 2.7 2.5 6 2.5M16 4v3" />
+          <path d="M4 8v4c0 1.4 2.7 2.5 6 2.5" />
+          <path d="M13 11.5h4v4" />
+          <path d="M17 11.5a5 5 0 0 1-7 5" />
+        </svg>
+      </button>
+
+      <button
         class="cog-btn"
         :aria-label="`打开设置 (${settings.tickerHotkey})`"
         :title="`设置 (悬浮窗快捷键: ${settings.tickerHotkey})`"
@@ -225,9 +268,20 @@ function openSimulation() {
   cursor: pointer;
   transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
 }
-.cog-btn:hover {
+.cog-btn:hover:not(:disabled) {
   color: var(--color-accent);
   background: var(--color-accent-dim);
   border-color: var(--color-accent-dim);
+}
+.cog-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.cog-btn.spinning svg {
+  animation: stockdb-spin 0.9s linear infinite;
+}
+@keyframes stockdb-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .cog-btn.spinning svg { animation: none; }
 }
 </style>

@@ -8,6 +8,7 @@ pub mod rank;
 pub mod sector;
 pub mod settings;
 pub mod simulation;
+pub mod stockdb;
 pub mod strategies;
 pub mod universe;
 pub mod updater;

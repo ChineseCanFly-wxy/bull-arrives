@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { NAlert, NModal } from 'naive-ui';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { useSettingsStore, REFRESH_INTERVAL_AUTO } from '@/stores/settings';
 import { useUniverseStore } from '@/stores/universe';
 import QuoteScheduleSettings from './QuoteScheduleSettings.vue';
@@ -52,7 +53,6 @@ const notificationResult = ref<NotificationTestStatus | null>(null);
 const buildInfo = ref<BuildInfo | null>(null);
 const localHistoryStatus = ref<LocalHistoryStatus | null>(null);
 const localHistoryUrlDraft = ref('http://127.0.0.1:7899');
-const localHistoryDirDraft = ref('');
 const agentStatus = ref<AgentStatus | null>(null);
 const agentPathDraft = ref('');
 
@@ -72,10 +72,10 @@ watch(() => props.show, (open) => {
       : settings.refreshInterval;
     actionError.value = null;
     localHistoryUrlDraft.value = settings.localHistoryUrl;
-    localHistoryDirDraft.value = settings.localHistoryEngineDir;
     agentPathDraft.value = settings.settings['agent_claude_path'] || '';
     safelyRun('session', () => settings.fetchMarketSession());
-    void loadLocalHistoryStatus();
+    if (settings.localHistoryEnabled) void loadLocalHistoryStatus();
+    void settings.fetchStockDbStatus();
     void loadNotificationIdentity();
     void loadBuildInfo();
     void loadAgentStatus();
@@ -201,17 +201,40 @@ async function testLocalHistory() {
   localHistoryStatus.value = await invoke<LocalHistoryStatus>('test_local_history', { url: localHistoryUrlDraft.value });
 }
 async function scanLocalHistory() {
-  localHistoryStatus.value = await invoke<LocalHistoryStatus>('scan_local_history');
-  if (!localHistoryDirDraft.value && localHistoryStatus.value.candidates[0]) {
-    localHistoryDirDraft.value = localHistoryStatus.value.candidates[0];
-  }
+  await settings.scanStockDb();
 }
 async function saveLocalHistoryUrl() {
   if (!await settings.setSetting('local_history_url', localHistoryUrlDraft.value.trim())) return false;
   await testLocalHistory();
 }
-async function saveLocalHistoryDir() {
-  return settings.setSetting('local_history_engine_dir', localHistoryDirDraft.value.trim());
+async function browseStockDbEngine() {
+  const path = await open({
+    multiple: false,
+    directory: false,
+    title: '选择 stockdb.exe',
+    filters: [{ name: 'stockdb', extensions: ['exe'] }],
+  });
+  if (typeof path === 'string') await settings.selectStockDbEngine(path);
+}
+async function browseStockDbUpdater() {
+  const path = await open({
+    multiple: false,
+    directory: false,
+    title: '选择 数据更新.exe',
+    filters: [{ name: '数据更新程序', extensions: ['exe'] }],
+  });
+  if (typeof path === 'string') await settings.selectStockDbUpdater(path);
+}
+async function chooseStockDbCandidate(path: string) {
+  await settings.selectStockDbEngine(path);
+}
+function stockDbStateLabel() {
+  const labels: Record<string, string> = {
+    disabled: '已关闭', locating: '正在查找', not_configured: '未配置', configured: '已配置',
+    starting: '正在启动', running_owned: '正在运行', running_external: '外部服务',
+    updating: '正在更新', restarting: '正在重启', error: '异常', unsupported: '不支持',
+  };
+  return labels[settings.stockDbStatus?.state || ''] || '正在检测';
 }
 async function registerNotificationIdentity() {
   notificationIdentity.value = await invoke<NotificationIdentityStatus>('register_notification_identity');
@@ -301,19 +324,40 @@ onBeforeUnmount(stopCapture);
           </article>
           <article class="setting-card">
             <div class="card-title-row">
-              <div><h3>本地历史数据</h3><p>长周期分析优先读取本机 stockdb；不可用时，单股分析回退在线短区间。</p></div>
-              <button class="switch" :class="{ on: settings.localHistoryEnabled }" role="switch" :aria-checked="settings.localHistoryEnabled" :disabled="isSaving('local-history-enabled')" @click="safelyRun('local-history-enabled', () => settings.setSetting('local_history_enabled', settings.localHistoryEnabled ? '0' : '1'))"><span /></button>
+              <div><h3>本地历史数据</h3><p>默认关闭。开启后，Bull Arrives 会在启动时自动运行已选择的 stockdb。</p></div>
+              <button class="switch" :class="{ on: settings.localHistoryEnabled }" role="switch" :aria-checked="settings.localHistoryEnabled" :disabled="isSaving('local-history-enabled') || settings.stockDbStatus?.busy" @click="safelyRun('local-history-enabled', () => settings.setLocalHistoryEnabled(!settings.localHistoryEnabled))"><span /></button>
             </div>
-            <div class="history-status" :class="localHistoryStatus?.state">
-              <b>{{ localHistoryStatus?.state === 'connected' ? '已连接' : localHistoryStatus?.state === 'not_started' ? '未启动' : localHistoryStatus?.state === 'not_found' ? '未找到' : '不可用' }}</b>
-              <span>{{ localHistoryStatus?.message || '正在检测…' }}</span>
-              <small v-if="localHistoryStatus?.start_date && localHistoryStatus?.end_date">样本区间 {{ localHistoryStatus.start_date }} → {{ localHistoryStatus.end_date }} · {{ localHistoryStatus.sample_count }} 根 · {{ localHistoryStatus.source_format }}</small>
+            <div class="history-status" :class="settings.stockDbStatus?.state">
+              <b>{{ stockDbStateLabel() }}</b>
+              <span>{{ settings.stockDbStatus?.message || '正在检测…' }}</span>
+              <small v-if="settings.stockDbStatus?.owned">此进程由 Bull Arrives 管理，托盘真正退出时会一并关闭。</small>
+              <small v-else-if="settings.stockDbStatus?.state === 'running_external'">外部进程不会被 Bull Arrives 停止或更新。</small>
             </div>
-            <label class="history-field"><span>服务地址</span><input v-model="localHistoryUrlDraft" type="url" placeholder="http://127.0.0.1:7899" /><button class="minor-btn" :disabled="isSaving('local-history-url')" @click="safelyRun('local-history-url', saveLocalHistoryUrl)">保存并测试</button></label>
-            <label class="history-field"><span>引擎目录</span><input v-model="localHistoryDirDraft" type="text" placeholder="stockdb.exe 所在目录，可手动填写" /><button class="minor-btn" :disabled="isSaving('local-history-dir')" @click="safelyRun('local-history-dir', saveLocalHistoryDir)">保存</button></label>
-            <div class="history-actions"><button class="minor-btn" :disabled="isSaving('local-history-test')" @click="safelyRun('local-history-test', testLocalHistory)">测试连接</button><button class="minor-btn" :disabled="isSaving('local-history-scan')" @click="safelyRun('local-history-scan', scanLocalHistory)">重新扫描</button></div>
-            <div v-if="localHistoryStatus?.candidates.length" class="candidate-list"><button v-for="candidate in localHistoryStatus.candidates" :key="candidate" class="minor-btn" @click="localHistoryDirDraft = candidate">{{ candidate }}</button></div>
-            <p class="card-desc">数据更新：先退出 stockdb，再运行同目录的“数据更新.exe”。应用只提供指引，不会自动启动、关闭或更新引擎。</p>
+            <template v-if="settings.stockDbStatus?.platformSupported !== false">
+              <div class="history-program-row">
+                <span>stockdb 程序</span>
+                <code :title="settings.localHistoryEnginePath || '尚未选择'">{{ settings.localHistoryEnginePath || '尚未选择 stockdb.exe' }}</code>
+                <button class="minor-btn" :disabled="settings.stockDbStatus?.busy || isSaving('stockdb-engine')" @click="safelyRun('stockdb-engine', browseStockDbEngine)">浏览选择</button>
+              </div>
+              <div class="history-program-row">
+                <span>数据更新程序</span>
+                <code :title="settings.localHistoryUpdaterPath || '尚未找到'">{{ settings.localHistoryUpdaterPath || '尚未找到 数据更新.exe' }}</code>
+                <button class="minor-btn" :disabled="settings.stockDbStatus?.busy || isSaving('stockdb-updater')" @click="safelyRun('stockdb-updater', browseStockDbUpdater)">浏览选择</button>
+              </div>
+              <div class="history-actions">
+                <button class="minor-btn" :disabled="settings.stockDbStatus?.busy || isSaving('local-history-scan')" @click="safelyRun('local-history-scan', scanLocalHistory)">自动查找</button>
+                <button v-if="settings.localHistoryEnabled" class="minor-btn" :disabled="isSaving('local-history-test')" @click="safelyRun('local-history-test', testLocalHistory)">测试连接</button>
+              </div>
+              <div v-if="settings.stockDbStatus?.candidates.length" class="candidate-list">
+                <button v-for="candidate in settings.stockDbStatus.candidates" :key="candidate.enginePath" class="minor-btn candidate-btn" :title="candidate.enginePath" @click="safelyRun('stockdb-candidate', () => chooseStockDbCandidate(candidate.enginePath))">{{ candidate.source }} · {{ candidate.enginePath }}</button>
+              </div>
+              <details v-if="settings.localHistoryEnabled" class="history-advanced">
+                <summary>高级连接设置</summary>
+                <label class="history-field"><span>服务地址</span><input v-model="localHistoryUrlDraft" type="url" placeholder="http://127.0.0.1:7899" /><button class="minor-btn" :disabled="isSaving('local-history-url')" @click="safelyRun('local-history-url', saveLocalHistoryUrl)">保存并测试</button></label>
+                <small v-if="localHistoryStatus?.start_date && localHistoryStatus?.end_date">样本区间 {{ localHistoryStatus.start_date }} → {{ localHistoryStatus.end_date }} · {{ localHistoryStatus.sample_count }} 根 · {{ localHistoryStatus.source_format }}</small>
+              </details>
+            </template>
+            <p class="card-desc">关闭时不会启动或读取本地数据库。更新时仅停止由 Bull Arrives 启动的 stockdb，显示“数据更新.exe”窗口，完成后自动重启。</p>
           </article>
         </section>
 
@@ -542,6 +586,13 @@ onBeforeUnmount(stopCapture);
 .history-field input { min-width: 0; min-height: 32px; padding: 0 9px; border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-primary); }
 .history-actions, .candidate-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .candidate-list button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-program-row { display: grid; grid-template-columns: 108px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 10px; font-size: var(--text-xs); color: var(--color-text-secondary); }
+.history-program-row code { min-width: 0; padding: 7px 9px; overflow-wrap: anywhere; border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-primary); font-family: var(--font-mono); }
+.history-advanced { margin-top: 12px; color: var(--color-text-secondary); font-size: var(--text-xs); }
+.history-advanced summary { cursor: pointer; user-select: none; }
+.candidate-btn { text-align: left; }
+.history-status.running_owned b, .history-status.running_external b { color: #3fb950; }
+.history-status.error b, .history-status.not_configured b { color: #d29922; }
 .page-size-select {
   min-height: 30px;
   padding: 0 8px;

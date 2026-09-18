@@ -183,9 +183,13 @@ impl Database {
             // Claude Code 由应用探测并使用其自身登录；不在应用内保存凭据。
             ("agent_claude_path", ""),
             ("agent_timeout_seconds", "90"),
-            ("local_history_enabled", "1"),
+            // 本地 stockdb 会启动外部程序，必须由用户明确开启。
+            ("local_history_enabled", "0"),
             ("local_history_url", "http://127.0.0.1:7899"),
+            // 旧版目录键保留兼容；新版使用两个规范化的完整 exe 路径。
             ("local_history_engine_dir", ""),
+            ("local_history_engine_path", ""),
+            ("local_history_updater_path", ""),
             // 全市场快照取数通道：auto（东财优先，新浪兜底）/ sina / eastmoney。
             // 实测部分网络下东财 clist 路径被针对性阻断，故默认 auto。
             ("universe_source", "auto"),
@@ -196,6 +200,12 @@ impl Database {
             if self.get_setting(k)?.is_none() {
                 self.set_setting(k, v)?;
             }
+        }
+        // 旧版本默认打开了“允许读取本地服务”，但并未授权应用自动执行 exe。
+        // 首次升级到托管版时安全地关闭一次，之后只保留用户的新选择。
+        if self.get_setting("stockdb_managed_opt_in_migrated")?.is_none() {
+            self.set_setting("local_history_enabled", "0")?;
+            self.set_setting("stockdb_managed_opt_in_migrated", "1")?;
         }
         Ok(())
     }

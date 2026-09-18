@@ -896,11 +896,16 @@ pub fn launcher_exit_code() -> Option<i32> {
 }
 
 #[cfg(windows)]
-struct ProcessJob(windows::Win32::Foundation::HANDLE);
+pub(crate) struct ProcessJob(windows::Win32::Foundation::HANDLE);
+
+// Windows kernel handles may be transferred between threads. Access remains
+// serialized by the owning manager; the wrapper closes the handle exactly once.
+#[cfg(windows)]
+unsafe impl Send for ProcessJob {}
 
 #[cfg(windows)]
 impl ProcessJob {
-    fn assign(child: &Child) -> Result<Self, String> {
+    pub(crate) fn assign(child: &Child) -> Result<Self, String> {
         use std::os::windows::io::AsRawHandle;
         use windows::core::PCWSTR;
         use windows::Win32::Foundation::HANDLE;
@@ -930,7 +935,7 @@ impl ProcessJob {
         }
     }
 
-    fn terminate(&self) {
+    pub(crate) fn terminate(&self) {
         unsafe {
             let _ = windows::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
         }
@@ -947,14 +952,14 @@ impl Drop for ProcessJob {
 }
 
 #[cfg(not(windows))]
-struct ProcessJob;
+pub(crate) struct ProcessJob;
 
 #[cfg(not(windows))]
 impl ProcessJob {
-    fn assign(_: &Child) -> Result<Self, String> {
+    pub(crate) fn assign(_: &Child) -> Result<Self, String> {
         Ok(Self)
     }
-    fn terminate(&self) {}
+    pub(crate) fn terminate(&self) {}
 }
 
 fn terminate(child: &mut Child, job: &ProcessJob) {

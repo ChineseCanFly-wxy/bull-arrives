@@ -2,7 +2,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { emit } from '@tauri-apps/api/event';
+import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 
 /// Broadcast event name used to keep settings in sync across windows.
@@ -24,6 +24,29 @@ export interface MarketSessionInfo {
   interval_secs: number;
   is_trading: boolean;
 }
+
+export interface StockDbCandidate {
+  enginePath: string;
+  updaterPath: string | null;
+  source: string;
+}
+
+export interface StockDbStatus {
+  enabled: boolean;
+  platformSupported: boolean;
+  state: string;
+  phase: string | null;
+  enginePath: string | null;
+  updaterPath: string | null;
+  updaterAvailable: boolean;
+  owned: boolean;
+  busy: boolean;
+  message: string;
+  lastError: string | null;
+  candidates: StockDbCandidate[];
+}
+
+const STOCKDB_STATUS_EVENT = 'stockdb-status-changed';
 
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<Record<string, string>>({});
@@ -47,9 +70,13 @@ export const useSettingsStore = defineStore('settings', () => {
   const aiEnabled = ref(true);
   /// 智能监控（ATR 自动止损/止盈），受 aiEnabled 约束。
   const aiMonitorEnabled = ref(true);
-  const localHistoryEnabled = ref(true);
+  const localHistoryEnabled = ref(false);
   const localHistoryUrl = ref('http://127.0.0.1:7899');
   const localHistoryEngineDir = ref('');
+  const localHistoryEnginePath = ref('');
+  const localHistoryUpdaterPath = ref('');
+  const stockDbStatus = ref<StockDbStatus | null>(null);
+  let unlistenStockDb: UnlistenFn | null = null;
   const refreshInterval = ref(REFRESH_INTERVAL_AUTO);
   const marketSession = ref<MarketSessionInfo>({
     session: '休市',
@@ -121,13 +148,19 @@ export const useSettingsStore = defineStore('settings', () => {
         aiMonitorEnabled.value = value !== '0';
         break;
       case 'local_history_enabled':
-        localHistoryEnabled.value = value !== '0';
+        localHistoryEnabled.value = value === '1';
         break;
       case 'local_history_url':
         localHistoryUrl.value = value || 'http://127.0.0.1:7899';
         break;
       case 'local_history_engine_dir':
         localHistoryEngineDir.value = value;
+        break;
+      case 'local_history_engine_path':
+        localHistoryEnginePath.value = value;
+        break;
+      case 'local_history_updater_path':
+        localHistoryUpdaterPath.value = value;
         break;
       case 'refresh_interval':
         refreshInterval.value = clampInterval(parseInt(value, 10));
@@ -161,9 +194,12 @@ export const useSettingsStore = defineStore('settings', () => {
       applySettingLocally('notification_desktop_always', settings.value['notification_desktop_always'] ?? '0');
       applySettingLocally('ai_enabled', settings.value['ai_enabled'] ?? '1');
       applySettingLocally('ai_monitor_enabled', settings.value['ai_monitor_enabled'] ?? '1');
-      applySettingLocally('local_history_enabled', settings.value['local_history_enabled'] ?? '1');
+      applySettingLocally('local_history_enabled', settings.value['local_history_enabled'] ?? '0');
       applySettingLocally('local_history_url', settings.value['local_history_url'] || 'http://127.0.0.1:7899');
       applySettingLocally('local_history_engine_dir', settings.value['local_history_engine_dir'] || '');
+      applySettingLocally('local_history_engine_path', settings.value['local_history_engine_path'] || '');
+      applySettingLocally('local_history_updater_path', settings.value['local_history_updater_path'] || '');
+      await fetchStockDbStatus();
       applySettingLocally('refresh_interval', settings.value['refresh_interval'] ?? '0');
       datasources.value = await invoke<[string, string][]>('list_datasources');
       autoLaunch.value = await isEnabled();
@@ -319,15 +355,84 @@ export const useSettingsStore = defineStore('settings', () => {
       : refreshInterval.value;
   }
 
+  function applyStockDbStatus(status: StockDbStatus) {
+    stockDbStatus.value = status;
+    localHistoryEnabled.value = status.enabled;
+    localHistoryEnginePath.value = status.enginePath || '';
+    localHistoryUpdaterPath.value = status.updaterPath || '';
+    settings.value['local_history_enabled'] = status.enabled ? '1' : '0';
+    settings.value['local_history_engine_path'] = localHistoryEnginePath.value;
+    settings.value['local_history_updater_path'] = localHistoryUpdaterPath.value;
+  }
+
+  async function fetchStockDbStatus() {
+    try {
+      applyStockDbStatus(await invoke<StockDbStatus>('get_stockdb_status'));
+    } catch (e) {
+      console.warn('[settings] fetchStockDbStatus failed:', e);
+    }
+  }
+
+  async function initStockDbListener() {
+    if (unlistenStockDb) return;
+    unlistenStockDb = await listen<StockDbStatus>(STOCKDB_STATUS_EVENT, (event) => {
+      applyStockDbStatus(event.payload);
+    });
+    await fetchStockDbStatus();
+  }
+
+  function stopStockDbListener() {
+    unlistenStockDb?.();
+    unlistenStockDb = null;
+  }
+
+  async function setLocalHistoryEnabled(enabled: boolean) {
+    try {
+      applyStockDbStatus(await invoke<StockDbStatus>('set_local_history_enabled', { enabled }));
+      await emit(SETTING_CHANGED_EVENT, {
+        key: 'local_history_enabled',
+        value: enabled ? '1' : '0',
+      }).catch(() => {});
+      return true;
+    } catch (e) {
+      error.value = `切换本地历史数据失败: ${e}`;
+      await fetchStockDbStatus();
+      return false;
+    }
+  }
+
+  async function scanStockDb() {
+    applyStockDbStatus(await invoke<StockDbStatus>('scan_stockdb'));
+    return stockDbStatus.value;
+  }
+
+  async function selectStockDbEngine(path: string) {
+    applyStockDbStatus(await invoke<StockDbStatus>('select_stockdb_engine', { path }));
+    return stockDbStatus.value;
+  }
+
+  async function selectStockDbUpdater(path: string) {
+    applyStockDbStatus(await invoke<StockDbStatus>('select_stockdb_updater', { path }));
+    return stockDbStatus.value;
+  }
+
+  async function runStockDbUpdate() {
+    return invoke<string>('run_stockdb_update');
+  }
+
   return {
     settings, datasources, activeDatasource, theme, autoLaunch, isPortable,
     tickerHotkey, tickerOpacity, tickerSingleColor, tickerTextColor, tickerDisplayMode, tickerPageSize,
     quoteScheduleEnabled, alertsEnabled, newsNotificationsEnabled, notificationDesktopAlways,
     aiEnabled, aiMonitorEnabled, localHistoryEnabled, localHistoryUrl, localHistoryEngineDir,
+    localHistoryEnginePath, localHistoryUpdaterPath, stockDbStatus,
     refreshInterval, marketSession, error,
     fetchSettings, setSetting, switchDatasource, toggleTheme, toggleAutoLaunch,
     applyTheme, applyRemoteSetting, setTickerHotkey, setTickerOpacity,
     setTickerSingleColor, setTickerTextColor, setTickerDisplayMode, setTickerPageSize,
     setRefreshInterval, fetchMarketSession, effectiveInterval,
+    fetchStockDbStatus, initStockDbListener, stopStockDbListener,
+    setLocalHistoryEnabled, scanStockDb, selectStockDbEngine, selectStockDbUpdater,
+    runStockDbUpdate,
   };
 });

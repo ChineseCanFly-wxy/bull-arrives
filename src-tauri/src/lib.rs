@@ -14,6 +14,7 @@ pub mod notification_identity;
 pub mod notifications;
 pub mod quant;
 pub mod simulation;
+pub mod stockdb;
 
 use cache::QuoteCache;
 use datasource::DataSourceManager;
@@ -280,6 +281,7 @@ pub fn run() {
         .manage(notifications::NotificationHistory::default())
         .manage(desktop_toast::DesktopToastState::default())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -409,6 +411,16 @@ pub fn run() {
             app.manage(ds_manager.clone());
             app.manage(cache.clone());
             app.manage(PortableMode(is_portable));
+
+            // stockdb 默认关闭；用户明确开启后，应用启动时才会定位并拉起服务。
+            let stockdb_manager = Arc::new(stockdb::StockDbManager::new(
+                db.clone(),
+                app.handle().clone(),
+            ));
+            app.manage(stockdb_manager.clone());
+            tauri::async_runtime::spawn(async move {
+                stockdb_manager.initialize().await;
+            });
             app.manage(HotkeyState(Mutex::new(None)));
             app.manage(notifications::NotificationDelivery::new(
                 app.handle().clone(),
@@ -539,6 +551,14 @@ pub fn run() {
                                 });
                             }
                             "quit" => {
+                                let stockdb = app.state::<Arc<stockdb::StockDbManager>>();
+                                if stockdb.is_updating() {
+                                    stockdb.notify_exit_blocked();
+                                    let _ = commands::window::show_main_window(app.clone());
+                                    let _ = app.emit("stockdb-quit-blocked", ());
+                                    return;
+                                }
+                                stockdb.shutdown();
                                 if let Some(w) = app.get_webview_window("main") {
                                     let _ = w.close();
                                 }
@@ -997,6 +1017,12 @@ pub fn run() {
             commands::settings::test_local_history,
             commands::settings::scan_local_history,
             commands::settings::log_frontend,
+            commands::stockdb::get_stockdb_status,
+            commands::stockdb::scan_stockdb,
+            commands::stockdb::select_stockdb_engine,
+            commands::stockdb::select_stockdb_updater,
+            commands::stockdb::set_local_history_enabled,
+            commands::stockdb::run_stockdb_update,
             commands::window::show_main_window,
             commands::window::set_main_window_size,
             commands::window::set_ticker_hotkey,
@@ -1018,6 +1044,15 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Failed to build application")
         .run(|app_handle, event| {
+            if matches!(
+                &event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                app_handle
+                    .state::<Arc<stockdb::StockDbManager>>()
+                    .shutdown();
+            }
+
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 if let Err(error) = commands::window::show_main_window(app_handle.clone()) {

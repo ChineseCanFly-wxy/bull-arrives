@@ -178,6 +178,15 @@ pub fn set_setting(
     } else {
         None
     };
+    if matches!(
+        key.as_str(),
+        "local_history_enabled"
+            | "local_history_engine_dir"
+            | "local_history_engine_path"
+            | "local_history_updater_path"
+    ) {
+        return Err("本地 stockdb 配置必须通过专用设置操作修改".into());
+    }
     if key == "alerts_enabled" && value != "0" && value != "1" {
         return Err("提醒总开关只能为 0 或 1".into());
     }
