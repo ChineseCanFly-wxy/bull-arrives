@@ -201,6 +201,8 @@ export const useUniverseStore = defineStore('universe', () => {
   /** 当前通道是否提供「60 日涨跌幅」。false 时趋势/反转类策略的条件会被跳过 */
   const change60dSupported = ref(true);
   const listingDateSupported = ref(true);
+  /** 当前通道是否提供「所属行业 / 所属概念」。false 时结果表这两列只能显示 —— */
+  const sectorSupported = ref(true);
   /** 被数据源不支持而自动忽略的条件名 */
   const skippedConditions = ref<string[]>([]);
   const historyNotice = ref<string | null>(null);
@@ -681,6 +683,7 @@ export const useUniverseStore = defineStore('universe', () => {
     volumeRatioSupported.value = response.volume_ratio_supported;
     change60dSupported.value = response.change_60d_supported;
     listingDateSupported.value = response.listing_date_supported;
+    sectorSupported.value = response.sector_supported;
     skippedConditions.value = response.skipped_conditions;
     historyNotice.value = response.history_notice;
     historyEvaluated.value = response.history_evaluated;
@@ -704,6 +707,7 @@ export const useUniverseStore = defineStore('universe', () => {
     volumeRatioSupported,
     change60dSupported,
     listingDateSupported,
+    sectorSupported,
     skippedConditions,
     historyNotice,
     historyEvaluated,

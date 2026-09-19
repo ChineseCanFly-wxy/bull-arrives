@@ -74,8 +74,11 @@ const CONCURRENCY: usize = 6;
 const FS_ALL_A: &str = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048";
 
 /// 请求字段。字段含义见模块末尾 `FIELD_MEANING` 注释
+///
+/// `f100`（所属行业）与 `f103`（所属概念）与其它字段同批返回、**不产生额外请求**，
+/// 是结果表「行业 / 概念」两列的数据来源。地域 `f102` 暂不展示，需要时再加。
 const FIELDS: &str =
-    "f12,f14,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f15,f16,f17,f18,f20,f21,f22,f23,f24,f25,f26";
+    "f12,f14,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f15,f16,f17,f18,f20,f21,f22,f23,f24,f25,f26,f100,f103";
 
 /// 单页请求超时
 const PAGE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -227,6 +230,16 @@ pub struct SnapshotRow {
     pub listing_date: Option<String>,
     /// 自上市日起的自然日数；部分兜底数据源不提供
     pub listed_days: Option<u32>,
+    /// 所属东财行业板块名称（如「通用设备」）。兜底数据源不提供，记空串。
+    ///
+    /// 与 [`Self::code`] 一起用于回答「这只票是走什么板块涨/跌的」——
+    /// 快照本身就带这个字段（东财 `f100`），不需要为每一行再查一次成分股。
+    pub industry: String,
+    /// 所属东财概念板块名称（东财 `f103`，原始值是一串逗号分隔的名称）。
+    ///
+    /// 一只票通常同时属于多个概念（如「煤化工概念,次新股,氢能源」），
+    /// 所以是 Vec 而不是单个字符串；兜底数据源不提供，记空 Vec。
+    pub concepts: Vec<String>,
 
     // ── 派生分类（解析时一并算出，避免后续重复计算） ──
     /// 板块
@@ -311,6 +324,19 @@ fn str_of(v: &serde_json::Value, key: &str) -> String {
     }
 }
 
+/// 东财 `f103` 把一只票的全部概念塞在一个逗号分隔的字符串里
+/// （如 `"煤化工概念,次新股,核能核电"`）。这里切成 Vec：
+/// 渲染时只展示前几个、其余放进 tooltip，同时也方便以后按概念再过滤。
+///
+/// 空串、纯空白项（限流时偶发 `"a,,b"`）一律丢掉，不留空名称。
+fn split_concepts(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 fn listing_info(v: &serde_json::Value) -> (Option<String>, Option<u32>) {
     let compact = str_of(v, "f26").replace('-', "");
     let Ok(date) = chrono::NaiveDate::parse_from_str(&compact, "%Y%m%d") else {
@@ -346,6 +372,9 @@ fn parse_row(v: &serde_json::Value) -> Option<SnapshotRow> {
     let is_st = upper_name.contains("ST");
     let (listing_date, listed_days) = listing_info(v);
     let is_cdr = code.starts_with("689");
+    // f100 / f103 是文本字段；限流或降级时可能整体缺字段，缺了就记空、不 panic。
+    let industry = str_of(v, "f100").trim().to_owned();
+    let concepts = split_concepts(&str_of(v, "f103"));
 
     Some(SnapshotRow {
         code,
@@ -372,6 +401,8 @@ fn parse_row(v: &serde_json::Value) -> Option<SnapshotRow> {
         change_ytd: f64_of(v, "f25"),
         listing_date,
         listed_days,
+        industry,
+        concepts,
         board,
         is_st,
         is_delisting: upper_name.contains("退"),
@@ -692,6 +723,15 @@ impl SnapshotSource {
     /// 依赖这两项的策略（如反转、趋势确认）在新浪通道上必须**跳过该条件并明示用户**，
     /// 否则会拿 0 去比较，把结果筛成空集。
     pub fn has_change_60d(self) -> bool {
+        matches!(self, SnapshotSource::Eastmoney)
+    }
+
+    /// 该通道是否提供「所属行业 / 所属概念」。
+    ///
+    /// 只有东财 clist 带 f100 / f103；新浪列表接口没有对应字段，解析时记空。
+    /// 结果表的行业 / 概念两列在新浪通道下只能显示 `--`，
+    /// 必须让用户知道是要换通道、而不是这两列坏了。
+    pub fn has_sector(self) -> bool {
         matches!(self, SnapshotSource::Eastmoney)
     }
 
@@ -1503,7 +1543,8 @@ pub fn preset_by_id(id: &str) -> FilterPreset {
 // f2=最新价 f3=涨跌幅 f4=涨跌额 f5=成交量(手) f6=成交额(元) f7=振幅
 // f8=换手率 f9=市盈率(动) f10=量比 f11=5分钟涨跌 f12=代码 f14=名称
 // f15=最高 f16=最低 f17=今开 f18=昨收 f20=总市值 f21=流通市值
-// f22=涨速 f23=市净率 f24=60日涨跌幅 f25=年初至今涨跌幅
+// f22=涨速 f23=市净率 f24=60日涨跌幅 f25=年初至今涨跌幅 f26=上市日期
+// f100=所属行业(如"通用设备") f102=所属地域(如"辽宁板块") f103=所属概念(逗号分隔)
 
 #[cfg(test)]
 mod tests {
@@ -1541,6 +1582,47 @@ mod tests {
         assert!(!Board::Other.is_tradable_a());
         assert!(Board::Star.is_tradable_a());
         assert!(Board::Bse.is_tradable_a());
+    }
+
+    #[test]
+    fn parses_industry_and_concepts_from_clist_fields() {
+        // 真实响应片段（2026-09-19 实测 clist）：f100 是单个行业名，
+        // f103 是一只票的全部概念、逗号分隔。
+        let raw = serde_json::json!({
+            "f12": "601091", "f14": "C沈鼓", "f2": 10.0, "f3": 177.74,
+            "f100": "通用设备",
+            "f103": "煤化工概念,次新股,核能核电,海工装备,央国企改革,天然气,氢能源"
+        });
+        let row = parse_row(&raw).expect("应能解析");
+        assert_eq!(row.industry, "通用设备");
+        assert_eq!(
+            row.concepts,
+            vec![
+                "煤化工概念",
+                "次新股",
+                "核能核电",
+                "海工装备",
+                "央国企改革",
+                "天然气",
+                "氢能源"
+            ]
+        );
+
+        // 概念字段缺失或为空时不能 panic，也不能留下空名称项
+        let sparse = serde_json::json!({ "f12": "600519", "f14": "贵州茅台", "f2": 1500.0 });
+        let row = parse_row(&sparse).expect("应能解析");
+        assert!(row.industry.is_empty());
+        assert!(row.concepts.is_empty());
+
+        let ragged = serde_json::json!({
+            "f12": "600519", "f14": "贵州茅台", "f2": 1500.0, "f103": "白酒概念, , 消费 "
+        });
+        let row = parse_row(&ragged).expect("应能解析");
+        assert_eq!(row.concepts, vec!["白酒概念", "消费"], "空白项应被丢弃");
+
+        // 「行业 / 概念」只有东财提供，通道能力位必须如实反映
+        assert!(SnapshotSource::Eastmoney.has_sector());
+        assert!(!SnapshotSource::Sina.has_sector());
     }
 
     #[test]

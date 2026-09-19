@@ -163,6 +163,10 @@ fn parse_row(v: &RawRow) -> Option<SnapshotRow> {
         change_ytd: 0.0,
         listing_date: None,
         listed_days: None,
+        // 新浪列表接口不提供行业 / 概念（东财 clist 的 f100 / f103）。
+        // 前端据此显示 `--`，并由 `sector_supported` 明确提示「换个通道才有」。
+        industry: String::new(),
+        concepts: Vec::new(),
         board,
         is_st,
         is_delisting: upper_name.contains("退"),

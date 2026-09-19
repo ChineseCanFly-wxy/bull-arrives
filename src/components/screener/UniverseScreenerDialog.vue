@@ -659,28 +659,53 @@ function handleViewportChange() {
 // 一旦算出 0 表格就是一片空白（这个坑踩过，见表格处的注释）。
 //
 // ⚠️ 量出来的高度要**扣掉分页条**：分页在 n-data-table 内部，但它不占 max-height
-// 的额度 —— 不扣的话表体 + 分页会比容器高出一截，于是又出现外层滚动条，
-// 而横向滚动条会被推到看不见的地方（这正是用户报的问题）。
-// 52 ≈ 小号分页控件（约 28px）加两侧留白。
+// 的额度 —— 不扣的话表体 + 分页会比容器高出一截，`.table-wrap` 又是 overflow:hidden，
+// 于是表体底部那条**横向滚动条**（横向滚动的滚动条就渲染在表体最下方）
+// 会被直接裁掉，表现就是「窗口小时下面没有左右滚轮」。
+//
+// 这个高度**优先量真实的 DOM**：早先写死 52（按小号分页约 28px + 留白估的），
+// 但分页控件在窄弹窗下会换行变高，估出来的值就偏小 → 又裁到滚动条。
+// 量不到（分页还没渲染）才退回常量。
 const TABLE_PAGINATION_H = 52;
-/** 表体最小高度兜底（`.table-wrap` 的 min-height 120 − 分页 52 = 68，正常不会碰到这个值） */
+/** 表体最小高度兜底（`.table-wrap` 的 min-height 112 − 分页 52 = 60） */
 const TABLE_MIN_H = 60;
 const tableWrapRef = ref<HTMLElement | null>(null);
 const tableMaxHeight = ref(420);
 let tableObserver: ResizeObserver | null = null;
+
+/** 分页条真实占位高度（含上下外边距）；量不到就用常量兜底 */
+function paginationHeight(el: HTMLElement): number {
+  const pager = el.querySelector<HTMLElement>('.n-data-table__pagination');
+  if (!pager) return TABLE_PAGINATION_H;
+  const style = getComputedStyle(pager);
+  const margins = (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
+  const total = Math.round(pager.getBoundingClientRect().height + margins);
+  return total > 0 ? total : TABLE_PAGINATION_H;
+}
+
+/**
+ * 按容器实际高度重算表体 max-height。
+ *
+ * 只在变化超过 1px 时写入，避免 ResizeObserver ↔ 响应式更新互相触发形成抖动。
+ * 容器的 flex:1 高度不受 max-height 影响，所以这里不会自激。
+ */
+function syncTableHeight() {
+  const el = tableWrapRef.value;
+  if (!el) return;
+  const height = el.clientHeight;
+  if (height <= 0) return;
+  const next = Math.max(TABLE_MIN_H, Math.round(height) - paginationHeight(el));
+  if (Math.abs(next - tableMaxHeight.value) > 1) tableMaxHeight.value = next;
+}
 
 function observeTableWrap() {
   tableObserver?.disconnect();
   tableObserver = null;
   const el = tableWrapRef.value;
   if (!el || typeof ResizeObserver === 'undefined') return;
-  tableObserver = new ResizeObserver(entries => {
-    const height = entries[0]?.contentRect.height ?? 0;
-    if (height > 0) {
-      tableMaxHeight.value = Math.max(TABLE_MIN_H, Math.round(height) - TABLE_PAGINATION_H);
-    }
-  });
+  tableObserver = new ResizeObserver(() => syncTableHeight());
   tableObserver.observe(el);
+  syncTableHeight();
 }
 
 watch(
@@ -693,6 +718,17 @@ watch(
     }
     await nextTick();
     observeTableWrap();
+  },
+);
+
+// 分页条要等数据和分页状态渲染出来才存在：等它出现后再量一次，
+// 否则会一直沿用「量不到 → 常量 52」的估值。
+watch(
+  () => [universe.rows.length, universe.totalMatched, universe.page] as const,
+  async () => {
+    if (!universe.resultsVisible) return;
+    await nextTick();
+    syncTableHeight();
   },
 );
 
@@ -1059,18 +1095,33 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     render: row => h('span', { class: 'num mono' }, `${num(toYi(row.total_market_cap), 1)}亿`),
   },
   {
-    title: '板块',
-    key: 'board',
-    width: 86,
-    render: row => h('span', { class: 'muted' }, BOARD_LABELS[row.board] ?? row.board),
+    // 「这只票是走什么板块涨/跌的」第一层答案：东财 f100 行业。
+    // 替代原来的交易所板块列（沪/深/创/科/北）—— 那个信息由代码前缀即可判断，
+    // 占一列不值；行业才是选股时真正在看的维度。
+    title: '行业',
+    key: 'industry',
+    width: 108,
+    ellipsis: { tooltip: true },
+    render: row => h('span', { class: 'muted' }, row.industry || '--'),
   },
   {
-    title: '上市天数',
-    key: 'listed_days',
-    width: 84,
-    align: 'right',
-    sorter: (a, b) => (a.listed_days ?? -1) - (b.listed_days ?? -1),
-    render: row => h('span', { class: 'num mono', title: row.listing_date ?? '当前数据源未提供' }, row.listed_days == null ? '--' : `${row.listed_days}天`),
+    // 第二层答案：东财 f103 概念。一只票通常同时属于多个概念，
+    // 只展示前 2 个、其余折叠成「+N」并整串放进 tooltip ——
+    // 全量平铺会把行撑高、也会把后面的列挤出可视区。
+    title: '概念',
+    key: 'concepts',
+    width: 232,
+    render: row => {
+      const all = row.concepts ?? [];
+      if (!all.length) return h('span', { class: 'muted' }, '--');
+      const head = all.slice(0, 2).join(' · ');
+      const more = all.length > 2 ? ` +${all.length - 2}` : '';
+      return h(
+        'span',
+        { class: 'concept-cell', title: `${all.length} 个概念：${all.join(' · ')}` },
+        `${head}${more}`,
+      );
+    },
   },
   {
     // 「加自选 / 分析」固定在右侧：这张表 13 列、横向要滚，
@@ -1108,6 +1159,20 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
     },
   },
 ]);
+
+/**
+ * 表格横向滚动宽度 —— **由列宽求和得出**，不再手写常量。
+ *
+ * 之前写死 1224：列宽一改就和真实宽度脱节 —— 写小了最后一列被挤掉、
+ * 写大了右侧留一截空白，两种情况都会表现成「滚动条拉到底也看不全后面的东西」。
+ * 加 20px 余量吸收单元格边框与内边距。
+ */
+const scrollX = computed(() =>
+  columns.value.reduce(
+    (sum, column) => sum + (typeof column.width === 'number' ? column.width : 100),
+    0,
+  ) + 20,
+);
 </script>
 
 <template>
@@ -1500,6 +1565,12 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 
       <div v-if="universe.error" class="error-line">{{ universe.error }}</div>
       <div v-if="scoreError" class="error-line">{{ scoreError }}</div>
+      <!-- 行业 / 概念只有东财 clist 提供：新浪通道下两列会全是 ——，
+           必须明说「是通道的问题」，否则会被当成这两列坏了 -->
+      <div v-if="universe.resultsVisible && !universe.sectorSupported" class="channel-hint">
+        当前通道（{{ universe.sourceLabel }}）不提供「行业 / 概念」，这两列显示 ——。
+        把取数通道切到「东方财富」即可看到每只票的行业与所属概念。
+      </div>
 
       <!-- 结果表：筛完先只显示统计，点「展示数据」才出现 -->
       <div v-if="universe.resultsVisible" ref="tableWrapRef" class="table-wrap">
@@ -1523,7 +1594,7 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
           size="small"
           :remote="true"
           :max-height="tableMaxHeight"
-          :scroll-x="1224"
+          :scroll-x="scrollX"
           :pagination="pagination"
         />
         <div
@@ -2041,6 +2112,16 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
   color: var(--color-error);
   font-size: var(--text-xs);
 }
+/* 通道能力提示：不是错误，只是「换个通道就有了」，所以用中性色 */
+.channel-hint {
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
+  color: var(--color-warning);
+  font-size: var(--text-xs);
+}
 .source-select {
   width: 136px;
 }
@@ -2102,6 +2183,17 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 }
 .table-wrap :deep(.muted) {
   color: var(--color-text-tertiary);
+}
+/* 概念可能有很多个，只显示前两个 + 「+N」，其余靠原生 tooltip 展开：
+   单行高度恒定，后面的列也不会被内容推出去。 */
+.table-wrap :deep(.concept-cell) {
+  display: inline-block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  cursor: help;
 }
 /* 「可入场」用品牌蓝而不是红/绿 —— 红绿在本项目里表示涨跌，借用会误导 */
 .table-wrap :deep(.entry-ok) {

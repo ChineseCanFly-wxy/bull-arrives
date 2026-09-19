@@ -48,6 +48,10 @@ export interface SnapshotRow {
   change_ytd: number;
   listing_date: string | null;
   listed_days: number | null;
+  /** 所属东财行业板块（如「通用设备」）。兜底数据源不提供时为空串 */
+  industry: string;
+  /** 所属东财概念板块（一只票通常有多个）。兜底数据源不提供时为空数组 */
+  concepts: string[];
 
   board: Board;
   is_st: boolean;
@@ -204,6 +208,8 @@ export interface UniverseResponse {
   /** 当前通道是否提供「60 日涨跌幅」；false 时依赖它的策略条件会被跳过 */
   change_60d_supported: boolean;
   listing_date_supported: boolean;
+  /** 当前通道是否提供「所属行业 / 所属概念」；false 时结果表这两列只能显示 —— */
+  sector_supported: boolean;
   /** 因数据源不支持而被自动忽略的条件名（如 ["量比"]） */
   skipped_conditions: string[];
   history_notice: string | null;

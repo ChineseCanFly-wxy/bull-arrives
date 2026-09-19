@@ -53,6 +53,11 @@ pub struct UniverseResponse {
     pub change_60d_supported: bool,
     /// 当前通道是否提供上市日期
     pub listing_date_supported: bool,
+    /// 当前通道是否提供「所属行业 / 所属概念」。
+    ///
+    /// 只有东财 clist 带 f100 / f103；新浪通道下结果表这两列只能显示 `--`，
+    /// 需要明确提示「是通道的问题，不是这两列坏了」。
+    pub sector_supported: bool,
     /// 因数据源不支持而被自动忽略的条件名（如 ["量比"]），供前端明确提示
     pub skipped_conditions: Vec<String>,
     /// 历史技术筛选的执行/降级说明
@@ -556,6 +561,7 @@ pub async fn get_market_universe(
         volume_ratio_supported: outcome.source.has_volume_ratio(),
         change_60d_supported: outcome.source.has_change_60d(),
         listing_date_supported: matches!(outcome.source, SnapshotSource::Eastmoney),
+        sector_supported: outcome.source.has_sector(),
         skipped_conditions,
         history_notice,
         history_evaluated,
