@@ -17,6 +17,7 @@
 > 想加什么直接 [提 PR](https://github.com/ChineseCanFly-wxy/bull-arrives/pulls) 或 [开 Issue](https://github.com/ChineseCanFly-wxy/bull-arrives/issues) 就行。
 
 - [ ] 市场筛选器中加入行业/概念
+- [ ] stockdb目前打开就会默认打开一个html，在项目中自动打开时不要弹了
 
 ---
 
