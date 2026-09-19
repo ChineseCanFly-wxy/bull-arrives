@@ -215,8 +215,19 @@ fn record_history(app: &tauri::AppHandle, payload: &mut Value, pending: bool) ->
 }
 
 /// 只写入现有提醒记录，不弹系统/桌面通知。
+fn archive_news_payload(app: &tauri::AppHandle, payload: &Value) {
+    if matches!(payload["signal_kind"].as_str(), Some("news" | "timeline")) {
+        if let Some(db) = app.try_state::<std::sync::Arc<crate::db::Database>>() {
+            if let Err(error) = db.archive_news(payload) {
+                log::warn!("[news] archive: {error}");
+            }
+        }
+    }
+}
+
 pub fn record_only(app: &tauri::AppHandle, mut payload: Value) {
     record_history(app, &mut payload, false);
+    archive_news_payload(app, &payload);
 }
 
 pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
@@ -231,6 +242,7 @@ pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
         .unwrap_or("股票已达到提醒条件")
         .to_string();
     let (id, version) = record_history(app, &mut payload, true);
+    archive_news_payload(app, &payload);
     let job = DeliveryJob {
         id: id.clone(),
         title,

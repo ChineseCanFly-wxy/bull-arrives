@@ -283,11 +283,12 @@ fn f64_of(v: &serde_json::Value, key: &str) -> f64 {
 /// 判断是否「一字板」——开盘即封板、全天几乎没有波动，属于**买不进**的票。
 ///
 /// 涨跌幅限制按板块不同，必须分开算：
-/// - 主板（沪/深）±10%，其中 **ST 股只有 ±5%**
-/// - 创业板 / 科创板 ±20%
+/// - 主板（沪/深）±10%，**ST / *ST 自 2026-07-06 起同为 ±10%**（此前是 5%）
+/// - 创业板 / 科创板 ±20%（注册制下 ST 不改变比例）
 /// - 北交所 ±30%
 ///
-/// 早期版本用统一的 9.8% 阈值，会把 ST 的 5% 一字板漏掉（4.98% < 9.8%）。
+/// 早期版本用统一的 9.8% 阈值会漏判，后来按板块分开；阈值统一取自
+/// [`crate::market_rules::limit_bps_for`]，与模拟撮合口径完全一致。
 /// 两个数据源（东财 / 新浪）共用本函数，保证口径一致。
 pub fn is_limit_locked(change_pct: f64, amplitude_pct: f64, board: Board, is_st: bool) -> bool {
     change_pct.abs() >= limit_threshold(board, is_st) - 0.2 && amplitude_pct <= 1.0
@@ -299,12 +300,7 @@ pub fn is_limit_up(change_pct: f64, board: Board, is_st: bool) -> bool {
 }
 
 fn limit_threshold(board: Board, is_st: bool) -> f64 {
-    match board {
-        Board::ChiNext | Board::Star => 20.0,
-        Board::Bse => 30.0,
-        _ if is_st => 5.0,
-        _ => 10.0,
-    }
+    crate::market_rules::limit_bps_for(board, is_st) as f64 / 100.0
 }
 
 fn str_of(v: &serde_json::Value, key: &str) -> String {
@@ -909,6 +905,13 @@ pub async fn market_snapshot_with_fallback(
 pub struct MarketFilter {
     /// 允许的板块。空 Vec 表示「全部允许」
     pub boards: Vec<Board>,
+    /// 允许的东财行业板块代码。空 Vec 表示不限行业。
+    ///
+    /// 同一类内多选按「或」处理；同时选了行业和概念时，两类之间按「且」处理。
+    /// 成分股属于需求时数据，不塞进每一行快照，由 command 层在粗筛后统一过滤。
+    pub industry_codes: Vec<String>,
+    /// 允许的东财概念板块代码。空 Vec 表示不限概念。
+    pub concept_codes: Vec<String>,
     /// 排除 ST / *ST
     pub exclude_st: bool,
     /// 排除退市 / 退市整理
@@ -986,6 +989,8 @@ impl Default for MarketFilter {
                 Board::Star,
                 Board::Bse,
             ],
+            industry_codes: Vec::new(),
+            concept_codes: Vec::new(),
             exclude_st: true,
             exclude_delisting: true,
             exclude_suspended: true,
@@ -1597,9 +1602,12 @@ mod tests {
 
     #[test]
     fn limit_threshold_follows_board_and_st_rules() {
-        // ST 主板只有 ±5%，4.98% 就该算一字板
-        assert!(is_limit_locked(4.98, 0.1, Board::SzMain, true));
-        assert!(!is_limit_locked(4.98, 0.1, Board::SzMain, false));
+        // 2026-07-06 起主板 ST / *ST 与普通股票并轨 ±10%
+        assert!(is_limit_locked(10.0, 0.1, Board::SzMain, true));
+        assert!(
+            !is_limit_locked(4.98, 0.1, Board::SzMain, true),
+            "主板 ST 已放宽到 10%，4.98% 不再是一字板（旧口径会误判为封板）"
+        );
         // 普通主板 ±10%
         assert!(is_limit_locked(10.0, 0.0, Board::ShMain, false));
         // 创业板/科创板 ±20%
@@ -1608,10 +1616,14 @@ mod tests {
         // 北交所 ±30%
         assert!(is_limit_locked(30.0, 0.5, Board::Bse, false));
         assert!(!is_limit_locked(20.0, 0.5, Board::Bse, false));
+        // 创业板 ST 仍是 ±20%
+        assert!(!is_limit_locked(10.0, 0.1, Board::ChiNext, true));
+        assert!(is_limit_locked(20.0, 0.1, Board::ChiNext, true));
         // 振幅大说明不是一字板
         assert!(!is_limit_locked(10.0, 5.0, Board::ShMain, false));
         // 派生涨停家数只统计正向封板，且沿用相同板块口径。
-        assert!(is_limit_up(4.8, Board::SzMain, true));
+        assert!(is_limit_up(9.9, Board::SzMain, true));
+        assert!(!is_limit_up(4.8, Board::SzMain, true));
         assert!(is_limit_up(19.8, Board::ChiNext, false));
         assert!(!is_limit_up(-10.0, Board::ShMain, false));
     }

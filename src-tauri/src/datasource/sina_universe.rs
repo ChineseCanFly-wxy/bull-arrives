@@ -167,7 +167,7 @@ fn parse_row(v: &RawRow) -> Option<SnapshotRow> {
         is_st,
         is_delisting: upper_name.contains("退"),
         suspected_suspended: volume <= 0.0 || price <= 0.0,
-        // 与东财通道共用同一套判定（含 ST 的 5% 一字板）
+        // 与东财通道共用同一套判定（阈值统一来自 market_rules，含主板 ST 的 10%）
         is_limit_locked: super::eastmoney_universe::is_limit_locked(
             change_pct,
             amplitude_pct,
@@ -464,16 +464,27 @@ mod tests {
         assert_eq!(bj.board, Board::Bse);
 
         let st = row(
+            r#"{"symbol":"sz000004","code":"000004","name":"ST国华","trade":"10.37",
+                "changepercent":9.97,"settlement":9.43,"volume":100,"amount":1000,
+                "high":10.37,"low":10.37}"#,
+        )
+        .unwrap();
+        assert!(st.is_st);
+        // 主板 ST 自 2026-07-06 起为 ±10%，9.97% 封板 + 振幅 0 → 一字板
+        assert!(st.is_limit_locked);
+        assert_eq!(st.board, Board::SzMain);
+
+        // 同一只 ST 在旧口径（5%）下会被误判为封板，现在不算
+        let st_flat = row(
             r#"{"symbol":"sz000004","code":"000004","name":"ST国华","trade":"9.90",
                 "changepercent":4.98,"settlement":9.43,"volume":100,"amount":1000,
                 "high":9.90,"low":9.90}"#,
         )
         .unwrap();
-        assert!(st.is_st);
-        // ST 主板涨跌幅只有 ±5%，4.98% 封板 + 振幅 0 → 一字板
-        // （这正是旧版统一 9.8% 阈值会漏掉的情况）
-        assert!(st.is_limit_locked);
-        assert_eq!(st.board, Board::SzMain);
+        assert!(
+            !st_flat.is_limit_locked,
+            "主板 ST 已并轨 10%，4.98% 不应判为一字板"
+        );
 
         // 创业板 ±20%，10% 不算一字板
         let cn = row(

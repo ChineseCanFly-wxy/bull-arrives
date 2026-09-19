@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   NButton,
   NDataTable,
@@ -37,6 +37,19 @@ const rotationKind = ref<SectorKind>('industry');
 const rotationDays = ref<RotationDays>(5);
 const rotationDayOptions: RotationDays[] = [3, 5, 10];
 
+// 固定 430/480px 的表体在小窗口会把横向滚动条推到弹窗可视区外。
+// 根据当前视口给表体留高度，最低仍保留几行和底部横向滚动条。
+const viewportHeight = ref(window.innerHeight);
+const rankingTableMaxHeight = computed(() => Math.max(140, Math.min(480, viewportHeight.value - 270)));
+const memberTableMaxHeight = computed(() => Math.max(120, Math.min(430, viewportHeight.value - 345)));
+const rotationTableMaxHeight = computed(() => Math.max(140, Math.min(350, viewportHeight.value - 320)));
+
+function updateViewportHeight() {
+  viewportHeight.value = window.innerHeight;
+}
+
+onMounted(() => window.addEventListener('resize', updateViewportHeight));
+
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 watch(
   () => sector.keyword,
@@ -61,6 +74,7 @@ watch(
 
 onBeforeUnmount(() => {
   if (searchTimer) clearTimeout(searchTimer);
+  window.removeEventListener('resize', updateViewportHeight);
 });
 
 function changeClass(value: number | null): string {
@@ -344,7 +358,7 @@ function openAnalysis(row: SectorMember) {
     preset="card"
     title="市场板块"
     :style="{ width: 'min(980px, calc(100vw - 24px))' }"
-    :content-style="{ maxHeight: 'calc(100vh - 150px)', overflow: 'auto' }"
+    :content-style="{ height: 'calc(100vh - 150px)', maxHeight: 'calc(100vh - 150px)', overflow: 'auto' }"
     :bordered="false"
     size="small"
   >
@@ -401,7 +415,7 @@ function openAnalysis(row: SectorMember) {
           </div>
           <div v-if="addError" class="error-line" role="alert"><span>{{ addError }}</span></div>
           <NSpin :show="sector.memberLoading">
-            <NDataTable :columns="memberColumns" :data="sector.members" :row-key="memberKey" :max-height="430" :scroll-x="900" :bordered="false" :single-line="true" size="small" />
+            <NDataTable :columns="memberColumns" :data="sector.members" :row-key="memberKey" :max-height="memberTableMaxHeight" :scroll-x="900" :bordered="false" :single-line="true" size="small" />
             <NEmpty v-if="!sector.memberLoading && !sector.memberError && !sector.members.length" description="没有成分股数据" class="empty" />
           </NSpin>
           <div v-if="sector.memberPageCount > 1" class="pagination">
@@ -453,7 +467,7 @@ function openAnalysis(row: SectorMember) {
           </div>
           <div v-if="sector.error" class="error-line" role="alert"><span>{{ sector.error }}</span><NButton size="tiny" @click="refresh">重试</NButton></div>
           <NSpin :show="sector.loading">
-            <NDataTable :columns="columns" :data="sector.rows" :row-key="rowKey" :row-props="(row: SectorSummary) => ({ style: 'cursor: pointer', onClick: () => { void openSector(row); } })" :max-height="480" :scroll-x="950" :bordered="false" :single-line="true" size="small" />
+            <NDataTable :columns="columns" :data="sector.rows" :row-key="rowKey" :row-props="(row: SectorSummary) => ({ style: 'cursor: pointer', onClick: () => { void openSector(row); } })" :max-height="rankingTableMaxHeight" :scroll-x="950" :bordered="false" :single-line="true" size="small" />
             <NEmpty v-if="!sector.loading && !sector.error && !sector.rows.length" description="没有匹配的板块" class="empty" />
           </NSpin>
           <div v-if="sector.pageCount > 1" class="pagination"><NPagination :page="sector.page" :page-count="sector.pageCount" @update:page="sector.selectPage" /></div>
@@ -485,7 +499,7 @@ function openAnalysis(row: SectorMember) {
               </section>
             </div>
             <h3 class="fund-title">批量资金流排序</h3>
-            <NDataTable :columns="fundColumns" :data="filteredRotationRows" :row-key="rowKey" :row-props="(row: SectorSummary) => ({ style: 'cursor: pointer', onClick: () => { void openSector(row); } })" :max-height="350" :scroll-x="700" :bordered="false" :single-line="true" size="small" />
+            <NDataTable :columns="fundColumns" :data="filteredRotationRows" :row-key="rowKey" :row-props="(row: SectorSummary) => ({ style: 'cursor: pointer', onClick: () => { void openSector(row); } })" :max-height="rotationTableMaxHeight" :scroll-x="700" :bordered="false" :single-line="true" size="small" />
           </NSpin>
         </template>
       </template>
@@ -513,8 +527,8 @@ function openAnalysis(row: SectorMember) {
   display: flex;
   flex-direction: column;
   height: calc(100vh - 220px);
-  min-height: 360px;
-  overflow: hidden;
+  min-height: 0;
+  overflow: auto;
   border: 1px solid var(--color-border-0);
   border-radius: var(--radius-md);
   background: var(--color-surface-1);

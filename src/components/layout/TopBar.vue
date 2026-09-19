@@ -9,6 +9,8 @@ const UniverseScreenerDialog = defineAsyncComponent(() => import('@/components/s
 const MonitorDialog = defineAsyncComponent(() => import('@/components/monitor/MonitorDialog.vue'));
 const SectorDialog = defineAsyncComponent(() => import('@/components/sector/SectorDialog.vue'));
 const SimulationDialog = defineAsyncComponent(() => import('@/components/simulation/SimulationDialog.vue'));
+const ResearchCenter = defineAsyncComponent(() => import('@/components/research/ResearchCenter.vue'));
+const showResearch = ref(false);
 const RankDialog = defineAsyncComponent(() => import('@/components/rank/RankDialog.vue'));
 
 const settings = useSettingsStore();
@@ -87,6 +89,7 @@ function openSimulation() {
 
     <!-- Right: data source switcher + settings cog -->
     <div class="top-bar-right">
+      <button class="cog-btn" style="width:auto;padding:0 10px;font-size:12px" title="策略研究、自动选股与模拟验证" @click="showResearch=true">研究中心</button>
       <n-dropdown
         trigger="click"
         :options="dsOptions"
@@ -189,6 +192,7 @@ function openSimulation() {
     <MonitorDialog v-if="showMonitor" v-model:show="showMonitor" />
     <SectorDialog v-if="showSector" v-model:show="showSector" />
     <SimulationDialog v-if="showSimulation" v-model:show="showSimulation" />
+    <ResearchCenter v-if="showResearch" v-model:show="showResearch" />
     <RankDialog
       v-if="rank.visible && rank.activeFilter"
       :show="rank.visible"

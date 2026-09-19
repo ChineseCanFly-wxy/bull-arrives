@@ -49,8 +49,8 @@ pub async fn analyze_stock(
     symbol: String,
     rule: Option<String>,
 ) -> Result<StockAnalysis, String> {
-    let mut analysis = analyze_stock_impl(&db, &symbol, rule.as_deref()).await?;
-    match crate::agent::freeze_snapshot(&db, &symbol, &analysis) {
+    let (mut analysis, recent_klines) = analyze_stock_impl(&db, &symbol, rule.as_deref()).await?;
+    match crate::agent::freeze_snapshot_with_history(&db, &symbol, &analysis, &recent_klines) {
         Ok(fingerprint) => analysis.agent_context_fingerprint = Some(fingerprint),
         Err(error) => log::warn!("[agent] 冻结 {symbol} 量化快照失败：{error}"),
     }
@@ -61,7 +61,7 @@ pub(crate) async fn analyze_stock_impl(
     db: &Database,
     symbol: &str,
     rule: Option<&str>,
-) -> Result<StockAnalysis, String> {
+) -> Result<(StockAnalysis, Vec<crate::domain::KLineData>), String> {
     let (history, benchmark) = tokio::join!(
         kline::fetch_history(db, symbol, None, true),
         kline::fetch_history(db, "sh000300", None, false),
@@ -142,7 +142,8 @@ pub(crate) async fn analyze_stock_impl(
         analysis.levels.len(),
     );
 
-    Ok(analysis)
+    let recent_klines = klines[klines.len().saturating_sub(60)..].to_vec();
+    Ok((analysis, recent_klines))
 }
 
 /// 筛选器结果表里「评分」与「入场」两列的状态。

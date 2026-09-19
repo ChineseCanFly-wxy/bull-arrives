@@ -130,10 +130,13 @@ impl MarketRequestPolicy {
     }
 
     /// 统一的交易日期闸门；不受行情时段开关影响，供资讯和定时任务复用。
+    ///
+    /// 交易日由行情推断（[`super::trading_calendar`]），拿不到任何证据时按休市处理。
     pub fn is_trading_day_at(&self, now: DateTime<Utc>) -> bool {
         let offset = FixedOffset::east_opt(CST_OFFSET_SECONDS).expect("UTC+8 is valid");
         let local = now.with_timezone(&offset);
         !matches!(local.weekday(), Weekday::Sat | Weekday::Sun)
+            && super::trading_calendar::is_trading_day_now(now).unwrap_or(false)
             && self
                 .closed_dates
                 .binary_search(&local.date_naive())

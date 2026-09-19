@@ -61,6 +61,10 @@ export interface SnapshotRow {
 export interface MarketFilter {
   /** 允许的板块；空数组表示全部允许 */
   boards: Board[];
+  /** 东财行业板块代码；同类多选为「或」 */
+  industry_codes: string[];
+  /** 东财概念板块代码；与行业条件之间为「且」 */
+  concept_codes: string[];
   exclude_st: boolean;
   exclude_delisting: boolean;
   exclude_suspended: boolean;
@@ -125,6 +129,8 @@ export interface BoardCount {
 export function createDefaultFilter(): MarketFilter {
   return {
     boards: [...SELECTABLE_BOARDS],
+    industry_codes: [],
+    concept_codes: [],
     exclude_st: true,
     exclude_delisting: true,
     exclude_suspended: true,
@@ -322,6 +328,9 @@ export function summarizeFilterParts(filter: MarketFilter): string[] {
   if (chosen.length === SELECTABLE_BOARDS.length) parts.push('全部板块');
   else if (chosen.length === 0) parts.push('未选板块');
   else parts.push(chosen.map(board => BOARD_LABELS[board]).join('/'));
+
+  if (filter.industry_codes.length) parts.push(`行业 ${filter.industry_codes.join('/')}`);
+  if (filter.concept_codes.length) parts.push(`概念 ${filter.concept_codes.join('/')}`);
 
   const excludes: string[] = [];
   if (filter.exclude_st) excludes.push('ST');

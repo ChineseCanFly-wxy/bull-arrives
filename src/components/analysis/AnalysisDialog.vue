@@ -7,6 +7,7 @@ import { NModal, NTag, NSpin } from 'naive-ui';
 import { useAnalysisStore } from '@/stores/analysis';
 import { evaluateBacktest, tradeRuleFocus, tradeRuleLabel, verdictTone } from '@/types/analysis';
 import PriceLevelChart from '@/components/analysis/PriceLevelChart.vue';
+import AgentWorkbench from '@/components/analysis/AgentWorkbench.vue';
 
 const props = defineProps<{
   show: boolean;
@@ -35,6 +36,10 @@ watch(
       void store.cancelAgentAnalysis();
     }
   },
+  // 自选股的分析弹窗是 `v-if="analysisRow"` 按需挂载的：首次挂载时
+  // `show` 已经是 true，普通 watch 不会触发，于是直接落到「暂无分析结果」。
+  // 统一在公共弹窗设为 immediate，任何当前或未来的按需挂载入口都不会再漏掉首次请求。
+  { immediate: true },
 );
 
 const agentFieldLabel: Record<string, string> = {
@@ -158,17 +163,18 @@ function rate(v: number): string {
           </div>
 
           <div class="section-title plan-title">
-            <span>本地 Agent 解读</span>
+            <span>AI 研究助手</span>
             <span class="rule-tag">Claude Code</span>
-            <span class="muted">只读本次量化快照，不代替规则与风控</span>
+            <span class="muted">解释量化结果、回答快照问题、多空讨论</span>
           </div>
           <div class="agent-card">
+            <AgentWorkbench v-if="store.analysis.agent_context_fingerprint" :fingerprint="store.analysis.agent_context_fingerprint" :busy="store.agentLoading || store.teamLoading" :installed="!!store.agentStatus?.installed" :visible="props.show" @ask="store.analyzeWithAgent($event)" />
             <div class="agent-actions">
               <button
                 class="agent-btn"
-                :disabled="!store.agentStatus?.installed || !store.analysis.agent_context_fingerprint || store.agentLoading"
+                :disabled="!store.agentStatus?.installed || !store.analysis.agent_context_fingerprint || store.agentLoading || store.teamLoading"
                 :title="store.agentStatus?.installed ? '生成结构化解读' : store.agentStatus?.guidance"
-                @click="store.analyzeWithAgent"
+                @click="store.analyzeWithAgent()"
               >
                 {{ store.agentLoading ? '分析中…' : '生成 Agent 解读' }}
               </button>
@@ -183,8 +189,14 @@ function rate(v: number): string {
               <span>{{ store.agentStatus.guidance }}</span>
             </div>
             <template v-if="store.agentAnalysis?.status === 'ready'">
-              <p class="agent-conclusion">{{ store.agentAnalysis.conclusion }}</p>
-              <div class="agent-confidence">置信度 {{ store.agentAnalysis.confidence }}% · {{ store.agentAnalysis.generated_at }}</div>
+              <p class="agent-conclusion"><b>{{ store.agentAnalysis.conclusion }}</b></p>
+              <p v-if="store.agentAnalysis.summary" class="agent-summary">{{ store.agentAnalysis.summary }}</p>
+              <div class="agent-confidence">模型主观确定性 {{ store.agentAnalysis.confidence }}%（非上涨概率） · {{ store.agentAnalysis.generated_at }}</div>
+              <div v-for="(claim, index) in store.agentAnalysis.claims" :key="index" class="agent-claim">
+                <b>{{ { support: '支持因素', risk: '主要风险', watch: '继续观察' }[claim.kind] }}</b>
+                <p>{{ claim.text }}</p>
+                <small v-for="item in claim.evidence" :key="item.field">{{ agentFieldLabel[item.field] ?? item.field }} = {{ item.value }} · {{ item.source }} · {{ item.as_of }}</small>
+              </div>
               <div class="agent-evidence">
                 <span v-for="item in store.agentAnalysis.evidence" :key="item.field">
                   <b>{{ agentFieldLabel[item.field] ?? item.field }}</b> {{ item.value }}
@@ -197,8 +209,10 @@ function rate(v: number): string {
               <b>Agent 未完成，已降级为纯量化结果</b>
               <span>{{ store.agentAnalysis.error }}</span><span>{{ store.agentAnalysis.guidance }}</span>
             </div>
+            <div v-if="store.teamError" class="agent-unavailable">多角色研判失败：{{ store.teamError }}</div>
             <div v-if="store.teamAnalysis" class="agent-team">
-              <p><b>风控收口：{{ store.teamAnalysis.final_conclusion ?? '无结论' }}</b><span v-if="store.teamAnalysis.confidence !== null"> · {{ store.teamAnalysis.confidence }}%</span></p>
+              <p v-if="store.teamAnalysis.status === 'cancelled'">多角色研判已中止，未保存预测。</p>
+              <p><b>风控收口：{{ store.teamAnalysis.final_conclusion ? ({ bullish: '偏强', bearish: '偏弱', neutral: '中性', cautious: '谨慎' }[store.teamAnalysis.final_conclusion] ?? store.teamAnalysis.final_conclusion) : '无结论' }}</b><span v-if="store.teamAnalysis.confidence !== null"> · 主观确定性 {{ store.teamAnalysis.confidence }}%（非上涨概率）</span></p>
               <div v-for="role in store.teamAnalysis.roles" :key="`${role.round}:${role.role}`" class="agent-role" :class="{ failed: role.status === 'failed' }">
                 <b>第 {{ role.round }} 轮 · {{ agentRoleLabel[role.role] ?? role.role }}</b>
                 <span>{{ role.argument ?? role.error }}</span>
@@ -742,6 +756,10 @@ function rate(v: number): string {
 .agent-btn:disabled { opacity: .45; cursor: not-allowed; }
 .agent-unavailable, .agent-invalid { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; color: var(--color-text-secondary); font-size: var(--text-xs); }
 .agent-conclusion { margin: 10px 0 4px; line-height: 1.65; }
+.agent-summary { line-height: 1.8; white-space: pre-wrap; }
+.agent-claim { border-left: 3px solid var(--color-border-0); margin: 10px 0; padding: 6px 10px; }
+.agent-claim p { margin: 5px 0; line-height: 1.7; }
+.agent-claim small { display: block; color: var(--color-text-secondary); line-height: 1.7; }
 .agent-confidence { color: var(--color-text-tertiary); font-size: var(--text-xs); }
 .agent-evidence { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
 .agent-evidence span { display: flex; flex-direction: column; padding: 6px; border-radius: var(--radius-xs); background: var(--color-bg-2); }

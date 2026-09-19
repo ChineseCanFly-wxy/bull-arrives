@@ -4,9 +4,11 @@ pub mod holdings;
 pub mod monitors;
 pub mod news;
 pub mod predictions;
+pub mod research_loop;
 #[cfg(test)]
 mod regression_tests;
 pub mod simulation;
+pub mod simulation_live;
 pub mod strategies;
 
 use rusqlite::{params, Connection, Result as SqliteResult};
@@ -36,9 +38,11 @@ impl Database {
         db.migrate_price_alerts()?;
         db.migrate_watchlist_codes()?;
         db.migrate_simulation()?;
+        db.migrate_simulation_live()?;
         db.migrate_strategies()?;
         db.migrate_agent()?;
         db.migrate_predictions()?;
+        db.migrate_research_loop()?;
         db.init_defaults()?;
         Ok(db)
     }

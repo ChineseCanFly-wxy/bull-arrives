@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, reactive, ref, watch, onBeforeUnmount } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import {
   NAlert, NButton, NCard, NCheckbox, NFormItem, NInput, NInputNumber, NModal,
@@ -32,6 +32,7 @@ const selectedId = ref<number | null>(null);
 const detail = ref<Detail | null>(null);
 const busy = ref(false);
 const error = ref('');
+const live=ref<{engine:string;message:string;updated_at:string|null;plans:Array<{symbol:string;buy_low:number;buy_high:number;stop:number;take:number}>;executions:unknown[]}|null>(null);
 const targetsText = ref('');
 const activeTab = ref<'overview' | 'account' | 'manual'>('overview');
 const form = reactive({
@@ -41,11 +42,12 @@ const form = reactive({
   commissionBps: 3, minCommission: '5.00', stampTaxBps: 5,
   transferFeeBps: 1, slippageBps: 5,
 });
-const order = reactive({ symbol: '', name: '', side: 'buy' as Side, quantity: 100, signalDate: new Date().toISOString().slice(0, 10), limitBps: 1000 });
+const executionMode=ref('realtime');
+const order = reactive({ symbol: '', name: '', side: 'buy' as Side, quantity: 100, signalDate: '', limitBps: 1000,limitPrice:'',stopPrice:'',takePrice:'' });
 
 const accountOptions = computed(() => accounts.value.map(account => ({ label: account.name, value: account.id })));
 const selected = computed(() => accounts.value.find(account => account.id === selectedId.value));
-const nextCheck = computed(() => selected.value?.auto_enabled ? new Date(Date.now() + 5 * 60_000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '未启用');
+const nextCheck = computed(() => selected.value?.auto_enabled ? 'A 股连续竞价时段，上一轮完成约 3 秒后再次检查' : '未启用自动监听，可点击立即运行');
 
 function decimalToScaled(raw: string): string {
   const match = raw.trim().match(/^(\d+)(?:\.(\d{0,4}))?$/);
@@ -71,12 +73,35 @@ function parseTargets(): Target[] {
   const rows = targetsText.value.split(/[\n,，]+/).map(value => value.trim()).filter(Boolean);
   const unique = [...new Set(rows)];
   if (unique.length > 10) throw new Error('自动/手动标的最多 10 只，请先精简');
-  return unique.map(symbol => ({ symbol: symbol.toLowerCase(), name: symbol, rule: 'trend_follow', limit_bps: symbol.toLowerCase().startsWith('bj') ? 3000 : /^(sh688|sz30)/i.test(symbol) ? 2000 : 1000 }));
+  return unique.map(symbol => ({ symbol: symbol.toLowerCase(), name: symbol, rule: 'trend_follow', limit_bps: boardLimitBps(symbol) }));
 }
+
+/** 板块涨跌幅（基点）的界面提示值；最终以交易所规则为准（主板 ST 自 2026-07-06 起也是 10%）。 */
+function boardLimitBps(symbol: string): number {
+  const value = symbol.trim().toLowerCase();
+  if (value.startsWith('bj')) return 3000;
+  if (/^sh68|^sz30/.test(value)) return 2000;
+  return 1000;
+}
+
+/** 各板块买入申报单位：科创板 200 股起、北交所 100 股起，均可 1 股递增。 */
+function buyLot(symbol: string): { min: number; step: number } {
+  const value = symbol.trim().toLowerCase();
+  if (value.startsWith('sh68')) return { min: 200, step: 1 };
+  if (value.startsWith('bj')) return { min: 100, step: 1 };
+  return { min: 100, step: 100 };
+}
+
+const orderLot = computed(() => buyLot(order.symbol));
+const orderLimitBps = computed(() => boardLimitBps(order.symbol));
+
+// 涨跌幅随代码自动判定，不再让用户填一个可能和板块不符的数字。
+watch(orderLimitBps, value => { order.limitBps = value; }, { immediate: true });
+watch(orderLot, value => { if (order.side === 'buy' && order.quantity < value.min) order.quantity = value.min; }, { immediate: true });
 
 function resetForm() {
   Object.assign(form, { id: undefined, name: '模拟账户', initialCash: '100000.00', mode: 'record', autoEnabled: false, manualSourceEnabled: true, ruleSourceEnabled: true, commissionBps: 3, minCommission: '5.00', stampTaxBps: 5, transferFeeBps: 1, slippageBps: 5 });
-  targetsText.value = '';
+  targetsText.value = '';executionMode.value='realtime';
 }
 
 function beginNewAccount() {
@@ -108,6 +133,7 @@ async function loadAccounts(preferred?: number) {
 async function loadDetail() {
   if (!selectedId.value) return;
   detail.value = await invoke<Detail>('simulation_get_detail', { accountId: selectedId.value });
+  live.value=await invoke('simulation_live_status',{accountId:selectedId.value});executionMode.value=live.value?.engine==='realtime_a_share'?'realtime':'daily';
   const account = detail.value.account;
   const index = accounts.value.findIndex(item => item.id === account.id);
   if (index >= 0) accounts.value[index] = account;
@@ -122,7 +148,7 @@ async function act(task: () => Promise<void>) {
 
 function saveAccount() {
   void act(async () => {
-    const account = await invoke<Account>('simulation_save_account', { input: {
+    const account = await invoke<Account>('simulation_save_account', { executionMode:executionMode.value,input: {
       id: form.id, name: form.name.trim(), initial_cash: decimalToScaled(form.initialCash), mode: form.mode,
       auto_enabled: form.autoEnabled, manual_source_enabled: form.manualSourceEnabled,
       rule_source_enabled: form.ruleSourceEnabled, ai_source_enabled: false,
@@ -148,7 +174,7 @@ function submitOrder() {
       name: order.name.trim() || order.symbol.trim(), side: order.side, quantity: order.quantity,
       signal_date: order.signalDate, source: 'manual', rule: null, stop_bps: 0, take_bps: 0,
       limit_bps: order.limitBps, max_hold_days: 0,
-    } });
+    }, limitPrice:executionMode.value==='realtime'?decimalToScaled(order.limitPrice):null,stopPrice:executionMode.value==='realtime'&&order.side==='buy'?decimalToScaled(order.stopPrice):null,takePrice:executionMode.value==='realtime'&&order.side==='buy'?decimalToScaled(order.takePrice):null });
     await loadDetail(); message.success('指令已按账户模式记录');
   });
 }
@@ -162,14 +188,16 @@ function deleteAccount() {
   void act(async () => { await invoke('simulation_delete_account', { accountId: selectedId.value }); selectedId.value = null; resetForm(); await loadAccounts(); });
 }
 
-watch(() => props.show, open => { if (open) void act(() => loadAccounts()); }, { immediate: true });
+let refreshTimer:ReturnType<typeof setInterval>|undefined;
+watch(() => props.show, open => { if(refreshTimer)clearInterval(refreshTimer);if(open){void act(() => loadAccounts());refreshTimer=setInterval(()=>{if(!busy.value&&selectedId.value&&activeTab.value==='overview')void act(()=>loadDetail());},3000);}}, { immediate: true });
+onBeforeUnmount(()=>{if(refreshTimer)clearInterval(refreshTimer);});
 watch(selectedId, id => { if (id) void act(() => loadDetail()); });
 </script>
 
 <template>
   <NModal v-model:show="visible">
     <NCard title="模拟账户 · 前向验证" class="dialog" closable :bordered="false" @close="visible = false">
-      <NAlert type="warning" :show-icon="false" class="notice">仅供研究学习，不连接券商、不产生真实委托。信号用前复权收盘价，成交固定用未复权下一交易日开盘价。</NAlert>
+      <NAlert type="warning" :show-icon="false" class="notice">模拟口径独立：实时账户仅按委托后的新盘口撮合，执行 A 股 T+1；日线账户采用下一交易日开盘价回放。不会把两种结果合并。</NAlert>
       <NAlert v-if="error" type="error" class="notice">{{ error }}</NAlert>
       <div class="toolbar">
         <NSelect v-model:value="selectedId" :options="accountOptions" placeholder="选择模拟账户" style="width: 240px" />
@@ -204,13 +232,16 @@ watch(selectedId, id => { if (id) void act(() => loadDetail()); });
             <tr v-if="!detail?.orders.length"><td colspan="6" class="empty">暂无订单</td></tr>
           </tbody></table></div>
           <h4>最近运行</h4>
-          <p class="hint">下次自动检查：{{ nextCheck }}（每 5 分钟检查本地历史是否出现新交易日）</p>
+          <NAlert v-if="live" :type="live.engine==='realtime_a_share'?'info':'warning'" :show-icon="false">{{live.message}}<small v-if="live.updated_at"> · {{new Date(live.updated_at).toLocaleString()}}</small></NAlert>
+          <div v-if="live?.plans.length" class="table-wrap"><table><thead><tr><th>实时计划</th><th>买入区间</th><th>止损</th><th>止盈</th></tr></thead><tbody><tr v-for="p in live.plans" :key="p.symbol"><td>{{p.symbol}}</td><td>{{(p.buy_low/10000).toFixed(2)}}–{{(p.buy_high/10000).toFixed(2)}}</td><td>{{(p.stop/10000).toFixed(2)}}</td><td>{{(p.take/10000).toFixed(2)}}</td></tr></tbody></table></div>
+          <details v-if="live?.executions.length"><summary>实时成交报价证据（最近 20 笔）</summary><pre style="max-height:240px;overflow:auto;white-space:pre-wrap">{{JSON.stringify(live.executions,null,2)}}</pre></details>
+          <p class="hint">下次自动检查：{{ nextCheck }}（实时账户约 3 秒一轮，日线账户约 5 分钟检查数据）</p>
           <div class="runs"><span v-for="run in detail?.recent_runs ?? []" :key="run.id"><NTag size="small" :type="statusType(run.status)">{{ run.trade_date || run.created_at }} · {{ run.phase || run.run_key || '自动' }} · {{ run.status }}<template v-if="run.status === 'running'"> {{ run.progress ?? 0 }}%</template></NTag>{{ run.message }}</span><span v-if="!detail?.recent_runs.length" class="empty">尚未运行；全自动默认关闭</span></div>
         </NTabPane>
 
         <NTabPane name="account" tab="账户设置">
           <div class="form-grid">
-            <NFormItem label="账户名称"><NInput v-model:value="form.name" maxlength="30" /></NFormItem>
+            <NFormItem label="成交口径"><NSelect v-model:value="executionMode" :disabled="!!form.id" :options="[{label:'实时盘口前向',value:'realtime'},{label:'日线前向（次日开盘）',value:'daily'}]" /></NFormItem><NFormItem label="账户名称"><NInput v-model:value="form.name" maxlength="30" /></NFormItem>
             <NFormItem label="初始资金（元）"><NInput v-model:value="form.initialCash" :disabled="!!form.id" /></NFormItem>
             <NFormItem label="运行模式"><NSelect v-model:value="form.mode" :options="[{label:'仅记录',value:'record'},{label:'需确认',value:'confirm'},{label:'全自动',value:'auto'}]" /></NFormItem>
             <NFormItem label="全自动（默认关闭）"><NSwitch v-model:value="form.autoEnabled" :disabled="form.mode !== 'auto'" /></NFormItem>
@@ -219,7 +250,7 @@ watch(selectedId, id => { if (id) void act(() => loadDetail()); });
             <NFormItem label="卖出印花税（基点）"><NInputNumber v-model:value="form.stampTaxBps" :min="0" :max="1000" /></NFormItem>
             <NFormItem label="过户费（基点）"><NInputNumber v-model:value="form.transferFeeBps" :min="0" :max="1000" :precision="0" /></NFormItem>
             <NFormItem label="滑点（基点）"><NInputNumber v-model:value="form.slippageBps" :min="0" :max="1000" /></NFormItem>
-            <NFormItem label="来源开关"><NSpace><NCheckbox v-model:checked="form.manualSourceEnabled">手动</NCheckbox><NCheckbox v-model:checked="form.ruleSourceEnabled">现有规则</NCheckbox><NCheckbox disabled>AI / Agent（后续排名）</NCheckbox></NSpace></NFormItem>
+            <NFormItem label="来源开关"><NSpace><NCheckbox v-model:checked="form.manualSourceEnabled">手动</NCheckbox><NCheckbox v-model:checked="form.ruleSourceEnabled">现有规则</NCheckbox><NCheckbox disabled>AI 候选请到“研究中心”启动验证</NCheckbox></NSpace></NFormItem>
           </div>
           <NFormItem label="标的代码（每行一个，最多 10 只；规则默认趋势跟随）"><NInput v-model:value="targetsText" type="textarea" :rows="4" placeholder="sh600519&#10;sz000001&#10;bj920000" /></NFormItem>
           <NSpace><NButton type="primary" :loading="busy" @click="saveAccount">保存账户</NButton><NButton v-if="selectedId" type="error" secondary @click="deleteAccount">删除账户</NButton></NSpace>
@@ -230,12 +261,13 @@ watch(selectedId, id => { if (id) void act(() => loadDetail()); });
             <NFormItem label="股票代码"><NInput v-model:value="order.symbol" placeholder="sh600519" /></NFormItem>
             <NFormItem label="名称"><NInput v-model:value="order.name" placeholder="可留空" /></NFormItem>
             <NFormItem label="方向"><NSelect v-model:value="order.side" :options="[{label:'买入',value:'buy'},{label:'卖出',value:'sell'}]" /></NFormItem>
-            <NFormItem label="数量"><NInputNumber v-model:value="order.quantity" :min="100" :step="100" :precision="0" /></NFormItem>
-            <NFormItem label="信号日期"><input v-model="order.signalDate" class="date-input" type="date" /></NFormItem>
-            <NFormItem label="涨跌幅限制（基点）"><NInputNumber v-model:value="order.limitBps" :min="100" :max="3000" :step="100" /></NFormItem>
+            <NFormItem label="数量"><NInputNumber v-model:value="order.quantity" :min="order.side === 'buy' ? orderLot.min : 1" :step="order.side === 'buy' ? orderLot.step : 1" :precision="0" /></NFormItem>
+            <NFormItem v-if="executionMode==='realtime'" label="实时委托限价（元）"><NInput v-model:value="order.limitPrice" placeholder="例如 34" /></NFormItem><NFormItem v-if="executionMode==='realtime' &amp;&amp; order.side==='buy'" label="止盈卖点（元）"><NInput v-model:value="order.takePrice" placeholder="例如 35" /></NFormItem><NFormItem v-if="executionMode==='realtime' &amp;&amp; order.side==='buy'" label="止损价（元）"><NInput v-model:value="order.stopPrice" /></NFormItem>
+            <NFormItem label="涨跌幅限制（按板块自动判定）"><NInput :value="`${(orderLimitBps / 100).toFixed(0)}%（${orderLimitBps} 基点）`" disabled /></NFormItem>
           </div>
+          <p class="hint">涨跌幅与申报单位按代码所属板块自动判定：主板 ±10%（主板 ST/*ST 自 2026-07-06 起同为 ±10%）、创业板/科创板 ±20%、北交所 ±30%；科创板买入至少 200 股、北交所至少 100 股（超出部分 1 股递增），其余 100 股整手。以涨停/跌停价开盘但盘中开板（有振幅）的仍可成交，一字板才拒单。退市整理期与上市未满 5 个交易日的股票不参与模拟。</p>
           <NButton type="primary" :disabled="!selectedId || !order.symbol" :loading="busy" @click="submitOrder">提交模拟指令</NButton>
-          <p class="hint">仅记录模式不会成交；确认模式需先确认；全自动模式也必须等到信号日后的未复权交易日 K 线出现才会撮合。</p>
+          <p class="hint">实时限价单仅使用委托建立后的新盘口；买入参考卖一、卖出参考买一，含滑点且不突破限价。今日买入受 T+1 限制。仅记录不成交，确认模式需确认。</p>
         </NTabPane>
       </NTabs>
     </NCard>

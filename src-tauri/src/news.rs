@@ -577,6 +577,8 @@ async fn poll_once(db: &Database, app: &tauri::AppHandle) {
             "alert_type": "news",
             "news_source": news.item.source_label,
             "news_source_id": news.item.source_id,
+            "original_title": news.item.title,
+            "original_body": news.item.body,
             "severity": if news.route.popup { "high" } else { "record" },
             "symbols": news.matches.iter().map(|(code, _)| code).collect::<Vec<_>>(),
             "agent_summary": summary.is_some(),
@@ -589,6 +591,13 @@ async fn poll_once(db: &Database, app: &tauri::AppHandle) {
             crate::notifications::record_only(app, payload);
         }
     }
+}
+
+#[tauri::command]
+pub fn get_news_archive(
+    db: tauri::State<'_, Arc<Database>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    db.news_archive()
 }
 
 pub fn spawn(db: Arc<Database>, app: tauri::AppHandle) {

@@ -9,11 +9,13 @@ use crate::datasource::eastmoney_universe::{
 };
 use crate::datasource::market_clock::MarketSession;
 use crate::datasource::market_policy::MarketRequestPolicy;
+use crate::datasource::sector::{self, SectorKind};
 use crate::db::Database;
 use crate::domain::KLineData;
 use crate::dynamic_filter;
 use crate::quant::playbook::TradeRule;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::State;
@@ -79,6 +81,64 @@ pub struct DynamicFilterProposal {
     pub clamped_fields: Vec<String>,
     pub rationale: String,
     pub guidance: String,
+}
+
+const MAX_SECTOR_FILTERS_PER_KIND: usize = 10;
+
+fn matches_sector_filters(
+    code: &str,
+    industries: Option<&HashSet<String>>,
+    concepts: Option<&HashSet<String>>,
+) -> bool {
+    industries.is_none_or(|members| members.contains(code))
+        && concepts.is_none_or(|members| members.contains(code))
+}
+
+/// 把用户选中的行业/概念转成成分股集合并应用到粗筛结果。
+///
+/// - 同类多选：并集（任意一个行业/概念即可）
+/// - 行业 + 概念：交集（必须同时满足两类）
+///
+/// 网络失败时不能静默忽略用户选的板块，否则会把板块外的股票当成命中；
+/// 因此返回明确错误，让前端给出重试入口。
+async fn apply_sector_filters(
+    mut rows: Vec<SnapshotRow>,
+    filter: &MarketFilter,
+) -> Result<Vec<SnapshotRow>, String> {
+    async fn union_codes(
+        kind: SectorKind,
+        requested: &[String],
+    ) -> Result<Option<HashSet<String>>, String> {
+        let mut unique = requested
+            .iter()
+            .map(|code| code.trim().to_uppercase())
+            .filter(|code| !code.is_empty())
+            .collect::<Vec<_>>();
+        unique.sort();
+        unique.dedup();
+        if unique.is_empty() {
+            return Ok(None);
+        }
+        if unique.len() > MAX_SECTOR_FILTERS_PER_KIND {
+            return Err(format!("每类最多选择 {MAX_SECTOR_FILTERS_PER_KIND} 个板块"));
+        }
+
+        let mut union = HashSet::new();
+        for code in unique {
+            let members = sector::fetch_member_codes(kind, &code)
+                .await
+                .map_err(|error| format!("获取板块 {code} 成分股失败：{error}"))?;
+            union.extend(members);
+        }
+        Ok(Some(union))
+    }
+
+    let industries = union_codes(SectorKind::Industry, &filter.industry_codes).await?;
+    let concepts = union_codes(SectorKind::Concept, &filter.concept_codes).await?;
+    rows.retain(|row| {
+        matches_sector_filters(&row.code, industries.as_ref(), concepts.as_ref())
+    });
+    Ok(rows)
 }
 
 /// 生成隔离的动态筛选建议。首版只读、不写 universe_filter；缺少可审计的
@@ -420,7 +480,8 @@ pub async fn get_market_universe(
     });
 
     let capabilities = FilterCapabilities::for_source(outcome.source);
-    let mut matched = filter.apply_with(&outcome.rows, capabilities);
+    let matched = filter.apply_with(&outcome.rows, capabilities);
+    let mut matched = apply_sector_filters(matched, &filter).await?;
     let skipped_conditions = filter.skipped_conditions(capabilities);
 
     // 稳定排序：成交额降序，同额按代码升序。没有这一步，分页就会重复/漏行。
@@ -806,13 +867,36 @@ pub fn delete_filter_preset(db: State<'_, Arc<Database>>, id: String) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::{accepts_history, next_custom_id, normalize_meta, snapshot_ttl, MAX_LABEL_CHARS};
+    use super::{
+        accepts_history, matches_sector_filters, next_custom_id, normalize_meta, snapshot_ttl,
+        MAX_LABEL_CHARS,
+    };
     use crate::datasource::eastmoney_universe::{
         preset_infos, MarketFilter, PresetInfo, DEFAULT_SNAPSHOT_TTL,
     };
     use crate::domain::KLineData;
     use crate::quant::playbook::TradeRule;
-    use std::time::Duration;
+    use std::{collections::HashSet, time::Duration};
+
+    #[test]
+    fn sector_filters_or_within_kind_and_between_kinds() {
+        let industries = HashSet::from(["600000".to_owned(), "600001".to_owned()]);
+        let concepts = HashSet::from(["600001".to_owned(), "600002".to_owned()]);
+
+        assert!(matches_sector_filters("600000", Some(&industries), None));
+        assert!(matches_sector_filters("600002", None, Some(&concepts)));
+        assert!(matches_sector_filters(
+            "600001",
+            Some(&industries),
+            Some(&concepts)
+        ));
+        assert!(!matches_sector_filters(
+            "600000",
+            Some(&industries),
+            Some(&concepts)
+        ));
+        assert!(matches_sector_filters("999999", None, None));
+    }
 
     fn custom(id: &str, label: &str) -> PresetInfo {
         PresetInfo {

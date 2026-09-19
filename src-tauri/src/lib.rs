@@ -8,12 +8,14 @@ pub mod desktop_toast;
 pub mod domain;
 pub mod dynamic_filter;
 pub mod group_hotkeys;
+pub mod market_rules;
 pub mod monitor;
 pub mod news;
 pub mod notification_identity;
 pub mod notifications;
 pub mod quant;
 pub mod simulation;
+pub mod simulation_live;
 pub mod stockdb;
 
 use cache::QuoteCache;
@@ -441,7 +443,7 @@ pub fn run() {
             app.manage(polling_config.clone());
 
             crate::cache::Scheduler::spawn(
-                ds_manager,
+                ds_manager.clone(),
                 cache,
                 db.clone(),
                 app.handle().clone(),
@@ -453,22 +455,37 @@ pub fn run() {
 
             // 模拟账户独立调度；默认无启用账户，因此不会联网或改变账本。
             let simulation_db = db.clone();
+            let live_db=db.clone();let live_manager=ds_manager.clone();
+            tauri::async_runtime::spawn(async move{loop{commands::simulation_live::tick_all(&live_db,&live_manager).await;tokio::time::sleep(std::time::Duration::from_secs(3)).await;}});
             tauri::async_runtime::spawn(async move {
                 loop {
-                    match simulation_db.list_auto_sim_account_ids() {
-                        Ok(ids) => {
-                            for account_id in ids {
-                                if let Err(error) =
-                                    commands::simulation::run_account(&simulation_db, account_id)
-                                        .await
-                                {
-                                    log::warn!("模拟账户 {} 自动运行失败：{}", account_id, error);
-                                }
-                            }
-                        }
-                        Err(error) => log::warn!("读取自动模拟账户失败：{}", error),
-                    }
+                    if let Ok(ids)=simulation_db.list_auto_sim_account_ids(){ for id in ids { if !simulation_db.live_account(id).unwrap_or(true){ if let Err(error)=commands::simulation::run_account(&simulation_db,id).await{commands::research::account_failed(&simulation_db,id,&error);} } } }
+                    commands::research::scheduled_tick(&simulation_db).await;
                     tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                }
+            });
+
+            // 交易日历由行情推断：启动即取证，之后按需刷新。
+            // 有网就有日历，跨年不用改代码，也不依赖本地历史库是否每天更新。
+            let calendar_manager = ds_manager.clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let now = chrono::Utc::now();
+                    if datasource::trading_calendar::needs_sync(now) {
+                        match datasource::trading_calendar::sync_from_market(&calendar_manager).await
+                        {
+                            Ok(count) => log::info!(
+                                "[calendar] 交易日历已由行情更新：{} 个交易日（{}）",
+                                count,
+                                datasource::trading_calendar::status_text()
+                            ),
+                            Err(error) => log::warn!(
+                                "[calendar] 交易日历暂未取得新证据，保留上一次结果：{}",
+                                error
+                            ),
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                 }
             });
 
@@ -961,6 +978,20 @@ pub fn run() {
             commands::analysis::run_stock_research,
             commands::analysis::batch_stock_status,
             commands::agent::get_agent_status,
+            commands::research::research_dashboard,
+            commands::research::save_research_config,
+            commands::research::research_discover,
+            commands::research::research_start,
+            commands::research::research_action,
+            commands::simulation_live::simulation_live_status,
+            commands::research::research_workspace,
+            commands::research::open_research_claude,
+            commands::research::import_research_candidate,
+            news::get_news_archive,
+            commands::agent::inspect_agent_task,
+            commands::agent::get_agent_activity,
+            commands::agent::get_agent_run_detail,
+            commands::agent::test_agent_connection,
             commands::agent::analyze_stock_agent,
             commands::agent::analyze_stock_team,
             commands::agent::get_prediction_calibration,

@@ -330,6 +330,10 @@ impl StockDbManager {
 
         let mut command = Command::new(&engine);
         command.current_dir(engine.parent().ok_or("stockdb 路径缺少父目录")?);
+        // free-stockdb 的 Windows 发行版默认走桌面模式，启动后会打开它的
+        // HTML 页面。Bull Arrives 只需要后台 HTTP 服务，`-d` 是其官方命令行
+        // 的 daemon 模式，可避免自动管理时打扰用户的浏览器/托盘界面。
+        command.arg("-d");
         command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         hide_window(&mut command);
         let mut child = command.spawn().map_err(|e| format!("启动 stockdb 失败: {e}"))?;

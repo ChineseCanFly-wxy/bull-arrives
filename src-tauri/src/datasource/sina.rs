@@ -527,6 +527,7 @@ impl DataSource for SinaAdapter {
 
         let mut bids = Vec::new();
         let mut asks = Vec::new();
+        let mut timestamp = 0;
 
         for line in body.lines() {
             if let Some(eq_pos) = line.find('=') {
@@ -540,6 +541,7 @@ impl DataSource for SinaAdapter {
                 let data = &line[q_start..q_start + qe];
                 let fields: Vec<&str> = data.split('~').collect();
 
+                timestamp = fields.get(30).map(|s|crate::domain::parse_quote_timestamp(s, "%Y%m%d%H%M%S")).unwrap_or(0);
                 if fields.len() >= 29 {
                     for i in 0..5 {
                         let pi = 9 + i * 2;
@@ -576,6 +578,7 @@ impl DataSource for SinaAdapter {
             code: code.to_string(),
             bids,
             asks,
+            timestamp,
         })
     }
 

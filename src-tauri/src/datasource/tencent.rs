@@ -543,6 +543,7 @@ impl DataSource for TencentAdapter {
 
         let mut bids = Vec::new();
         let mut asks = Vec::new();
+        let mut timestamp = 0;
 
         for line in body.lines() {
             if let Some(eq_pos) = line.find('=') {
@@ -556,6 +557,7 @@ impl DataSource for TencentAdapter {
                 let data = &line[q_start..q_start + qe];
                 let fields: Vec<&str> = data.split('~').collect();
 
+                timestamp = fields.get(30).map(|s|crate::domain::parse_quote_timestamp(s, "%Y%m%d%H%M%S")).unwrap_or(0);
                 if fields.len() >= 29 {
                     // Bids: fields 9-18 (price,vol alternating)
                     for i in 0..5 {
@@ -596,6 +598,7 @@ impl DataSource for TencentAdapter {
             code: code.to_string(),
             bids,
             asks,
+            timestamp,
         })
     }
 

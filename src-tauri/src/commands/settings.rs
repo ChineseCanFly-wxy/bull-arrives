@@ -399,6 +399,8 @@ pub struct MarketSessionInfo {
     pub session: String,
     pub interval_secs: u64,
     pub is_trading: bool,
+    /// 交易日历当前依据（由指数行情推断，不再是手工录入的年度表）。
+    pub calendar: String,
 }
 
 #[tauri::command]
@@ -416,5 +418,6 @@ pub fn get_market_session(config: State<'_, Arc<PollingConfig>>) -> MarketSessio
             session,
             MarketSession::MorningTrade | MarketSession::AfternoonTrade
         ),
+        calendar: crate::datasource::trading_calendar::status_text(),
     }
 }

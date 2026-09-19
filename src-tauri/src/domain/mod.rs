@@ -54,6 +54,8 @@ pub struct Depth {
     pub code: String,
     pub bids: Vec<Level>,
     pub asks: Vec<Level>,
+    #[serde(default)]
+    pub timestamp: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

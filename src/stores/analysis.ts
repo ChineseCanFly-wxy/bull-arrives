@@ -19,6 +19,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const agentLoading = ref(false);
   const teamAnalysis = ref<AgentTeamResponse | null>(null);
   const teamLoading = ref(false);
+  const teamError = ref<string | null>(null);
   const research = ref<ResearchReport | null>(null);
   const researchLoading = ref(false);
   const researchError = ref<string | null>(null);
@@ -49,6 +50,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     analysis.value = null;
     agentAnalysis.value = null;
     teamAnalysis.value = null;
+    teamError.value = null;
     research.value = null;
     researchError.value = null;
     const manual = rule && rule !== 'auto' ? rule : null;
@@ -75,17 +77,23 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
 
   async function loadAgentStatus() {
-    agentStatus.value = await invoke<AgentStatus>('get_agent_status');
+    try {
+      agentStatus.value = await invoke<AgentStatus>('get_agent_status');
+    } catch (e) {
+      agentStatus.value = { installed: false, state: 'unavailable', path: null, message: String(e), guidance: '请在设置 → 智能中重新检测或测试连接。' };
+    }
   }
 
-  async function analyzeWithAgent() {
+  async function analyzeWithAgent(userQuestion = '') {
     const contextFingerprint = analysis.value?.agent_context_fingerprint;
-    if (!contextFingerprint || !agentStatus.value?.installed || agentLoading.value) return;
+    if (!contextFingerprint || !agentStatus.value?.installed || agentLoading.value || teamLoading.value) return;
     const request = ++agentRequest;
     agentLoading.value = true;
+    agentAnalysis.value = null;
     try {
       const result = await invoke<AgentAnalysisResponse>('analyze_stock_agent', {
         contextFingerprint,
+        userQuestion: userQuestion.trim() || null,
       });
       if (request === agentRequest
         && analysis.value?.agent_context_fingerprint === contextFingerprint
@@ -96,6 +104,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
       if (request !== agentRequest || analysis.value?.agent_context_fingerprint !== contextFingerprint) return;
       agentAnalysis.value = {
         status: 'failed', provider: 'claude_code', cached: false, conclusion: null,
+        summary: null, claims: [],
         evidence: [], confidence: null, invalidation_conditions: [],
         error: String(e), guidance: '已降级为纯量化结果。', generated_at: '',
         context_fingerprint: contextFingerprint,
@@ -115,13 +124,14 @@ export const useAnalysisStore = defineStore('analysis', () => {
     const request = ++agentRequest;
     teamLoading.value = true;
     teamAnalysis.value = null;
+    teamError.value = null;
     try {
       const result = await invoke<AgentTeamResponse>('analyze_stock_team', { contextFingerprint });
       if (request === agentRequest && analysis.value?.agent_context_fingerprint === contextFingerprint) {
         teamAnalysis.value = result;
       }
     } catch (e) {
-      if (request === agentRequest) console.warn('[agent-team]', e);
+      if (request === agentRequest) teamError.value = String(e);
     } finally {
       teamLoading.value = false;
     }
@@ -154,6 +164,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     ruleOverride.value = null;
     agentAnalysis.value = null;
     teamAnalysis.value = null;
+    teamError.value = null;
     teamLoading.value = false;
     research.value = null;
     researchLoading.value = false;
@@ -163,7 +174,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   return {
     analysis, symbol, loading, error, ruleUsed, ruleOverride,
-    agentStatus, agentAnalysis, agentLoading, teamAnalysis, teamLoading,
+    agentStatus, agentAnalysis, agentLoading, teamAnalysis, teamLoading, teamError,
     research, researchLoading, researchError,
     analyze, loadAgentStatus, analyzeWithAgent, analyzeWithTeam, runResearch, cancelAgentAnalysis, reset,
   };

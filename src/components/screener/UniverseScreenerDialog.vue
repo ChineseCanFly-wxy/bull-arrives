@@ -29,6 +29,7 @@ import { useRankStore } from '@/stores/rank';
 import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
 import type { StockStatusItem } from '@/types/analysis';
 import { TRADE_RULE_OPTIONS, tradeRuleLabel, type TradeRuleId } from '@/types/analysis';
+import type { SectorKind, SectorRotation, SectorSummary } from '@/types/sector';
 import {
   BOARD_LABELS,
   SELECTABLE_BOARDS,
@@ -55,6 +56,46 @@ const rank = useRankStore();
 
 const addedSymbols = ref<Set<string>>(new Set());
 const addError = ref<string | null>(null);
+
+// 行业/概念目录。借用板块轮动的全量接口，打开筛选器时行业、概念各一次请求。
+const sectorCatalog = ref<SectorSummary[]>([]);
+const sectorCatalogLoading = ref(false);
+const sectorCatalogError = ref<string | null>(null);
+
+function optionsFor(kind: SectorKind) {
+  return sectorCatalog.value
+    .filter(item => item.kind === kind)
+    .map(item => ({ label: item.name, value: item.code }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
+}
+
+const industryOptions = computed(() => optionsFor('industry'));
+const conceptOptions = computed(() => optionsFor('concept'));
+
+async function loadSectorCatalog(force = false) {
+  if (sectorCatalogLoading.value || (!force && sectorCatalog.value.length)) return;
+  sectorCatalogLoading.value = true;
+  sectorCatalogError.value = null;
+  try {
+    const response = await invoke<SectorRotation>('get_sector_rotation');
+    const succeeded = new Set(response.statuses.filter(status => status.ok).map(status => status.kind));
+    // 某一类短暂失败时保留上次目录，只替换本次成功的类别。
+    sectorCatalog.value = [
+      ...sectorCatalog.value.filter(item => !succeeded.has(item.kind)),
+      ...response.items,
+    ];
+    const failed = response.statuses.filter(status => !status.ok);
+    if (failed.length) {
+      sectorCatalogError.value = failed
+        .map(status => `${status.kind === 'industry' ? '行业' : '概念'}目录加载失败：${status.error ?? '未知错误'}`)
+        .join('；');
+    }
+  } catch (error) {
+    sectorCatalogError.value = `行业/概念目录加载失败：${error}`;
+  } finally {
+    sectorCatalogLoading.value = false;
+  }
+}
 
 // 分析对话框状态
 const showAnalysis = ref(false);
@@ -216,7 +257,12 @@ function cancelDeleteStrategy() {
 }
 
 function cloneFilterLocal(source: MarketFilter): MarketFilter {
-  return { ...source, boards: [...source.boards] };
+  return {
+    ...source,
+    boards: [...source.boards],
+    industry_codes: [...source.industry_codes],
+    concept_codes: [...source.concept_codes],
+  };
 }
 
 const strategyTitle = computed(() => {
@@ -814,6 +860,7 @@ const pagination = computed(() => {
  */
 onMounted(() => {
   void universe.hydrate();
+  void loadSectorCatalog();
   // 恢复上次拖出来的弹窗尺寸。与筛选条件分开读：尺寸坏了不该拖累条件恢复
   void loadSize();
   window.addEventListener('resize', handleViewportChange);
@@ -1174,6 +1221,46 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
           <n-checkbox-group v-model:value="universe.filter.boards" @update:value="universe.markCustom">
             <n-checkbox v-for="b in SELECTABLE_BOARDS" :key="b" :value="b" :label="BOARD_LABELS[b]" />
           </n-checkbox-group>
+        </div>
+
+        <div class="field sector-filter-row">
+          <span class="field-label">行业</span>
+          <n-select
+            v-model:value="universe.filter.industry_codes"
+            class="sector-filter-select"
+            :options="industryOptions"
+            :loading="sectorCatalogLoading"
+            multiple
+            filterable
+            clearable
+            max-tag-count="responsive"
+            :max="10"
+            placeholder="不限行业（可多选）"
+            @update:value="universe.markCustom"
+          />
+          <span class="field-label concept-label">概念</span>
+          <n-select
+            v-model:value="universe.filter.concept_codes"
+            class="sector-filter-select"
+            :options="conceptOptions"
+            :loading="sectorCatalogLoading"
+            multiple
+            filterable
+            clearable
+            max-tag-count="responsive"
+            :max="10"
+            placeholder="不限概念（可多选）"
+            @update:value="universe.markCustom"
+          />
+          <n-button
+            v-if="sectorCatalogError"
+            size="tiny"
+            quaternary
+            type="warning"
+            :title="sectorCatalogError"
+            :loading="sectorCatalogLoading"
+            @click="loadSectorCatalog(true)"
+          >目录加载失败，重试</n-button>
         </div>
 
         <div class="field">
@@ -1881,6 +1968,9 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
+.sector-filter-row { flex-wrap: nowrap; }
+.sector-filter-select { flex: 1 1 260px; min-width: 180px; }
+.concept-label { margin-left: var(--space-2); }
 .checks {
   display: inline-flex;
   gap: var(--space-4);
@@ -2059,6 +2149,10 @@ const columns = computed<DataTableColumns<SnapshotRow>>(() => [
 }
 
 @media (max-width: 560px) {
+  .sector-filter-row { flex-wrap: wrap; }
+  .sector-filter-row .field-label { width: 40px; }
+  .sector-filter-select { flex-basis: calc(100% - 56px); min-width: 0; }
+  .concept-label { margin-left: 0; }
   .ranges {
     grid-template-columns: minmax(0, 1fr);
   }

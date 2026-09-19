@@ -55,6 +55,7 @@ const localHistoryStatus = ref<LocalHistoryStatus | null>(null);
 const localHistoryUrlDraft = ref('http://127.0.0.1:7899');
 const agentStatus = ref<AgentStatus | null>(null);
 const agentPathDraft = ref('');
+const agentTimeoutDraft = ref(90);
 
 const capturing = ref(false);
 const capturedCombo = ref<string | null>(null);
@@ -73,6 +74,7 @@ watch(() => props.show, (open) => {
     actionError.value = null;
     localHistoryUrlDraft.value = settings.localHistoryUrl;
     agentPathDraft.value = settings.settings['agent_claude_path'] || '';
+    agentTimeoutDraft.value = Number(settings.settings['agent_timeout_seconds'] || 90);
     safelyRun('session', () => settings.fetchMarketSession());
     if (settings.localHistoryEnabled) void loadLocalHistoryStatus();
     void settings.fetchStockDbStatus();
@@ -250,6 +252,15 @@ async function saveAgentPath() {
   if (!await settings.setSetting('agent_claude_path', agentPathDraft.value.trim())) return false;
   await loadAgentStatus();
 }
+async function testAgentConnection() {
+  agentStatus.value = await invoke<AgentStatus>('test_agent_connection');
+}
+async function saveAgentTimeout() {
+  if (!Number.isInteger(agentTimeoutDraft.value) || agentTimeoutDraft.value < 15 || agentTimeoutDraft.value > 300) {
+    throw new Error('Agent 超时必须为 15–300 的整数秒');
+  }
+  return settings.setSetting('agent_timeout_seconds', String(agentTimeoutDraft.value));
+}
 function close() {
   stopCapture();
   emit('update:show', false);
@@ -305,6 +316,7 @@ onBeforeUnmount(stopCapture);
               <input type="range" min="1" max="60" step="1" :value="intervalDraft" @input="onIntervalInput" @change="onIntervalCommit" />
               <p>固定模式不会跟随交易时段自动变化。</p>
             </div>
+            <p class="session-calendar">{{ settings.marketSession.calendar }}</p>
           </article>
           <QuoteScheduleSettings />
           <article class="setting-card">
@@ -429,15 +441,20 @@ onBeforeUnmount(stopCapture);
           </article>
           <article class="setting-card">
             <h3>本地 Agent · Claude Code</h3>
-            <p class="card-desc">仅在你点击“生成 Agent 解读”时运行；输入只含代码计算的量化快照，应用不读取或保存凭据。</p>
-            <div class="history-status" :class="agentStatus?.installed ? 'connected' : 'not_found'">
-              <b>{{ agentStatus?.installed ? '已就绪' : '不可用' }}</b>
+            <p class="card-desc">手动生成解读或多角色研判；开启资讯摘要、动态筛选时也会按对应规则调用。模型和登录沿用 Claude Code 配置，应用不保存凭据。</p>
+            <div class="history-status" :class="agentStatus?.state === 'ready' ? 'connected' : 'not_found'">
+              <b>{{ agentStatus?.state === 'ready' ? '连接正常' : agentStatus?.state === 'failed' ? '连接失败' : agentStatus?.installed ? '已安装 · 待验证' : '不可用' }}</b>
               <span>{{ agentStatus?.message || '正在检测…' }}</span>
               <small v-if="agentStatus?.path">{{ agentStatus.path }}</small>
             </div>
             <label class="history-field"><span>可执行文件</span><input v-model="agentPathDraft" type="text" placeholder="留空自动检测 claude.cmd / claude.exe" /><button class="minor-btn" :disabled="isSaving('agent-path')" @click="safelyRun('agent-path', saveAgentPath)">保存并检测</button></label>
-            <div class="history-actions"><button class="minor-btn" :disabled="isSaving('agent-scan')" @click="safelyRun('agent-scan', loadAgentStatus)">重新检测</button></div>
-            <p class="card-desc">{{ agentStatus?.guidance }}。固定单并发、90 秒超时，可中断并回收进程树；失败时仅保留纯量化结果。</p>
+            <label class="history-field"><span>单次超时（秒）</span><input v-model.number="agentTimeoutDraft" type="number" min="15" max="300" step="1" /><button class="minor-btn" :disabled="isSaving('agent-timeout')" @click="safelyRun('agent-timeout', saveAgentTimeout)">保存超时</button></label>
+            <div class="history-actions">
+              <button class="minor-btn" :disabled="isSaving('agent-scan') || isSaving('agent-test')" @click="safelyRun('agent-scan', loadAgentStatus)">重新检测</button>
+              <button class="minor-btn" :disabled="!agentStatus?.installed || isSaving('agent-test')" @click="safelyRun('agent-test', testAgentConnection)">{{ isSaving('agent-test') ? '测试连接中…' : '测试连接' }}</button>
+              <button v-if="isSaving('agent-test')" class="minor-btn" @click="safelyRun('agent-cancel', () => invoke('cancel_agent_analysis'))">中止</button>
+            </div>
+            <p class="card-desc">{{ agentStatus?.guidance }}。测试连接会进行一次简短模型调用，可能产生服务商费用。单并发；每次调用默认 90 秒，支持 15–300 秒；多角色研判依次运行，可中断。失败保留纯量化结果。</p>
           </article>
           <article class="setting-card compact-card">
             <h3>手动触发，无需开关</h3>
@@ -543,6 +560,7 @@ onBeforeUnmount(stopCapture);
 .session-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-tertiary); }
 .session-status i.trading { background: #3fb950; box-shadow: 0 0 0 4px rgba(63,185,80,.12); }
 .session-status b, .slider-block b { color: var(--color-accent); font-family: var(--font-mono); }
+.session-calendar { margin-top: 8px; color: var(--color-text-tertiary); font-size: 10px; line-height: 1.5; }
 .slider-block { margin-top: 16px; }
 .slider-block > div { display: flex; justify-content: space-between; color: var(--color-text-secondary); font-size: var(--text-xs); }
 .slider-block input[type='range'] { width: 100%; height: 4px; margin: 14px 0 5px; appearance: none; border-radius: 999px; background: var(--color-border-1); }

@@ -7,7 +7,18 @@ use crate::domain::KLineData;
 use crate::quant::playbook::{self, TradeRule};
 use crate::simulation::{RawBar, SCALE};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+static ACCOUNT_RUNS: OnceLock<Mutex<std::collections::HashSet<i64>>> = OnceLock::new();
+struct AccountRun(i64);
+impl Drop for AccountRun {
+    fn drop(&mut self) {
+        ACCOUNT_RUNS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.0);
+    }
+}
 use tauri::State;
 
 #[tauri::command]
@@ -16,14 +27,65 @@ pub fn simulation_list_accounts(db: State<'_, Arc<Database>>) -> Result<Vec<SimA
 }
 
 #[tauri::command]
-pub fn simulation_save_account(
+pub async fn simulation_save_account(
     db: State<'_, Arc<Database>>,
     input: AccountInput,
+    execution_mode: Option<String>,
 ) -> Result<SimAccount, String> {
+    if let Some(id) = input.id {
+        if db.experiment_account(id)?.is_some() {
+            return Err(
+                "研究账户的规则、股票池与费用已经冻结，请在研究中心管理；更改请建立新实验".into(),
+            );
+        }
+        if db.live_account(id)? {
+            let old = db.get_sim_targets(id)?;
+            if old
+                .iter()
+                .map(|t| (&t.symbol, &t.rule, t.limit_bps))
+                .collect::<Vec<_>>()
+                != input
+                    .targets
+                    .iter()
+                    .map(|t| (&t.symbol, &t.rule, t.limit_bps))
+                    .collect::<Vec<_>>()
+            {
+                return Err(
+                    "实时计划已建立，变更股票池或执行规则请新建账户，避免悄悄沿用旧买卖价".into(),
+                );
+            }
+        }
+    }
     if input.targets.len() > 10 {
         return Err("每个模拟账户最多可配置 10 个标的".into());
     }
-    db.save_sim_account(&input)
+    let is_new = input.id.is_none();
+    let live = if let Some(id) = input.id {
+        db.live_account(id)?
+    } else {
+        match execution_mode.as_deref().unwrap_or("realtime") {
+            "realtime" => true,
+            "daily" => false,
+            _ => return Err("账户执行方式只能为 realtime / daily".into()),
+        }
+    };
+    if input
+        .targets
+        .iter()
+        .any(|t| !crate::simulation_live::is_a_share(&t.symbol))
+    {
+        return Err("模拟只支持沪深北 A 股股票".into());
+    }
+    let plans = if is_new && live && input.rule_source_enabled {
+        super::simulation_live::prepare_plans(&db, &input.targets).await?
+    } else {
+        Vec::new()
+    };
+    let account = db.save_sim_account(&input)?;
+    if is_new && live {
+        db.enable_live_account(account.id, &plans)?;
+    }
+    Ok(account)
 }
 
 #[tauri::command]
@@ -31,6 +93,9 @@ pub fn simulation_delete_account(
     db: State<'_, Arc<Database>>,
     account_id: i64,
 ) -> Result<(), String> {
+    if db.experiment_account(account_id)?.is_some() {
+        return Err("研究账户必须保留验证历史，请在研究中心暂停或淘汰".into());
+    }
     db.delete_sim_account(account_id)
         .map_err(|error| error.to_string())
 }
@@ -47,10 +112,67 @@ pub fn simulation_get_detail(
 pub fn simulation_submit_order(
     db: State<'_, Arc<Database>>,
     mut input: OrderInput,
+    limit_price: Option<String>,
+    stop_price: Option<String>,
+    take_price: Option<String>,
 ) -> Result<SimOrder, String> {
+    if db.experiment_account(input.account_id)?.is_some() {
+        return Err("不能向冻结研究账户插入手动指令".into());
+    }
     input.source = "manual".into();
     input.ai_generated = false;
-    db.submit_sim_order(&input)
+    if !db.live_account(input.account_id)? {
+        if !crate::simulation_live::is_a_share(&input.symbol) {
+            return Err("只支持沪深北 A 股代码".into());
+        }
+        input.signal_date = chrono::Utc::now()
+            .with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap())
+            .format("%Y-%m-%d")
+            .to_string();
+        return db.submit_sim_order(&input);
+    }
+    if !crate::simulation_live::is_a_share(&input.symbol) {
+        return Err("只允许完整沪深北 A 股代码，例如 sh600000".into());
+    }
+    let limit = crate::simulation::parse_scaled(
+        limit_price.as_deref().ok_or("请填写实时委托限价")?,
+        "限价",
+    )?;
+    if limit <= 0 {
+        return Err("限价必须大于零".into());
+    }
+    let now = chrono::Utc::now();
+    input.signal_date = now
+        .with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap())
+        .format("%Y-%m-%d")
+        .to_string();
+    if input.side == "buy" {
+        let stop = crate::simulation::parse_scaled(
+            stop_price.as_deref().ok_or("买入时须设置止损价")?,
+            "止损价",
+        )?;
+        let take = crate::simulation::parse_scaled(
+            take_price.as_deref().ok_or("买入时须设置止盈价")?,
+            "止盈价",
+        )?;
+        db.set_live_manual_plan(
+            input.account_id,
+            &crate::db::simulation_live::LivePlan {
+                symbol: input.symbol.clone(),
+                buy_low: limit,
+                buy_high: limit,
+                stop,
+                take,
+                limit_bps: crate::market_rules::ensure_simulatable(&input.symbol, &input.name)?,
+                basis_date: input.signal_date.clone(),
+                reference_close: 0,
+                position_pct: 0.0,
+            },
+        )?;
+    }
+    let order = db.submit_sim_order(&input)?;
+    db.live_order(order.id, limit, now.timestamp())?;
+    Ok(order)
 }
 
 #[tauri::command]
@@ -58,20 +180,57 @@ pub fn simulation_confirm_order(
     db: State<'_, Arc<Database>>,
     order_id: i64,
 ) -> Result<SimOrder, String> {
-    db.confirm_sim_order(order_id)
+    let result = db.confirm_sim_order(order_id)?;
+    if db.live_account(result.account_id)? {
+        db.rearm_live_order(order_id)?;
+    }
+    Ok(result)
 }
 
 #[tauri::command]
 pub async fn simulation_run(
     db: State<'_, Arc<Database>>,
+    manager: State<'_, Arc<crate::datasource::DataSourceManager>>,
     account_id: i64,
 ) -> Result<SimDetail, String> {
-    run_account(&db, account_id).await
+    if db.live_account(account_id)? {
+        super::simulation_live::run(&db, &manager, account_id).await
+    } else {
+        run_account(&db, account_id).await
+    }
 }
 
 /// Run one account from locally stored history. QFQ bars decide at T close;
 /// only the following raw bar may mutate the cash/lot ledger.
 pub async fn run_account(db: &Database, account_id: i64) -> Result<SimDetail, String> {
+    if db.live_account(account_id)? {
+        return Err("实时账户禁止使用日线回放撮合".into());
+    }
+    if !ACCOUNT_RUNS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(account_id)
+    {
+        return Err("该账户正在运行，请勿重复推进".into());
+    }
+    let _run = AccountRun(account_id);
+    if let Some(state) = db.experiment_account(account_id)? {
+        if !matches!(state.as_str(), "observing" | "extended" | "adopted") {
+            return Err("研究账户当前已暂停、待采纳或淘汰，请到研究中心查看".into());
+        }
+        let now = chrono::Utc::now();
+        let local = now.with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap());
+        let schedule = db.get_setting("quote_schedule").ok().flatten();
+        let policy =
+            crate::datasource::market_policy::MarketRequestPolicy::from_quote_schedule_json(
+                schedule.as_deref(),
+            )?;
+        use chrono::Timelike;
+        if policy.is_trading_day_at(now) && local.hour() < 16 {
+            return db.get_sim_detail(account_id);
+        }
+    }
     let mut detail = db.get_sim_detail(account_id)?;
     if detail.targets.len() > 10 {
         return Err("每个模拟账户最多可配置 10 个标的".into());
@@ -138,6 +297,30 @@ pub async fn run_account(db: &Database, account_id: i64) -> Result<SimDetail, St
         .max()
         .unwrap_or_default()
         .to_string();
+    if db.experiment_account(account_id)?.is_some() {
+        let today = chrono::Utc::now()
+            .with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap())
+            .format("%Y-%m-%d")
+            .to_string();
+        if trade_date > today {
+            return Err("本地行情包含未来日期，拒绝模拟".into());
+        }
+        if marks.values().any(|(date, _)| date != &trade_date) {
+            return Err("研究账户各标的估值日期不一致，请更新本地数据后重试".into());
+        }
+        let curve = db.sim_equity_curve(account_id)?;
+        if let Some(last) = curve.last() {
+            if trade_date < last.date {
+                return Err("行情早于已记录净值，拒绝倒退重算".into());
+            }
+            if histories
+                .iter()
+                .any(|(_, _, _, h)| h.raw_klines.iter().filter(|b| b.date > last.date).count() > 1)
+            {
+                return Err("本地日线跨过多个未记录交易日，当前引擎无法完整补记中间净值；请暂停并新建实验，不能把缺口算成验证通过".into());
+            }
+        }
+    }
     let benchmark_close = match history::fetch_daily(&config, "000300", None, None).await {
         Ok(data) => data
             .raw_klines
@@ -182,6 +365,11 @@ pub async fn run_account(db: &Database, account_id: i64) -> Result<SimDetail, St
     };
 
     let result = (|| -> Result<SimDetail, String> {
+        if let Some(state) = db.experiment_account(account_id)? {
+            if !matches!(state.as_str(), "observing" | "extended" | "adopted") {
+                return Err("研究账户已暂停，未继续处理指令".into());
+            }
+        }
         let mut pending = Vec::new();
         for order in detail
             .orders
@@ -242,6 +430,13 @@ pub async fn run_account(db: &Database, account_id: i64) -> Result<SimDetail, St
             )?;
 
             let (signal_index, signal_bar) = latest_common_bar(&data)?;
+            // A strategy selected using today's market cannot be backdated to an earlier signal.
+            if db.experiment_account(account_id)?.is_some() {
+                let selected_day = detail.account.created_at.get(..10).unwrap_or("");
+                if signal_bar.date.as_str() < selected_day {
+                    continue;
+                }
+            }
             let qfq = &data.klines[..=signal_index];
             let raw = &data.raw_klines[signal_index];
 
@@ -387,6 +582,8 @@ pub async fn run_account(db: &Database, account_id: i64) -> Result<SimDetail, St
         }
     }
     result
+        .map(|_| ())
+        .and_then(|_| db.get_sim_detail(account_id))
 }
 
 fn target_rule(value: &str, bars: &[KLineData]) -> Result<TradeRule, String> {

@@ -111,7 +111,12 @@ const FALLBACK_PRESETS: PresetInfo[] = (() => {
 export type SourceMode = 'auto' | SnapshotSource;
 
 function cloneFilter(source: MarketFilter): MarketFilter {
-  return { ...source, boards: [...source.boards] };
+  return {
+    ...source,
+    boards: [...source.boards],
+    industry_codes: [...source.industry_codes],
+    concept_codes: [...source.concept_codes],
+  };
 }
 
 /** 把未知值安全地收敛为 number | null，避免脏数据破坏 UI 绑定 */
@@ -127,6 +132,12 @@ function safeParseFilter(raw: string): MarketFilter | null {
     const d = createDefaultFilter();
     return {
       boards: Array.isArray(obj.boards) ? obj.boards : d.boards,
+      industry_codes: Array.isArray(obj.industry_codes)
+        ? obj.industry_codes.filter((value): value is string => typeof value === 'string')
+        : d.industry_codes,
+      concept_codes: Array.isArray(obj.concept_codes)
+        ? obj.concept_codes.filter((value): value is string => typeof value === 'string')
+        : d.concept_codes,
       exclude_st: typeof obj.exclude_st === 'boolean' ? obj.exclude_st : d.exclude_st,
       exclude_delisting: typeof obj.exclude_delisting === 'boolean' ? obj.exclude_delisting : d.exclude_delisting,
       exclude_suspended: typeof obj.exclude_suspended === 'boolean' ? obj.exclude_suspended : d.exclude_suspended,
@@ -378,6 +389,8 @@ export const useUniverseStore = defineStore('universe', () => {
     if (preset.builtin) {
       const current = filter.value;
       next.boards = [...current.boards];
+      next.industry_codes = [...current.industry_codes];
+      next.concept_codes = [...current.concept_codes];
       next.exclude_st = current.exclude_st;
       next.exclude_delisting = current.exclude_delisting;
       next.exclude_suspended = current.exclude_suspended;

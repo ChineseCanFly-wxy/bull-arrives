@@ -22,13 +22,16 @@ impl MarketSession {
     }
 
     /// Testable session calculation for an explicit UTC instant.
-    /// This clock handles weekdays only; configured closure dates are enforced by
-    /// `MarketRequestPolicy` and are not a claim of a verified exchange calendar.
+    /// This clock handles weekdays only; the trading date itself comes from
+    /// [`super::trading_calendar`] (inferred from index quotes / daily bars) and
+    /// user-configured closure dates are enforced by `MarketRequestPolicy`.
     pub fn at_utc(now: DateTime<Utc>) -> Self {
         let cst_offset = FixedOffset::east_opt(8 * 3600).expect("UTC+8 is a valid offset");
         let now = now.with_timezone(&cst_offset);
 
-        if matches!(now.weekday(), Weekday::Sat | Weekday::Sun) {
+        if matches!(now.weekday(), Weekday::Sat | Weekday::Sun)
+            || !super::trading_calendar::is_trading_day_now(now.with_timezone(&Utc)).unwrap_or(false)
+        {
             return Self::Closed;
         }
 

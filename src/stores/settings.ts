@@ -23,6 +23,8 @@ export interface MarketSessionInfo {
   session: string;
   interval_secs: number;
   is_trading: boolean;
+  /** 交易日历当前依据：由指数行情推断，不再是手工录入的年度休市表。 */
+  calendar: string;
 }
 
 export interface StockDbCandidate {
@@ -82,6 +84,7 @@ export const useSettingsStore = defineStore('settings', () => {
     session: '休市',
     interval_secs: 30,
     is_trading: false,
+    calendar: '等待行情推断交易日历…',
   });
   const error = ref<string | null>(null);
 

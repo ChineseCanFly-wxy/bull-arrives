@@ -366,9 +366,12 @@ impl Database {
         tx.execute("DELETE FROM sim_targets WHERE account_id=?1", [account_id])
             .map_err(|error| error.to_string())?;
         for target in &input.targets {
+            // 标的的涨跌幅按板块规则落库；规则无法判定时保留用户配置（例如历史遗留标的）。
+            let limit_bps = crate::market_rules::ensure_simulatable(target.symbol.trim(), &target.name)
+                .unwrap_or(target.limit_bps);
             tx.execute(
                 "INSERT INTO sim_targets(account_id,symbol,name,rule,limit_bps) VALUES(?1,?2,?3,?4,?5)",
-                params![account_id,target.symbol.trim(),target.name,target.rule,target.limit_bps],
+                params![account_id,target.symbol.trim(),target.name,target.rule,limit_bps],
             ).map_err(|error| error.to_string())?;
         }
         let account = tx.query_row(
@@ -411,6 +414,20 @@ impl Database {
         if !(1..=3_000).contains(&input.limit_bps) {
             return Err(invalid("涨跌幅限制应在 1~3000 基点之间"));
         }
+        // 涨跌幅与申报数量不按用户配置执行：一律按代码所属板块的交易所规则重算并落库，
+        // 这样历史委托、实时委托与后续撮合看到的是同一个数字。
+        let limit_bps = crate::market_rules::ensure_simulatable(input.symbol.trim(), &input.name)?;
+        if limit_bps != input.limit_bps {
+            log::warn!(
+                "[simulation] {} 涨跌幅配置 {} 与板块规则 {} 不符，已按交易所规则记录",
+                input.symbol,
+                input.limit_bps,
+                limit_bps
+            );
+        }
+        if side == Side::Buy {
+            crate::market_rules::validate_buy_quantity(input.symbol.trim(), input.quantity)?;
+        }
         if input.stop_bps < 0 || input.take_bps < 0 || input.max_hold_days < 0 {
             return Err(invalid("止损、止盈和最大持有天数不能为负数"));
         }
@@ -422,6 +439,7 @@ impl Database {
         if !source_enabled {
             return Err(invalid("该委托来源已禁用"));
         }
+        super::research_loop::guard_execution(&conn, input.account_id)?;
         if (input.ai_generated || input.source == "ai") && auto_enabled {
             return Err(invalid("AI 委托不得启用自动成交"));
         }
@@ -437,7 +455,7 @@ impl Database {
             "INSERT INTO sim_orders(account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,created_at,confirmed_at)
              VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,CASE WHEN ?16='pending' THEN ?17 END)
              ON CONFLICT(account_id,idempotency_key) DO NOTHING",
-            params![input.account_id,input.idempotency_key.trim(),input.symbol.trim(),input.name,side.as_str(),input.quantity,input.signal_date,input.source,input.rule,Option::<i64>::None,Option::<i64>::None,input.stop_bps,input.take_bps,input.limit_bps,input.max_hold_days,status,timestamp],
+            params![input.account_id,input.idempotency_key.trim(),input.symbol.trim(),input.name,side.as_str(),input.quantity,input.signal_date,input.source,input.rule,Option::<i64>::None,Option::<i64>::None,input.stop_bps,input.take_bps,limit_bps,input.max_hold_days,status,timestamp],
         ).map_err(|error| error.to_string())?;
         conn.query_row(
             "SELECT id,account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,price,gross,fee,reject_reason,created_at,confirmed_at,filled_at,holding_days
@@ -459,6 +477,45 @@ impl Database {
     }
 
     pub fn match_sim_order_raw(&self, order_id: i64, bar: &RawBar) -> Result<SimOrder, String> {
+        self.match_sim_order_internal(order_id, bar, None, chrono::Utc::now())
+    }
+    pub fn match_sim_order_live(
+        &self,
+        order_id: i64,
+        tick: &crate::simulation_live::LiveTick,
+    ) -> Result<SimOrder, String> {
+        self.match_sim_order_live_at(order_id, tick, chrono::Utc::now())
+    }
+    pub(crate) fn match_sim_order_live_at(
+        &self,
+        order_id: i64,
+        tick: &crate::simulation_live::LiveTick,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<SimOrder, String> {
+        let date = chrono::DateTime::from_timestamp(tick.quote.timestamp, 0)
+            .ok_or("报价时间无效")?
+            .with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap())
+            .format("%Y-%m-%d")
+            .to_string();
+        // Only the shared ledger uses this date carrier; live prices never enter the OHLC matcher.
+        let date_carrier = RawBar {
+            date,
+            open: "0".into(),
+            high: "0".into(),
+            low: "0".into(),
+            close: "0".into(),
+            prev_close: "0".into(),
+            volume: 0,
+        };
+        self.match_sim_order_internal(order_id, &date_carrier, Some(tick), now)
+    }
+    fn match_sim_order_internal(
+        &self,
+        order_id: i64,
+        bar: &RawBar,
+        live: Option<&crate::simulation_live::LiveTick>,
+        observed_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<SimOrder, String> {
         let mut conn = self.conn.lock().unwrap_or_else(|error| error.into_inner());
         let stored = conn.query_row(
             "SELECT o.account_id,o.symbol,o.name,o.side,o.quantity,o.signal_date,o.status,a.cash,o.limit_bps,
@@ -470,6 +527,7 @@ impl Database {
         if stored.6 == "filled" {
             return load_order(&conn, order_id).map_err(|error| error.to_string());
         }
+        super::research_loop::guard_execution(&conn, stored.0)?;
         if stored.6 != "pending" {
             return Err(invalid("委托尚未确认或不可成交"));
         }
@@ -482,31 +540,111 @@ impl Database {
         } else {
             0
         };
-        let quote = match simulation::match_raw_bar(
-            &MatchRequest {
-                side,
-                quantity: stored.4,
-                signal_date: stored.5.clone(),
-                available_quantity,
-                cash: stored.7,
-                limit_bps: stored.8,
-                fees: FeeConfig {
-                    commission_bps: stored.9,
-                    min_commission: stored.10,
-                    stamp_tax_bps: stored.11,
-                    transfer_fee_bps: stored.12,
-                    slippage_bps: stored.13,
-                },
+        // 持仓总量用于「卖出的不能超过持仓 / 零股必须一次性卖出」；
+        // T+1 可用数量单独算，两者都交给撮合层判定后落成 rejected，而不是直接报错。
+        let position_quantity: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(quantity),0) FROM sim_lots WHERE account_id=?1 AND symbol=?2",
+                params![stored.0, stored.1],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        let request = MatchRequest {
+            symbol: stored.1.clone(),
+            name: stored.2.clone(),
+            side,
+            quantity: stored.4,
+            signal_date: stored.5.clone(),
+            available_quantity,
+            position_quantity,
+            cash: stored.7,
+            limit_bps: stored.8,
+            fees: FeeConfig {
+                commission_bps: stored.9,
+                min_commission: stored.10,
+                stamp_tax_bps: stored.11,
+                transfer_fee_bps: stored.12,
+                slippage_bps: stored.13,
             },
-            bar,
-        ) {
+        };
+        let result = if let Some(tick) = live {
+            if stored.5 != bar.date {
+                return Err("当日委托已过期，不以之后日期补成交".into());
+            }
+            let consumed: Option<i64> = conn
+                .query_row(
+                    "SELECT timestamp FROM sim_live_consumed WHERE account_id=?1 AND symbol=?2",
+                    params![stored.0, stored.1],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            if consumed.is_some_and(|stamp| stamp >= tick.depth.timestamp) {
+                return Err("该盘口时点已用于成交，等待更新盘口，避免重复使用同一挂单量".into());
+            }
+            if tick.quote.code != stored.1 {
+                return Err("行情与委托标的不一致".into());
+            }
+            let (limit, submitted): (i64, i64) = conn
+                .query_row(
+                    "SELECT limit_price,submitted_at FROM sim_live_orders WHERE order_id=?1",
+                    [order_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|_| "历史委托不能通过实时撮合补成交")?;
+            crate::simulation_live::quote_fill(
+                tick,
+                side,
+                stored.4,
+                limit,
+                submitted,
+                available_quantity,
+                stored.7,
+                request.fees,
+                // 历史委托可能带着旧配置，这里按板块规则重算，避免老账户永远无法成交。
+                crate::market_rules::ensure_simulatable(&stored.1, &tick.quote.name)?,
+                observed_at,
+            )
+        } else {
+            let has_live:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sim_live_accounts')",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+            if has_live
+                && conn
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM sim_live_accounts WHERE account_id=?1)",
+                        [stored.0],
+                        |r| r.get::<_, bool>(0),
+                    )
+                    .map_err(|e| e.to_string())?
+            {
+                return Err("实时账户不能调用日线撮合".into());
+            }
+            simulation::match_raw_bar(&request, bar)
+        };
+        let quote = match result {
             Ok(quote) => quote,
             Err(reason) => {
+                if live.is_some() {
+                    conn.execute(
+                        "UPDATE sim_orders SET reject_reason=?1 WHERE id=?2 AND status='pending'",
+                        params![reason, order_id],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    return load_order(&conn, order_id).map_err(|e| e.to_string());
+                }
                 conn.execute("UPDATE sim_orders SET status='rejected',reject_reason=?1 WHERE id=?2 AND status='pending'",params![reason,order_id]).map_err(|e|e.to_string())?;
                 return load_order(&conn, order_id).map_err(|e| e.to_string());
             }
         };
         let tx = conn.transaction().map_err(|error| error.to_string())?;
+        if let Some(tick) = live {
+            tx.execute("INSERT INTO sim_live_consumed(account_id,symbol,timestamp) VALUES(?1,?2,?3) ON CONFLICT(account_id,symbol) DO UPDATE SET timestamp=excluded.timestamp",params![stored.0,stored.1,tick.depth.timestamp]).map_err(|e|e.to_string())?;
+            let evidence = serde_json::json!({"order_id":order_id,"symbol":stored.1,"side":stored.3,"filled_price":quote.price.to_string(),"quantity":stored.4,"fee":quote.fee.to_string(),"tick":tick,"method":"best_visible_level_with_slippage_whole_order","filled_at":chrono::Utc::now().to_rfc3339()});
+            tx.execute(
+                "UPDATE sim_live_orders SET evidence_json=?1 WHERE order_id=?2",
+                params![evidence.to_string(), order_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
         let (cost_basis, holding_days) = if side == Side::Buy {
             let total_cost = quote
                 .gross
@@ -551,7 +689,7 @@ impl Database {
             return Err(invalid("可用资金不足"));
         }
         let changed = tx.execute(
-            "UPDATE sim_orders SET status='filled',price=?1,gross=?2,fee=?3,cash_delta=?4,cost_basis=?5,filled_at=?6,holding_days=?7
+            "UPDATE sim_orders SET status='filled',reject_reason=NULL,price=?1,gross=?2,fee=?3,cash_delta=?4,cost_basis=?5,filled_at=?6,holding_days=?7
              WHERE id=?8 AND status='pending'",
             params![quote.price, quote.gross, quote.fee, quote.cash_delta, cost_basis, now(), holding_days, order_id],
         ).map_err(|error| error.to_string())?;
@@ -589,7 +727,7 @@ impl Database {
             .collect::<SqliteResult<Vec<_>>>()
             .map_err(|error| error.to_string())?;
         let mut statement = conn.prepare(
-            "SELECT id,account_id,symbol,name,quantity,CASE WHEN acquired_date<date('now','localtime') THEN quantity ELSE 0 END,cost_basis/quantity,acquired_date,stop_bps,take_bps,max_hold_days,limit_bps
+            "SELECT id,account_id,symbol,name,quantity,CASE WHEN acquired_date<date('now','+8 hours') THEN quantity ELSE 0 END,cost_basis/quantity,acquired_date,stop_bps,take_bps,max_hold_days,limit_bps
              FROM sim_lots WHERE account_id=?1 ORDER BY acquired_date,id",
         ).map_err(|error| error.to_string())?;
         let positions = statement
@@ -645,7 +783,7 @@ impl Database {
         } else {
             (equity - initial).saturating_mul(10_000) / initial
         };
-        let mut peak = 0i64;
+        let mut peak = initial;
         let mut max_drawdown_bps = 0i64;
         for (_, value, _) in &equity_rows {
             peak = peak.max(*value);
@@ -667,13 +805,26 @@ impl Database {
         } else {
             0
         };
-        let first_benchmark = equity_rows.iter().find_map(|row| row.2);
-        let last_benchmark = equity_rows.iter().rev().find_map(|row| row.2);
-        let benchmark_return_bps = first_benchmark
-            .zip(last_benchmark)
-            .and_then(|(first, last)| {
-                (first > 0).then_some((last - first).saturating_mul(10_000) / first)
-            });
+        // Require the same endpoints as account returns, not a shorter cherry-picked interval.
+        let first_benchmark = equity_rows.first().and_then(|row| row.2);
+        let last_benchmark = equity_rows.last().and_then(|row| row.2);
+        let mut benchmark_return_bps =
+            first_benchmark
+                .zip(last_benchmark)
+                .and_then(|(first, last)| {
+                    (first > 0).then_some((last - first).saturating_mul(10_000) / first)
+                });
+        let has_live:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sim_live_risk')",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+        if has_live {
+            let live:Option<(i64,Option<i64>,Option<i64>)>=conn.query_row("SELECT max_drawdown_bps,first_benchmark,last_benchmark FROM sim_live_risk WHERE account_id=?1",[account_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?;
+            if let Some((dd, first, last)) = live {
+                max_drawdown_bps = dd;
+                benchmark_return_bps = first
+                    .zip(last)
+                    .filter(|(a, _)| *a > 0)
+                    .map(|(a, b)| ((b - a) as i128 * 10000 / a as i128) as i64);
+            }
+        }
         let profit_loss_ratio_bps = if wins > 0 && loss_count > 0 && losses > 0 {
             (gains / wins).saturating_mul(10_000) / (losses / loss_count).max(1)
         } else {

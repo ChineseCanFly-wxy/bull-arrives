@@ -1,6 +1,6 @@
 [package]
 name = "bull-arrives"
-version = "2.1.1"
+version = "2.2.0"
 description = "Bull Arrives - 免费实时 A 股行情监控"
 authors = ["ChineseCanFly-wxy"]
 edition = "2021"
@@ -22,7 +22,8 @@ tauri = { version = "2", features = ["tray-icon", "custom-protocol"] }
 tauri-plugin-opener = "2"
 tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# Snapshot hashes must survive f64 -> JSON -> f64 without a one-bit drift.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 sha2 = "0.10"
 hex = "0.4"
 rmp-serde = "1"

@@ -410,11 +410,14 @@ impl Scheduler {
                     }
 
                     last_session = session;
+                    // 交易日历的当前依据一并推送：它由指数行情推断，会随取证结果变化。
+                    let calendar = crate::datasource::trading_calendar::status_text();
                     if let Err(e) = app_handle.emit(
                         "market-session-changed",
                         serde_json::json!({
                             "session": session.name(),
                             "interval_secs": config.resolve(session),
+                            "calendar": calendar,
                             "is_trading": matches!(
                                 session,
                                 MarketSession::MorningTrade | MarketSession::AfternoonTrade

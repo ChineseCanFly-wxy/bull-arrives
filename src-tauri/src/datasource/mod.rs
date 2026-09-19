@@ -146,6 +146,7 @@ pub trait DataSource: Send + Sync {
         _market: &str,
     ) -> Result<crate::domain::Depth, AppError> {
         Ok(crate::domain::Depth {
+            timestamp:0,
             code: _code.to_string(),
             bids: vec![],
             asks: vec![],
@@ -369,7 +370,9 @@ pub mod headers;
 pub mod history;
 pub mod kline;
 pub mod market_clock;
+pub mod a_share_calendar;
 pub mod market_policy;
+pub mod trading_calendar;
 #[cfg(test)]
 mod network_smoke;
 pub mod profile;

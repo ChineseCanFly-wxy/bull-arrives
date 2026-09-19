@@ -58,7 +58,7 @@ export interface StockAnalysis {
 
 export interface AgentStatus {
   installed: boolean;
-  state: 'ready' | 'not_found' | 'misconfigured';
+  state: 'ready' | 'detected' | 'failed' | 'unavailable' | 'not_found' | 'misconfigured';
   path: string | null;
   message: string;
   guidance: string;
@@ -82,6 +82,8 @@ export interface AgentAnalysisResponse {
   provider: 'claude_code';
   cached: boolean;
   conclusion: string | null;
+  summary: string | null;
+  claims: Array<{ kind: 'support' | 'risk' | 'watch'; text: string; evidence: AgentEvidence[] }>;
   evidence: AgentEvidence[];
   confidence: number | null;
   invalidation_conditions: AgentInvalidation[];
@@ -113,7 +115,7 @@ export interface PredictionCalibration {
 }
 
 export interface AgentTeamResponse {
-  status: 'ready' | 'failed';
+  status: 'ready' | 'failed' | 'cancelled';
   roles: AgentRoleResult[];
   final_conclusion: AgentRoleResult['conclusion'];
   confidence: number | null;

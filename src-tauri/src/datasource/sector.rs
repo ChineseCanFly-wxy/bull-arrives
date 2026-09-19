@@ -6,7 +6,7 @@
 use crate::datasource::eastmoney_universe::universe_client;
 use crate::datasource::headers::with_browser_headers;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -536,6 +536,19 @@ struct CachedMembers {
 
 static MEMBER_CACHE: OnceLock<RwLock<HashMap<MemberCacheKey, CachedMembers>>> = OnceLock::new();
 
+#[derive(Debug, Clone)]
+struct CachedMemberCodes {
+    value: HashSet<String>,
+    fetched_at: Instant,
+}
+
+/// 筛选器只需要成分股代码，单独缓存完整集合。
+///
+/// 不复用分页表格的 `MEMBER_CACHE`：表格缓存按页切片，而筛选必须拿到
+/// 全部成分，否则一个板块超过 100 只时会错误漏股。
+static MEMBER_CODE_CACHE: OnceLock<RwLock<HashMap<(SectorKind, String), CachedMemberCodes>>> =
+    OnceLock::new();
+
 fn now_text() -> String {
     chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
@@ -704,6 +717,48 @@ pub async fn fetch_members(
     }
 }
 
+/// 获取一个行业/概念的全部成分股代码，供全市场筛选器使用。
+///
+/// 东财成分接口支持一次返回完整板块；这里使用与涨停统计相同的 5000 上限，
+/// 并以 `MEMBER_TTL` 缓存，保证翻页时不重复请求同一板块。
+pub async fn fetch_member_codes(
+    kind: SectorKind,
+    sector_code: &str,
+) -> Result<HashSet<String>, String> {
+    let sector_code = sector_code.trim().to_uppercase();
+    if !valid_sector_code(&sector_code) {
+        return Err("板块代码格式无效".into());
+    }
+
+    let key = (kind, sector_code.clone());
+    let cache = MEMBER_CODE_CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+    {
+        let guard = cache.read().await;
+        if let Some(cached) = guard.get(&key) {
+            if cached.fetched_at.elapsed() < MEMBER_TTL {
+                return Ok(cached.value.clone());
+            }
+        }
+    }
+
+    let (items, _) = fetch_member_page_uncached(&sector_code, 1, 5_000)
+        .await
+        .map_err(|error| error.to_string())?;
+    let value: HashSet<String> = items.into_iter().map(|item| item.code).collect();
+    if value.is_empty() {
+        return Err(format!("板块 {sector_code} 没有返回成分股"));
+    }
+
+    cache.write().await.insert(
+        key,
+        CachedMemberCodes {
+            value: value.clone(),
+            fetched_at: Instant::now(),
+        },
+    );
+    Ok(value)
+}
+
 /// 用一次响应取回全部成分，保证派生数量来自同一快照；接口若截断则拒绝返回局部统计。
 pub async fn fetch_limit_up_stats(sector_code: &str) -> Result<SectorLimitUpStats, String> {
     let sector_code = sector_code.trim().to_uppercase();
@@ -727,7 +782,7 @@ pub async fn fetch_limit_up_stats(sector_code: &str) -> Result<SectorLimitUpStat
         member_count: items.len(),
         as_of: now_text(),
         source: "eastmoney_snapshot_derived".into(),
-        methodology: "非官方派生：同一成分股快照按主板10%、ST 5%、创业板/科创板20%、北交所30%阈值统计当前涨停；N/C 无涨跌幅限制新股不计。".into(),
+        methodology: "非官方派生：同一成分股快照按板块涨跌幅阈值统计当前涨停（主板 10%，含 2026-07-06 起并轨的主板 ST/*ST；创业板/科创板 20%；北交所 30%）；N/C 无涨跌幅限制新股不计。".into(),
     })
 }
 
