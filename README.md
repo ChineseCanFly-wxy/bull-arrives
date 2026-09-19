@@ -16,10 +16,7 @@
 
 > 想加什么直接 [提 PR](https://github.com/ChineseCanFly-wxy/bull-arrives/pulls) 或 [开 Issue](https://github.com/ChineseCanFly-wxy/bull-arrives/issues) 就行。
 
-- [ ] 市场筛选器中加入行业/概念
-- [ ] stockdb目前打开就会默认打开一个html，在项目中自动打开时不要弹了
-- [ ] 自选股点击分析时第一次都会弹出暂无分析结果，修复一下，还有看下其他地方点的分析会不会这个问题，有就修复了
-- [ ] 行业筛选器中，如果是小窗口打开，展开明细后，下面没有滚动条可以拉，完全看不到后面的字段
+- [ ] 可以让AI分析一下stcokdb的网页中有些东西，看下对我们有没有用
 
 ---
 
