@@ -328,14 +328,7 @@ impl StockDbManager {
             status.last_error = None;
         });
 
-        let mut command = Command::new(&engine);
-        command.current_dir(engine.parent().ok_or("stockdb 路径缺少父目录")?);
-        // free-stockdb 的 Windows 发行版默认走桌面模式，启动后会打开它的
-        // HTML 页面。Bull Arrives 只需要后台 HTTP 服务，`-d` 是其官方命令行
-        // 的 daemon 模式，可避免自动管理时打扰用户的浏览器/托盘界面。
-        command.arg("-d");
-        command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-        hide_window(&mut command);
+        let mut command = engine_command(&engine)?;
         let mut child = command.spawn().map_err(|e| format!("启动 stockdb 失败: {e}"))?;
         let pid = child.id();
         let job = match crate::agent::ProcessJob::assign(&child) {
@@ -790,6 +783,39 @@ fn scan_dir(
     }
 }
 
+/// 组装 stockdb 引擎的启动命令。
+///
+/// **必须带 `-d`**。free-stockdb 0.3.5 发行版 `stockdb.exe -h` 给出的官方选项是：
+///
+/// ```text
+/// Usage:
+/// Options:
+/// -d    run as daemon
+/// -s    option to start|stop|restart the server
+/// -h    show this message
+/// ```
+///
+/// 不带 `-d` 时它走桌面模式 —— 建托盘图标（`Shell_NotifyIconW`）并用
+/// `ShellExecuteA` 打开它的网页，于是每次应用自动拉起 stockdb 都会弹浏览器。
+/// Bull Arrives 只要后台 HTTP 服务，**任何路径都不许绕过 daemon 模式**。
+///
+/// 工作目录固定为引擎所在目录：它按相对路径读同目录下的 `stockdb.conf`。
+///
+/// 另注：仓库里还有一份「Fully Open-Source C++ Edition」，参数是
+/// `--host/--port/--data/--help`，既不认 `-d`、也**完全不碰浏览器**；
+/// 它的解析器会忽略未知参数，所以同一条命令行对两个版本都安全。
+fn engine_command(engine: &Path) -> Result<Command, String> {
+    let mut command = Command::new(engine);
+    command.current_dir(engine.parent().ok_or("stockdb 路径缺少父目录")?);
+    command.arg("-d");
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    hide_window(&mut command);
+    Ok(command)
+}
+
 #[cfg(target_os = "windows")]
 fn hide_window(command: &mut Command) {
     use std::os::windows::process::CommandExt;
@@ -831,5 +857,34 @@ mod tests {
         std::fs::write(&updater, b"test").unwrap();
         assert!(validate_updater(&updater, Some(&engine)).is_err());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn engine_is_always_started_as_daemon() {
+        // 回归保护：v2.1.1 这里没有 `-d`，结果每次由应用拉起 stockdb 都会
+        // 弹出它的托盘图标和浏览器页面。`-d`（run as daemon）是官方选项，
+        // 一旦被“简化”掉，这个用例必须失败。
+        let dir = std::env::temp_dir().join(format!("bull-stockdb-daemon-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let engine = dir.join(ENGINE_FILE);
+        std::fs::write(&engine, b"test").unwrap();
+
+        let command = engine_command(&engine).expect("应能组装启动命令");
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.iter().any(|arg| arg == "-d"),
+            "必须以 daemon 模式启动，否则会弹浏览器；实际参数：{args:?}"
+        );
+        assert_eq!(
+            command.get_current_dir(),
+            Some(dir.as_path()),
+            "工作目录必须是引擎所在目录 —— 它按相对路径读同目录的 stockdb.conf"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
