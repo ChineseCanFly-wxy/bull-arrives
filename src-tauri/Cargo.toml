@@ -1,6 +1,6 @@
 [package]
 name = "bull-arrives"
-version = "2.2.0"
+version = "2.2.1"
 description = "Bull Arrives - 免费实时 A 股行情监控"
 authors = ["ChineseCanFly-wxy"]
 edition = "2021"
