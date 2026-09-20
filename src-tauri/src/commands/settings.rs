@@ -256,6 +256,9 @@ pub fn set_setting(
             return Err("Agent 超时必须在 15–300 秒之间".into());
         }
         seconds.to_string()
+    } else if key == "agent_run_root" {
+        // 工作目录必须存在、可写，且不含 8.3 短名；空值表示回到自动。
+        crate::agent::validate_run_root(&value)?
     } else {
         value
     };

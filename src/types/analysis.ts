@@ -62,6 +62,8 @@ export interface AgentStatus {
   path: string | null;
   message: string;
   guidance: string;
+  /** 实际写入任务文件的工作目录；未确定时为 null。 */
+  run_dir: string | null;
 }
 
 export interface AgentEvidence {

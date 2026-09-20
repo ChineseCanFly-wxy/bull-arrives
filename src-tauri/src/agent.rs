@@ -26,6 +26,11 @@ const TEAM_SCHEMA_VERSION: &str = "agent-team-v1";
 const TEAM_PROMPT_REVISION: &str = "multi-role-v2";
 const LAUNCHER_ARG: &str = "--bull-arrives-agent-launcher";
 const START_FILE: &str = ".start";
+/// 每次调用用的工作目录都放在这个子目录下。
+const RUN_ROOT_DIR: &str = "bull-arrives-agent";
+/// 系统临时目录不可用（含 8.3 短名）时的回退位置，属于应用自己的数据目录。
+const RUN_ROOT_FALLBACK_DIR: &str = "agent-runs";
+const RUN_ROOT_SETTING: &str = "agent_run_root";
 const PROMPT: &str = include_str!("../prompts/base.md");
 const OUTPUT_SCHEMA: &str = r#"{
   "type":"object","additionalProperties":false,
@@ -113,6 +118,8 @@ pub struct AgentStatus {
     pub path: Option<String>,
     pub message: String,
     pub guidance: String,
+    /// 实际会用来放任务文件的工作目录；空表示尚未确定。
+    pub run_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -582,6 +589,13 @@ pub fn status(db: &Database) -> AgentStatus {
         .ok()
         .flatten()
         .unwrap_or_default();
+    let configured_root = configured_run_root(db);
+    let root = run_root(configured_root.as_deref());
+    let run_dir = root
+        .as_ref()
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned());
+    let root_error = root.err();
     if !configured.is_empty() && validate_claude_path(&configured).is_err() {
         return AgentStatus {
             installed: false,
@@ -589,6 +603,7 @@ pub fn status(db: &Database) -> AgentStatus {
             path: Some(configured),
             message: "手动配置的 Claude Code 路径无效".into(),
             guidance: "请选择官方 claude.exe，或清空路径后重新自动检测。".into(),
+            run_dir,
         };
     }
     let path = candidates((!configured.is_empty()).then_some(configured.as_str()))
@@ -597,10 +612,21 @@ pub fn status(db: &Database) -> AgentStatus {
     match path {
         Some(path) => AgentStatus {
             installed: true,
-            state: "detected".into(),
+            state: if root_error.is_some() {
+                "misconfigured".into()
+            } else {
+                "detected".into()
+            },
             path: Some(path.to_string_lossy().into_owned()),
-            message: "已找到 Claude Code，尚未验证模型连接".into(),
-            guidance: "可点击“测试连接”验证实际调用；登录及模型配置由 Claude Code 自身管理".into(),
+            message: match &root_error {
+                Some(error) => error.clone(),
+                None => "已找到 Claude Code，尚未验证模型连接".into(),
+            },
+            guidance: match &root_error {
+                Some(_) => "在下方“工作目录”里指定一个可写目录，或留空用自动，然后重新检测".into(),
+                None => "可点击“测试连接”验证实际调用；登录及模型配置由 Claude Code 自身管理".into(),
+            },
+            run_dir,
         },
         None => AgentStatus {
             installed: false,
@@ -608,6 +634,7 @@ pub fn status(db: &Database) -> AgentStatus {
             path: None,
             message: "未找到 Claude Code".into(),
             guidance: "请先安装并登录 Claude Code，然后重新检测或手动指定可执行文件".into(),
+            run_dir,
         },
     }
 }
@@ -883,12 +910,107 @@ fn cache_key(fingerprint: &str, path: &Path) -> Result<String, String> {
     ))
 }
 
+/// Windows 的 8.3 短名（`WEIXY4~1`、`PROGRA~2`、`FOO~1.TXT`）。
+///
+/// 这类路径会让 Claude Code 的文件放行规则（`Read(input.json)` 等）匹配不上，
+/// `dontAsk` 模式下 Read / Write 会被整体拒绝，任务文件既读不到也写不出。
+/// 实测：工作目录为 `C:\Users\WEIXY4~1\...` 时必然失败，换成同名长名路径即通过。
+fn has_short_component(path: &Path) -> bool {
+    path.components().any(|component| {
+        let text = component.as_os_str().to_string_lossy();
+        let Some(rest) = text.rsplit_once('~').map(|(_, tail)| tail) else {
+            return false;
+        };
+        let digits = rest.split('.').next().unwrap_or_default();
+        !digits.is_empty() && digits.chars().all(|value| value.is_ascii_digit())
+    })
+}
+
+/// 只有 Windows 才有 8.3 短名；其它平台含 `~` 的目录名是普通名字。
+fn short_name_risk(path: &Path) -> bool {
+    cfg!(windows) && has_short_component(path)
+}
+
+/// `canonicalize` 在 Windows 上会带上 `\\?\` 前缀，Claude Code 与命令行都不需要它。
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => path,
+    }
+}
+
+/// 把路径解析成不含 8.3 短名的长名写法；解析失败时原样返回，交给调用方判断。
+fn long_path(path: &Path) -> PathBuf {
+    match std::fs::canonicalize(path) {
+        Ok(resolved) => strip_verbatim(resolved),
+        Err(_) => path.to_path_buf(),
+    }
+}
+
+/// 校验用户手动指定的工作目录：必须存在、可写，且路径里没有 8.3 短名段。
+/// 传入空字符串表示「用自动」。
+pub fn validate_run_root(value: &str) -> Result<String, String> {
+    let raw = value.trim();
+    if raw.is_empty() {
+        return Ok(String::new());
+    }
+    let path = PathBuf::from(raw);
+    if !path.is_dir() {
+        return Err("工作目录不存在，或不是一个文件夹".into());
+    }
+    let resolved = long_path(&path);
+    if short_name_risk(&resolved) {
+        return Err(
+            "该路径含 8.3 短名（形如 WEIXY4~1），Claude Code 会拒绝读写，请改用长名路径".into(),
+        );
+    }
+    let probe = resolved.join(format!(".bull-arrives-write-probe-{}", std::process::id()));
+    std::fs::create_dir(&probe).map_err(|error| format!("工作目录不可写：{error}"))?;
+    let _ = std::fs::remove_dir(&probe);
+    Ok(resolved.to_string_lossy().into_owned())
+}
+
+fn configured_run_root(db: &Database) -> Option<String> {
+    db.get_setting(RUN_ROOT_SETTING)
+        .ok()
+        .flatten()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// 决定本次任务文件放在哪里：手动的优先，否则自动挑一个不含 8.3 短名的目录。
+fn run_root(configured: Option<&str>) -> Result<PathBuf, String> {
+    if let Some(raw) = configured.map(str::trim).filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(validate_run_root(raw)?));
+    }
+    let temp = long_path(&std::env::temp_dir());
+    if !short_name_risk(&temp) {
+        return Ok(temp.join(RUN_ROOT_DIR));
+    }
+    if let Some(data) = dirs::data_dir() {
+        let data = long_path(&data.join("bull-arrives"));
+        if !short_name_risk(&data) {
+            return Ok(data.join(RUN_ROOT_FALLBACK_DIR));
+        }
+    }
+    Err("系统临时目录使用了 8.3 短名路径，且找不到替代目录；请在设置 → 智能 → 本地 Agent 中手动指定工作目录".into())
+}
+
 struct RunDir(PathBuf);
 
 impl RunDir {
+    /// 测试与默认路径用：自动挑选一个不含 8.3 短名的根目录。
+    #[cfg(test)]
     fn create(fingerprint: &str) -> Result<Self, String> {
-        let root = std::env::temp_dir().join("bull-arrives-agent");
-        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        Self::create_in(&run_root(None)?, fingerprint)
+    }
+
+    fn create_in(root: &Path, fingerprint: &str) -> Result<Self, String> {
+        std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
         let nonce = RUN_DIR_NONCE.fetch_add(1, Ordering::Relaxed);
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1397,6 +1519,7 @@ async fn run_structured(
     let result = execute_structured(
         path,
         fingerprint,
+        configured_run_root(db),
         input_json,
         schema,
         workbench::workflow(task, role),
@@ -1415,6 +1538,7 @@ async fn run_structured(
 async fn execute_structured(
     path: PathBuf,
     fingerprint: &str,
+    run_root_setting: Option<String>,
     input_json: &str,
     schema: &str,
     workflow: &str,
@@ -1424,7 +1548,8 @@ async fn execute_structured(
     CANCEL_RUN.store(0, Ordering::SeqCst);
     CURRENT_RUN.store(run_id, Ordering::SeqCst);
     let run_guard = CurrentRun(run_id);
-    let dir = RunDir::create(fingerprint)
+    let root = run_root(run_root_setting.as_deref())?;
+    let dir = RunDir::create_in(&root, fingerprint)
         .map_err(|error| format!("无法创建 Agent 专用工作目录：{error}"))?;
     std::fs::write(dir.path().join("input.json"), input_json.as_bytes())
         .and_then(|_| std::fs::write(dir.path().join("workflow.md"), workflow.as_bytes()))
@@ -2256,6 +2381,79 @@ mod tests {
         ] {
             assert!(!args.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn short_name_paths_are_detected() {
+        for risky in [
+            r"C:\Users\WEIXY4~1\AppData\Local\Temp",
+            r"C:\PROGRA~2\foo",
+            r"C:\dir\FOO~1.TXT",
+            r"C:\t~1\w",
+        ] {
+            assert!(has_short_component(Path::new(risky)), "{risky}");
+        }
+        for safe in [
+            r"C:\Users\name\AppData\Local\Temp",
+            r"C:\ba~test\work",
+            r"C:\a~1x\work",
+            r"F:\github\project",
+        ] {
+            assert!(!has_short_component(Path::new(safe)), "{safe}");
+        }
+    }
+
+    #[test]
+    fn verbatim_prefix_is_removed() {
+        assert_eq!(
+            strip_verbatim(PathBuf::from(r"\\?\C:\Windows")),
+            PathBuf::from(r"C:\Windows")
+        );
+        assert_eq!(
+            strip_verbatim(PathBuf::from(r"\\?\UNC\srv\share")),
+            PathBuf::from(r"\\srv\share")
+        );
+        assert_eq!(
+            strip_verbatim(PathBuf::from(r"C:\Windows")),
+            PathBuf::from(r"C:\Windows")
+        );
+    }
+
+    /// 本机踩到的坑：临时目录写成 8.3 短名时，Claude Code 的放行规则会整体失效。
+    #[test]
+    fn automatic_run_root_avoids_short_names() {
+        let root = run_root(None).expect("自动工作目录应当可用");
+        assert!(!short_name_risk(&root), "{}", root.display());
+        assert_eq!(validate_run_root("   ").unwrap(), "");
+        // 解析不掉的短名路径必须拒绝；能解析的会被换成长名（见下一条测试）
+        assert!(validate_run_root(r"C:\Users\WEIXY4~1\bull-arrives-missing-dir").is_err());
+    }
+
+    #[test]
+    fn long_path_removes_short_names() {
+        let temp = std::env::temp_dir();
+        let resolved = long_path(&temp);
+        assert!(!short_name_risk(&resolved), "{}", resolved.display());
+        if short_name_risk(&temp) {
+            // 本机就踩在这个坑上：短名目录会被解析成长名，所以存下来的也是长名。
+            let saved = validate_run_root(&temp.to_string_lossy()).expect("临时目录应当可写");
+            assert!(!short_name_risk(Path::new(&saved)), "{saved}");
+        }
+    }
+
+    #[test]
+    fn manual_run_root_is_usable() {
+        let base = std::env::temp_dir().join(format!("bull-arrives-root-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let resolved = validate_run_root(&base.to_string_lossy()).expect("临时目录应当可写");
+        assert!(!short_name_risk(Path::new(&resolved)), "{resolved}");
+        let root = run_root(Some(&resolved)).unwrap();
+        let dir = RunDir::create_in(&root, "manual-root-test").unwrap();
+        assert!(dir.path().is_dir());
+        assert!(!short_name_risk(dir.path()), "{}", dir.path().display());
+        drop(dir);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

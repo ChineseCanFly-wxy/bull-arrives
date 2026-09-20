@@ -47,7 +47,7 @@ interface LocalHistoryStatus {
   sample_count?: number;
   candidates: string[];
 }
-interface AgentStatus { installed: boolean; state: string; path: string | null; message: string; guidance: string }
+interface AgentStatus { installed: boolean; state: string; path: string | null; message: string; guidance: string; run_dir: string | null }
 const notificationIdentity = ref<NotificationIdentityStatus | null>(null);
 const notificationResult = ref<NotificationTestStatus | null>(null);
 const buildInfo = ref<BuildInfo | null>(null);
@@ -55,6 +55,7 @@ const localHistoryStatus = ref<LocalHistoryStatus | null>(null);
 const localHistoryUrlDraft = ref('http://127.0.0.1:7899');
 const agentStatus = ref<AgentStatus | null>(null);
 const agentPathDraft = ref('');
+const agentRunRootDraft = ref('');
 const agentTimeoutDraft = ref(90);
 
 const capturing = ref(false);
@@ -74,6 +75,7 @@ watch(() => props.show, (open) => {
     actionError.value = null;
     localHistoryUrlDraft.value = settings.localHistoryUrl;
     agentPathDraft.value = settings.settings['agent_claude_path'] || '';
+    agentRunRootDraft.value = settings.settings['agent_run_root'] || '';
     agentTimeoutDraft.value = Number(settings.settings['agent_timeout_seconds'] || 90);
     safelyRun('session', () => settings.fetchMarketSession());
     if (settings.localHistoryEnabled) void loadLocalHistoryStatus();
@@ -246,11 +248,36 @@ async function sendTestNotification() {
 }
 async function loadAgentStatus() {
   try { agentStatus.value = await invoke<AgentStatus>('get_agent_status'); }
-  catch (error) { agentStatus.value = { installed: false, state: 'unavailable', path: null, message: String(error), guidance: '请手动检查 Claude Code。' }; }
+  catch (error) { agentStatus.value = { installed: false, state: 'unavailable', path: null, message: String(error), guidance: '请手动检查 Claude Code。', run_dir: null }; }
 }
 async function saveAgentPath() {
   if (!await settings.setSetting('agent_claude_path', agentPathDraft.value.trim())) return false;
   await loadAgentStatus();
+}
+async function browseAgentPath() {
+  const path = await open({
+    multiple: false,
+    directory: false,
+    title: '选择 Claude Code 可执行文件（claude.exe）',
+    filters: [{ name: 'Claude Code', extensions: ['exe', 'cmd'] }],
+  });
+  if (typeof path !== 'string') return;
+  agentPathDraft.value = path;
+  await saveAgentPath();
+}
+async function saveAgentRunRoot() {
+  if (!await settings.setSetting('agent_run_root', agentRunRootDraft.value.trim())) return false;
+  await loadAgentStatus();
+}
+async function browseAgentRunRoot() {
+  const path = await open({ multiple: false, directory: true, title: '选择 Agent 工作目录' });
+  if (typeof path !== 'string') return;
+  agentRunRootDraft.value = path;
+  await saveAgentRunRoot();
+}
+async function resetAgentRunRoot() {
+  agentRunRootDraft.value = '';
+  return saveAgentRunRoot();
 }
 async function testAgentConnection() {
   agentStatus.value = await invoke<AgentStatus>('test_agent_connection');
@@ -447,8 +474,10 @@ onBeforeUnmount(stopCapture);
               <span>{{ agentStatus?.message || '正在检测…' }}</span>
               <small v-if="agentStatus?.path">{{ agentStatus.path }}</small>
             </div>
-            <label class="history-field"><span>可执行文件</span><input v-model="agentPathDraft" type="text" placeholder="留空自动检测 claude.cmd / claude.exe" /><button class="minor-btn" :disabled="isSaving('agent-path')" @click="safelyRun('agent-path', saveAgentPath)">保存并检测</button></label>
+            <label class="history-field"><span>可执行文件</span><input v-model="agentPathDraft" type="text" placeholder="留空自动检测 claude.exe / claude.cmd" /><span class="field-btns"><button class="minor-btn" :disabled="isSaving('agent-browse')" @click="safelyRun('agent-browse', browseAgentPath)">浏览…</button><button class="minor-btn" :disabled="isSaving('agent-path')" @click="safelyRun('agent-path', saveAgentPath)">保存并检测</button></span></label>
+            <label class="history-field"><span>工作目录</span><input v-model="agentRunRootDraft" type="text" placeholder="留空自动选择（推荐）" /><span class="field-btns"><button class="minor-btn" :disabled="isSaving('agent-root-browse')" @click="safelyRun('agent-root-browse', browseAgentRunRoot)">浏览…</button><button class="minor-btn" :disabled="isSaving('agent-root')" @click="safelyRun('agent-root', saveAgentRunRoot)">保存</button><button class="minor-btn" :disabled="isSaving('agent-root')" @click="safelyRun('agent-root', resetAgentRunRoot)">用自动</button></span></label>
             <label class="history-field"><span>单次超时（秒）</span><input v-model.number="agentTimeoutDraft" type="number" min="15" max="300" step="1" /><button class="minor-btn" :disabled="isSaving('agent-timeout')" @click="safelyRun('agent-timeout', saveAgentTimeout)">保存超时</button></label>
+            <p class="card-desc run-dir-line">任务文件实际写入：<code>{{ agentStatus?.run_dir || '待确定' }}</code>。留空即自动选择，应用会自动避开 Windows 的 8.3 短名目录（形如 <code>WEIXY4~1</code>）—— 那些目录下 Claude Code 会拒绝读写。</p>
             <div class="history-actions">
               <button class="minor-btn" :disabled="isSaving('agent-scan') || isSaving('agent-test')" @click="safelyRun('agent-scan', loadAgentStatus)">重新检测</button>
               <button class="minor-btn" :disabled="!agentStatus?.installed || isSaving('agent-test')" @click="safelyRun('agent-test', testAgentConnection)">{{ isSaving('agent-test') ? '测试连接中…' : '测试连接' }}</button>
@@ -602,6 +631,9 @@ onBeforeUnmount(stopCapture);
 .history-status small { font-family: var(--font-mono); font-size: 10px; }
 .history-field { display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 10px; color: var(--color-text-secondary); font-size: var(--text-xs); }
 .history-field input { min-width: 0; min-height: 32px; padding: 0 9px; border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-primary); }
+.field-btns { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.run-dir-line { margin-top: 8px; }
+.run-dir-line code { overflow-wrap: anywhere; color: var(--color-text-secondary); font-family: var(--font-mono); }
 .history-actions, .candidate-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .candidate-list button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-program-row { display: grid; grid-template-columns: 108px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 10px; font-size: var(--text-xs); color: var(--color-text-secondary); }

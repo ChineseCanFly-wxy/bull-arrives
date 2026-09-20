@@ -80,7 +80,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     try {
       agentStatus.value = await invoke<AgentStatus>('get_agent_status');
     } catch (e) {
-      agentStatus.value = { installed: false, state: 'unavailable', path: null, message: String(e), guidance: '请在设置 → 智能中重新检测或测试连接。' };
+      agentStatus.value = { installed: false, state: 'unavailable', path: null, message: String(e), guidance: '请在设置 → 智能中重新检测或测试连接。', run_dir: null };
     }
   }
 
