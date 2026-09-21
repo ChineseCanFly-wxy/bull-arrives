@@ -17,7 +17,7 @@
 > 想加什么直接 [提 PR](https://github.com/ChineseCanFly-wxy/bull-arrives/pulls) 或 [开 Issue](https://github.com/ChineseCanFly-wxy/bull-arrives/issues) 就行。
 
 - [ ] 可以让AI分析一下stcokdb的网页中有些东西，看下对我们有没有用
-- [ ] AI分析还是有点问题，这个后续需要继续优化，要改成实际打开来看吧，然后超时和额度就不限制了
+- [ ] AI分析还是有点问题，这个后续需要继续优化，要改成实际打开来看吧，然后超时和额度就不限制了，有问题，我可以直接在claude页面看
 
 ---
 
