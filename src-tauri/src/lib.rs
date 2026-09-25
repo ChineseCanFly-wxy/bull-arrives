@@ -358,6 +358,11 @@ pub fn run() {
             log::info!("Settings database: {:?}", app_dir.join("bull-arrives.db"));
 
             let db = Arc::new(Database::open(app_dir.clone()).expect("Failed to open database"));
+            // 立刻注册 db：窗口在 setup 之前就已创建，前端一加载就会调 get_settings。
+            // 若等到下面「数据源 / 缓存」初始化跑完再 manage，这段窗口期内的调用会报
+            // `state not managed for field \`db\``，前端初始化随之失败、界面停在空白。
+            // 这里的初始化最多几百毫秒，但慢盘 / 杀软扫描下足以让启动必现失败。
+            app.manage(db.clone());
             let interactive_root = crate::agent::long_path(&app_dir).join("agent-interactive");
             app.manage(crate::agent::interactive::InteractiveRoot(interactive_root));
             log::info!("Database opened successfully");
@@ -412,8 +417,8 @@ pub fn run() {
             cache.restore_from_db();
             log::info!("Quote cache initialized and restored from DB");
 
-            // Manage state
-            app.manage(db.clone());
+            // Manage state（db 已在上面的 Database::open 之后立刻注册，不能重复 manage，
+            // Tauri 对同一类型重复注册会 panic）
             app.manage(ds_manager.clone());
             app.manage(cache.clone());
             app.manage(PortableMode(is_portable));

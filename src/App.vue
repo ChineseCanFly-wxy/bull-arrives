@@ -115,7 +115,7 @@ function handleRetry() {
 <template>
   <NConfigProvider :theme="settings.theme === 'dark' ? darkTheme : lightTheme" :theme-overrides="themeOverrides">
     <NMessageProvider>
-      <AlertNotifications />
+      <AlertNotifications v-if="initReady" />
       <AppLayout
         :init-error="initError"
         :init-ready="initReady"

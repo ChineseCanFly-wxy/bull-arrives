@@ -194,7 +194,20 @@ export const useSettingsStore = defineStore('settings', () => {
   async function fetchSettings() {
     try {
       const startedAt = revision;
-      const loaded = await invoke<Record<string, string>>('get_settings');
+      let loaded: Record<string, string> | undefined;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        try {
+          loaded = await invoke<Record<string, string>>('get_settings');
+          break;
+        } catch (e) {
+          // 窗口先于后端 setup 完成创建，此时 db state 可能还没注册。
+          // 这不是真错误，等一拍重试即可（匹配放宽到整句特征串，
+          // 避免 Tauri 换文案或换字段名后重试失效）。
+          if (!String(e).includes('state not managed') || attempt === 29) throw e;
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+      if (!loaded) throw new Error('设置尚未加载');
       settings.value = { ...loaded, ...Object.fromEntries(
         Object.entries(settings.value).filter(([key]) => (settingRevisions.get(key) ?? 0) > startedAt),
       ) };

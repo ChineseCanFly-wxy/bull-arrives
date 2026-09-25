@@ -38,6 +38,7 @@ function dismissStockDetailOnBlank(event: MouseEvent) {
 
 <template>
   <div class="app-layout">
+    <div v-if="!initReady && !initError" class="startup-banner" role="status">正在连接本地服务并加载设置…</div>
     <!-- Global init error banner -->
     <div v-if="initError" class="error-banner" role="alert">
       <div class="error-banner-content">
@@ -101,6 +102,14 @@ function dismissStockDetailOnBlank(event: MouseEvent) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.startup-banner {
+  padding: 8px 16px;
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-1);
+  font-size: var(--text-xs);
 }
 
 /* --- Error banner (blocking) --- */
