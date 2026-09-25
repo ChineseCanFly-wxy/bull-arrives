@@ -19,8 +19,10 @@ const universeStore = useUniverseStore();
 const universePageSizeOptions = [20, 50, 100];
 
 function onUniversePageSizeChange(event: Event) {
-  const value = Number((event.target as HTMLSelectElement).value);
-  void universeStore.setPageSize(value);
+  const input = event.target as HTMLSelectElement;
+  const value = Number(input.value);
+  void runAction('universe-page-size', () => universeStore.setPageSize(value))
+    .catch(() => { input.value = String(universeStore.pageSize); });
 }
 
 type SectionKey = 'market' | 'alerts' | 'ai' | 'ticker' | 'appearance' | 'system';
@@ -32,12 +34,22 @@ const sections: Array<{ key: SectionKey; label: string; eyebrow: string }> = [
   { key: 'appearance', label: '外观', eyebrow: 'THEME' },
   { key: 'system', label: '系统', eyebrow: 'SYSTEM' },
 ];
-const activeSection = ref<SectionKey>('market');
+const previousSection = sessionStorage.getItem('bull-settings-section');
+const activeSection = ref<SectionKey>(
+  sections.find(section => section.key === previousSection)?.key || 'market',
+);
+const sectionLoaded = new Set<SectionKey>();
+const contentEl = ref<HTMLElement | null>(null);
+watch(activeSection, section => {
+  sessionStorage.setItem('bull-settings-section', section);
+  if (contentEl.value) contentEl.value.scrollTop = 0;
+});
 const actionError = ref<string | null>(null);
 const savingKeys = ref(new Set<string>());
 interface NotificationIdentityStatus { supported: boolean; registered: boolean; shortcut_path?: string; detail: string }
 interface NotificationTestStatus { native: 'accepted' | 'failed'; native_error?: string; desktop: string; desktop_error?: string }
 interface BuildInfo { version: string; built_at: string; profile: string; exe_path: string }
+interface DataPaths { data_dir: string; database: string; interactive_tasks: string }
 interface LocalHistoryStatus {
   state: 'connected' | 'not_started' | 'not_found' | 'unavailable';
   message: string;
@@ -51,12 +63,14 @@ interface AgentStatus { installed: boolean; state: string; path: string | null; 
 const notificationIdentity = ref<NotificationIdentityStatus | null>(null);
 const notificationResult = ref<NotificationTestStatus | null>(null);
 const buildInfo = ref<BuildInfo | null>(null);
+const dataPaths = ref<DataPaths | null>(null);
 const localHistoryStatus = ref<LocalHistoryStatus | null>(null);
 const localHistoryUrlDraft = ref('http://127.0.0.1:7899');
 const agentStatus = ref<AgentStatus | null>(null);
 const agentPathDraft = ref('');
 const agentRunRootDraft = ref('');
 const agentTimeoutDraft = ref(90);
+const agentBudgetDraft = ref(0.2);
 
 const capturing = ref(false);
 const capturedCombo = ref<string | null>(null);
@@ -77,16 +91,43 @@ watch(() => props.show, (open) => {
     agentPathDraft.value = settings.settings['agent_claude_path'] || '';
     agentRunRootDraft.value = settings.settings['agent_run_root'] || '';
     agentTimeoutDraft.value = Number(settings.settings['agent_timeout_seconds'] || 90);
-    safelyRun('session', () => settings.fetchMarketSession());
-    if (settings.localHistoryEnabled) void loadLocalHistoryStatus();
-    void settings.fetchStockDbStatus();
-    void loadNotificationIdentity();
-    void loadBuildInfo();
-    void loadAgentStatus();
+    agentBudgetDraft.value = Number(settings.settings['agent_budget_usd'] || 0.2);
+    sectionLoaded.clear();
+    void loadActiveSection();
   } else {
     stopCapture();
   }
 }, { immediate: true });
+
+async function loadActiveSection() {
+  if (!props.show || sectionLoaded.has(activeSection.value)) return;
+  const section = activeSection.value;
+  sectionLoaded.add(section);
+  try {
+    if (section === 'market') {
+      await settings.fetchMarketSession();
+      await settings.fetchStockDbStatus();
+      if (settings.localHistoryEnabled) await loadLocalHistoryStatus();
+    } else if (section === 'alerts') {
+      await loadNotificationIdentity();
+    } else if (section === 'ai') {
+      await loadAgentStatus();
+    } else if (section === 'system') {
+      await loadBuildInfo();
+      dataPaths.value = await invoke<DataPaths>('get_data_paths');
+    }
+  } catch (error) {
+    sectionLoaded.delete(section);
+    actionError.value = `读取${sections.find(item => item.key === section)?.label || '设置'}状态失败：${error}`;
+  }
+}
+watch(activeSection, () => { void loadActiveSection(); });
+
+function switchSection(section: SectionKey) {
+  if (section === activeSection.value) return;
+  // 离开分类不清空表单草稿；重新进入仍能继续编辑。
+  activeSection.value = section;
+}
 
 function onKeyDown(event: KeyboardEvent) {
   event.preventDefault();
@@ -182,11 +223,21 @@ function onOpacityInput(event: Event) {
 }
 function onOpacityCommit(event: Event) {
   const value = Number((event.target as HTMLInputElement).value);
-  safelyRun('opacity', () => settings.setTickerOpacity(value));
+  void runAction('opacity', () => settings.setTickerOpacity(value))
+    .catch(() => { opacityDraft.value = settings.tickerOpacity; });
 }
 function onColorCommit(event: Event) {
   const value = (event.target as HTMLInputElement).value;
   safelyRun('ticker-color', () => settings.setTickerTextColor(value));
+}
+function resetTickerAppearance() {
+  if (!window.confirm('将悬浮窗透明度、单色显示和字体颜色恢复默认？其他设置不会改变。')) return;
+  void runAction('ticker-reset', async () => {
+    if (tickerOpacitySupported && !await settings.setTickerOpacity(100)) return false;
+    opacityDraft.value = 100;
+    if (!await settings.setTickerTextColor('#9AA5B1')) return false;
+    return settings.setTickerSingleColor(false);
+  }).catch(() => undefined);
 }
 async function loadNotificationIdentity() {
   try { notificationIdentity.value = await invoke<NotificationIdentityStatus>('get_notification_identity_status'); }
@@ -288,7 +339,23 @@ async function saveAgentTimeout() {
   }
   return settings.setSetting('agent_timeout_seconds', String(agentTimeoutDraft.value));
 }
+async function saveAgentBudget() {
+  if (!Number.isFinite(agentBudgetDraft.value) || agentBudgetDraft.value < 0.05 || agentBudgetDraft.value > 10) {
+    throw new Error('单次预算必须在 0.05–10 美元之间');
+  }
+  return settings.setSetting('agent_budget_usd', agentBudgetDraft.value.toFixed(2));
+}
 function close() {
+  if (savingKeys.value.size) {
+    actionError.value = '设置仍在保存，请等待完成后再关闭。';
+    return;
+  }
+  const unsavedAgent = agentPathDraft.value.trim() !== (settings.settings['agent_claude_path'] || '')
+    || agentRunRootDraft.value.trim() !== (settings.settings['agent_run_root'] || '')
+    || agentTimeoutDraft.value !== Number(settings.settings['agent_timeout_seconds'] || 90)
+    || agentBudgetDraft.value.toFixed(2) !== Number(settings.settings['agent_budget_usd'] || 0.2).toFixed(2);
+  const unsavedUrl = localHistoryUrlDraft.value.trim() !== settings.localHistoryUrl;
+  if ((unsavedAgent || unsavedUrl) && !window.confirm('有尚未保存的设置，确定放弃这些修改吗？')) return;
   stopCapture();
   emit('update:show', false);
 }
@@ -302,7 +369,7 @@ onBeforeUnmount(stopCapture);
     preset="card"
     title="偏好设置"
     class="settings-modal"
-    :style="{ width: 'min(860px, 95vw)' }"
+    :style="{ width: settings.visualStyle === 'classic' ? 'min(860px, 96vw)' : 'min(920px, 96vw)' }"
     :bordered="false"
     :mask-closable="true"
     :segmented="{ content: 'soft', footer: 'soft' }"
@@ -315,16 +382,17 @@ onBeforeUnmount(stopCapture);
           :key="section.key"
           class="nav-item"
           :class="{ active: activeSection === section.key }"
-          @click="activeSection = section.key"
+          :aria-current="activeSection === section.key ? 'page' : undefined"
+          @click="switchSection(section.key)"
         >
           <small>{{ section.eyebrow }}</small>
           <span>{{ section.label }}</span>
         </button>
       </nav>
 
-      <main class="settings-content">
+      <main ref="contentEl" class="settings-content">
         <NAlert v-if="actionError" type="error" :show-icon="false" closable class="settings-error" @close="actionError = null">
-          保存失败：{{ actionError }}。设置未被视为成功，请重试。
+          {{ actionError }}
         </NAlert>
 
         <section v-if="activeSection === 'market'" class="settings-panel">
@@ -332,7 +400,7 @@ onBeforeUnmount(stopCapture);
           <article class="setting-card hero-card">
             <div class="card-title-row">
               <div><h3>自动调节刷新间隔</h3><p>根据交易时段使用推荐频率，休市时自动降频。</p></div>
-              <button class="switch" :class="{ on: intervalAuto }" role="switch" :aria-checked="intervalAuto" :disabled="isSaving('interval')" @click="setIntervalAuto(!intervalAuto)"><span /></button>
+              <button class="switch" :class="{ on: intervalAuto }" role="switch" aria-label="自动调节刷新间隔" :aria-checked="intervalAuto" :disabled="isSaving('interval')" @click="setIntervalAuto(!intervalAuto)"><span /></button>
             </div>
             <div v-if="intervalAuto" class="session-status">
               <i :class="{ trading: settings.marketSession.is_trading }" />
@@ -340,7 +408,7 @@ onBeforeUnmount(stopCapture);
             </div>
             <div v-else class="slider-block">
               <div><span>固定间隔</span><b>{{ intervalDraft }}s</b></div>
-              <input type="range" min="1" max="60" step="1" :value="intervalDraft" @input="onIntervalInput" @change="onIntervalCommit" />
+              <input type="range" aria-label="固定刷新间隔（秒）" min="1" max="60" step="1" :value="intervalDraft" :disabled="isSaving('interval')" @input="onIntervalInput" @change="onIntervalCommit" />
               <p>固定模式不会跟随交易时段自动变化。</p>
             </div>
             <p class="session-calendar">{{ settings.marketSession.calendar }}</p>
@@ -353,6 +421,7 @@ onBeforeUnmount(stopCapture);
               <div><b class="page-size-label">每页显示</b><p>在筛选结果表底部也可以随时改。</p></div>
               <select
                 class="page-size-select"
+                aria-label="筛选结果每页显示条数"
                 :value="universeStore.pageSize"
                 :disabled="universeStore.loading"
                 @change="onUniversePageSizeChange"
@@ -364,7 +433,7 @@ onBeforeUnmount(stopCapture);
           <article class="setting-card">
             <div class="card-title-row">
               <div><h3>本地历史数据</h3><p>默认关闭。开启后，Bull Arrives 会在启动时自动运行已选择的 stockdb。</p></div>
-              <button class="switch" :class="{ on: settings.localHistoryEnabled }" role="switch" :aria-checked="settings.localHistoryEnabled" :disabled="isSaving('local-history-enabled') || settings.stockDbStatus?.busy" @click="safelyRun('local-history-enabled', () => settings.setLocalHistoryEnabled(!settings.localHistoryEnabled))"><span /></button>
+              <button class="switch" :class="{ on: settings.localHistoryEnabled }" role="switch" aria-label="本地历史数据" :aria-checked="settings.localHistoryEnabled" :disabled="isSaving('local-history-enabled') || settings.stockDbStatus?.busy" @click="safelyRun('local-history-enabled', () => settings.setLocalHistoryEnabled(!settings.localHistoryEnabled))"><span /></button>
             </div>
             <div class="history-status" :class="settings.stockDbStatus?.state">
               <b>{{ stockDbStateLabel() }}</b>
@@ -405,7 +474,7 @@ onBeforeUnmount(stopCapture);
           <article class="setting-card accent-card">
             <div class="card-title-row">
               <div><h3>启用行情提醒</h3><p>关闭后所有提醒暂停，逐票阈值和开关保持不变。</p></div>
-              <button class="switch" :class="{ on: settings.alertsEnabled }" role="switch" :aria-checked="settings.alertsEnabled" :disabled="isSaving('alerts')" @click="safelyRun('alerts', () => settings.setSetting('alerts_enabled', settings.alertsEnabled ? '0' : '1'))"><span /></button>
+              <button class="switch" :class="{ on: settings.alertsEnabled }" role="switch" aria-label="启用行情提醒" :aria-checked="settings.alertsEnabled" :disabled="isSaving('alerts')" @click="safelyRun('alerts', () => settings.setSetting('alerts_enabled', settings.alertsEnabled ? '0' : '1'))"><span /></button>
             </div>
             <div class="alert-guidance">
               <b>逐票设置入口</b>
@@ -416,7 +485,7 @@ onBeforeUnmount(stopCapture);
           <article class="setting-card">
             <div class="card-title-row">
               <div><h3>资讯摘要与时序盯盘</h3><p>默认关闭。交易日按规则检查关注池资讯；命中后尝试 Agent 摘要，失败回退原文。盘前、盘后和夜间卡片统一进入提醒记录，额外休市日不触发。</p></div>
-              <button class="switch" :class="{ on: settings.newsNotificationsEnabled }" role="switch" :aria-checked="settings.newsNotificationsEnabled" :disabled="isSaving('news-notifications')" @click="safelyRun('news-notifications', () => settings.setSetting('news_notifications_enabled', settings.newsNotificationsEnabled ? '0' : '1'))"><span /></button>
+              <button class="switch" :class="{ on: settings.newsNotificationsEnabled }" role="switch" aria-label="资讯摘要与时序盯盘" :aria-checked="settings.newsNotificationsEnabled" :disabled="isSaving('news-notifications')" @click="safelyRun('news-notifications', () => settings.setSetting('news_notifications_enabled', settings.newsNotificationsEnabled ? '0' : '1'))"><span /></button>
             </div>
             <p class="card-desc">来源：东方财富上市公司快讯与公司公告。首次开启只建立当前水位，不推送历史内容。</p>
           </article>
@@ -427,7 +496,7 @@ onBeforeUnmount(stopCapture);
             <button v-if="notificationIdentity?.supported" class="minor-btn notification-action" :disabled="isSaving('identity')" @click="safelyRun('identity', registerNotificationIdentity)">{{ notificationIdentity.registered ? '修复 Windows 通知身份' : '启用 Windows 通知' }}</button>
             <h3 style="margin-top: 16px">通知通道</h3>
             <p>默认 Windows 优先，真实发送失败自动用独立桌面提醒兜底。系统返回“已受理”不代表横幅一定可见。</p>
-            <div class="inline-setting"><div><h3>同时显示桌面提醒</h3><p>适合勿扰或企业策略会隐藏 Windows 横幅的电脑。</p></div><button class="switch" :class="{ on: settings.notificationDesktopAlways }" role="switch" :aria-checked="settings.notificationDesktopAlways" :disabled="isSaving('desktop-toast')" @click="safelyRun('desktop-toast', () => settings.setSetting('notification_desktop_always', settings.notificationDesktopAlways ? '0' : '1'))"><span /></button></div>
+            <div class="inline-setting"><div><h3>同时显示桌面提醒</h3><p>适合勿扰或企业策略会隐藏 Windows 横幅的电脑。</p></div><button class="switch" :class="{ on: settings.notificationDesktopAlways }" role="switch" aria-label="同时显示桌面提醒" :aria-checked="settings.notificationDesktopAlways" :disabled="isSaving('desktop-toast')" @click="safelyRun('desktop-toast', () => settings.setSetting('notification_desktop_always', settings.notificationDesktopAlways ? '0' : '1'))"><span /></button></div>
             <button class="minor-btn notification-action" :disabled="isSaving('notification')" @click="safelyRun('notification', sendTestNotification)">发送测试通知</button>
             <p v-if="notificationResult">Windows：{{ notificationResult.native === 'accepted' ? '已受理' : `失败（${notificationResult.native_error || '未知错误'}）` }}；桌面：{{ notificationResult.desktop === 'queued' ? '已排队' : notificationResult.desktop === 'not-requested' ? '未启用' : `失败（${notificationResult.desktop_error || '未知错误'}）` }}</p>
             <button v-if="notificationResult?.native === 'accepted' && !settings.notificationDesktopAlways" class="minor-btn notification-action" @click="safelyRun('desktop-toast', () => settings.setSetting('notification_desktop_always', '1'))">没看到系统通知，启用桌面兜底</button>
@@ -441,7 +510,7 @@ onBeforeUnmount(stopCapture);
           <article class="setting-card accent-card">
             <div class="card-title-row">
               <div><h3>AI 智能总开关</h3><p>关闭后，后台自动运行的 AI / 量化功能全部停止；手动点击的分析与推荐仍可照常使用。</p></div>
-              <button class="switch" :class="{ on: settings.aiEnabled }" role="switch" :aria-checked="settings.aiEnabled" :disabled="isSaving('ai')" @click="safelyRun('ai', () => settings.setSetting('ai_enabled', settings.aiEnabled ? '0' : '1'))"><span /></button>
+              <button class="switch" :class="{ on: settings.aiEnabled }" role="switch" aria-label="AI 智能总开关" :aria-checked="settings.aiEnabled" :disabled="isSaving('ai')" @click="safelyRun('ai', () => settings.setSetting('ai_enabled', settings.aiEnabled ? '0' : '1'))"><span /></button>
             </div>
             <div v-if="!settings.aiEnabled" class="alert-guidance">
               <b>已全部停用</b>
@@ -460,6 +529,7 @@ onBeforeUnmount(stopCapture);
                 class="switch"
                 :class="{ on: settings.aiEnabled && settings.aiMonitorEnabled }"
                 role="switch"
+                aria-label="智能监控：量化止损止盈"
                 :aria-checked="settings.aiEnabled && settings.aiMonitorEnabled"
                 :disabled="!settings.aiEnabled || isSaving('ai-monitor')"
                 @click="safelyRun('ai-monitor', () => settings.setSetting('ai_monitor_enabled', settings.aiMonitorEnabled ? '0' : '1'))"
@@ -477,13 +547,15 @@ onBeforeUnmount(stopCapture);
             <label class="history-field"><span>可执行文件</span><input v-model="agentPathDraft" type="text" placeholder="留空自动检测 claude.exe / claude.cmd" /><span class="field-btns"><button class="minor-btn" :disabled="isSaving('agent-browse')" @click="safelyRun('agent-browse', browseAgentPath)">浏览…</button><button class="minor-btn" :disabled="isSaving('agent-path')" @click="safelyRun('agent-path', saveAgentPath)">保存并检测</button></span></label>
             <label class="history-field"><span>工作目录</span><input v-model="agentRunRootDraft" type="text" placeholder="留空自动选择（推荐）" /><span class="field-btns"><button class="minor-btn" :disabled="isSaving('agent-root-browse')" @click="safelyRun('agent-root-browse', browseAgentRunRoot)">浏览…</button><button class="minor-btn" :disabled="isSaving('agent-root')" @click="safelyRun('agent-root', saveAgentRunRoot)">保存</button><button class="minor-btn" :disabled="isSaving('agent-root')" @click="safelyRun('agent-root', resetAgentRunRoot)">用自动</button></span></label>
             <label class="history-field"><span>单次超时（秒）</span><input v-model.number="agentTimeoutDraft" type="number" min="15" max="300" step="1" /><button class="minor-btn" :disabled="isSaving('agent-timeout')" @click="safelyRun('agent-timeout', saveAgentTimeout)">保存超时</button></label>
+            <label class="history-field"><span>后台单次预算（美元）</span><input v-model.number="agentBudgetDraft" type="number" min="0.05" max="10" step="0.05" /><button class="minor-btn" :disabled="isSaving('agent-budget')" @click="safelyRun('agent-budget', saveAgentBudget)">保存预算</button></label>
+            <p class="card-desc">此预算仅限制应用发起的每次后台 Claude Code 调用，不是账户余额；交互终端由你直接操作，不套用后台 90 秒超时或这项预算。</p>
             <p class="card-desc run-dir-line">任务文件实际写入：<code>{{ agentStatus?.run_dir || '待确定' }}</code>。留空即自动选择，应用会自动避开 Windows 的 8.3 短名目录（形如 <code>WEIXY4~1</code>）—— 那些目录下 Claude Code 会拒绝读写。</p>
             <div class="history-actions">
               <button class="minor-btn" :disabled="isSaving('agent-scan') || isSaving('agent-test')" @click="safelyRun('agent-scan', loadAgentStatus)">重新检测</button>
               <button class="minor-btn" :disabled="!agentStatus?.installed || isSaving('agent-test')" @click="safelyRun('agent-test', testAgentConnection)">{{ isSaving('agent-test') ? '测试连接中…' : '测试连接' }}</button>
               <button v-if="isSaving('agent-test')" class="minor-btn" @click="safelyRun('agent-cancel', () => invoke('cancel_agent_analysis'))">中止</button>
             </div>
-            <p class="card-desc">{{ agentStatus?.guidance }}。测试连接会进行一次简短模型调用，可能产生服务商费用。单并发；每次调用默认 90 秒，支持 15–300 秒；多角色研判依次运行，可中断。失败保留纯量化结果。</p>
+            <p class="card-desc">{{ agentStatus?.guidance }}。测试连接会进行一次简短模型调用，可能产生服务商费用。后台任务单并发，默认超时 90 秒（15–300 秒可调），部分自动任务另有 30 秒上限；多角色研判分次执行，可中断。失败保留纯量化结果。</p>
           </article>
           <article class="setting-card compact-card">
             <h3>手动触发，无需开关</h3>
@@ -524,44 +596,64 @@ onBeforeUnmount(stopCapture);
             </label>
           </article>
           <article class="setting-card">
-            <div v-if="tickerOpacitySupported" class="slider-block"><div><span>透明度</span><b>{{ opacityDraft }}%</b></div><input type="range" min="5" max="100" step="1" :value="opacityDraft" @input="onOpacityInput" @change="onOpacityCommit" /><p>数值越低，悬浮窗越隐蔽。</p></div>
+            <div v-if="tickerOpacitySupported" class="slider-block"><div><span>透明度</span><b>{{ opacityDraft }}%</b></div><input type="range" aria-label="悬浮窗透明度（百分比）" min="5" max="100" step="1" :value="opacityDraft" :disabled="isSaving('opacity')" @input="onOpacityInput" @change="onOpacityCommit" /><p>数值越低，悬浮窗越隐蔽。</p></div>
             <p v-else class="card-desc">当前平台暂不支持悬浮窗整体透明度。</p>
-            <div class="inline-setting"><div><h3>单色显示</h3><p>统一文字颜色，代替红涨绿跌。</p></div><button class="switch" :class="{ on: settings.tickerSingleColor }" role="switch" :aria-checked="settings.tickerSingleColor" @click="safelyRun('single-color', () => settings.setTickerSingleColor(!settings.tickerSingleColor))"><span /></button></div>
-            <div v-if="settings.tickerSingleColor" class="color-row"><span>字体颜色</span><label><input type="color" :value="settings.tickerTextColor" @change="onColorCommit" /><code>{{ settings.tickerTextColor }}</code></label></div>
+            <div class="inline-setting"><div><h3>单色显示</h3><p>统一文字颜色，代替红涨绿跌。</p></div><button class="switch" :class="{ on: settings.tickerSingleColor }" role="switch" aria-label="悬浮窗单色显示" :aria-checked="settings.tickerSingleColor" :disabled="isSaving('single-color')" @click="safelyRun('single-color', () => settings.setTickerSingleColor(!settings.tickerSingleColor))"><span /></button></div>
+            <div v-if="settings.tickerSingleColor" class="color-row"><span>字体颜色</span><label><input type="color" aria-label="悬浮窗字体颜色" :value="settings.tickerTextColor" :disabled="isSaving('ticker-color')" @change="onColorCommit" /><code>{{ settings.tickerTextColor }}</code></label></div>
+            <div class="ticker-preview" aria-label="悬浮窗外观预览">
+              <span>预览（示例行情）</span>
+              <div :style="{ opacity: opacityDraft / 100 }">
+                <b :style="settings.tickerSingleColor ? { color: settings.tickerTextColor } : undefined">示例股票</b>
+                <span :style="{ color: settings.tickerSingleColor ? settings.tickerTextColor : 'var(--color-up)' }">12.34　+2.18%</span>
+              </div>
+            </div>
+            <button class="minor-btn" :disabled="isSaving('ticker-reset')" @click="resetTickerAppearance">恢复悬浮窗外观默认值</button>
           </article>
         </section>
 
         <section v-else-if="activeSection === 'appearance'" class="settings-panel">
-          <header class="panel-heading"><span>05</span><div><h2>外观</h2><p>选择适合环境的界面明暗。</p></div></header>
-          <article class="theme-grid">
-            <button class="theme-card light" :class="{ active: settings.theme === 'light' }" :disabled="isSaving('theme')" @click="settings.theme !== 'light' && safelyRun('theme', () => settings.toggleTheme())"><i><span /><span /><span /></i><b>浅色</b><small>清晰明快</small></button>
-            <button class="theme-card dark" :class="{ active: settings.theme === 'dark' }" :disabled="isSaving('theme')" @click="settings.theme !== 'dark' && safelyRun('theme', () => settings.toggleTheme())"><i><span /><span /><span /></i><b>深色</b><small>专注低光</small></button>
+          <header class="panel-heading"><span>05</span><div><h2>外观</h2><p>界面风格与明暗模式可分别选择，自动保存并在下次启动时恢复。</p></div></header>
+          <h3 class="appearance-label">界面风格</h3>
+          <article class="theme-grid style-grid" role="group" aria-label="界面风格">
+            <button class="theme-card style-card classic-preview" :class="{ active: settings.visualStyle === 'classic' }" :aria-pressed="settings.visualStyle === 'classic'" :disabled="isSaving('visual-style')" @click="settings.visualStyle !== 'classic' && safelyRun('visual-style', () => settings.setVisualStyle('classic'))"><i aria-hidden="true"><span /><span /><span /></i><b>原版</b><small>保留当前熟悉的界面样式</small></button>
+            <button class="theme-card style-card trading-preview" :class="{ active: settings.visualStyle === 'trading' }" :aria-pressed="settings.visualStyle === 'trading'" :disabled="isSaving('visual-style')" @click="settings.visualStyle !== 'trading' && safelyRun('visual-style', () => settings.setVisualStyle('trading'))"><i aria-hidden="true"><span /><span /><span /></i><b>专业交易</b><small>紧凑高效，兼顾大量行情数据</small></button>
+            <button class="theme-card style-card modern-preview" :class="{ active: settings.visualStyle === 'modern' }" :aria-pressed="settings.visualStyle === 'modern'" :disabled="isSaving('visual-style')" @click="settings.visualStyle !== 'modern' && safelyRun('visual-style', () => settings.setVisualStyle('modern'))"><i aria-hidden="true"><span /><span /><span /></i><b>清晰现代</b><small>更舒展的布局与清楚的层级</small></button>
+          </article>
+          <h3 class="appearance-label">明暗模式</h3>
+          <article class="theme-grid" role="group" aria-label="明暗模式">
+            <button class="theme-card light" :class="{ active: settings.theme === 'light' }" :aria-pressed="settings.theme === 'light'" :disabled="isSaving('theme')" @click="settings.theme !== 'light' && safelyRun('theme', () => settings.toggleTheme())"><i aria-hidden="true"><span /><span /><span /></i><b>浅色</b><small>清晰明快</small></button>
+            <button class="theme-card dark" :class="{ active: settings.theme === 'dark' }" :aria-pressed="settings.theme === 'dark'" :disabled="isSaving('theme')" @click="settings.theme !== 'dark' && safelyRun('theme', () => settings.toggleTheme())"><i aria-hidden="true"><span /><span /><span /></i><b>深色</b><small>专注低光</small></button>
           </article>
         </section>
 
         <section v-else class="settings-panel">
           <header class="panel-heading"><span>06</span><div><h2>系统</h2><p>配置启动行为与运行方式。</p></div></header>
           <article class="setting-card">
-            <div class="inline-setting"><div><h3>开机自启</h3><p>登录 Windows 时自动启动 Bull Arrives。</p></div><button class="switch" :class="{ on: settings.autoLaunch }" role="switch" :aria-checked="settings.autoLaunch" :disabled="isSaving('autostart')" @click="safelyRun('autostart', () => settings.toggleAutoLaunch())"><span /></button></div>
+            <div class="inline-setting"><div><h3>开机自启</h3><p>登录 Windows 时自动启动 Bull Arrives。</p></div><button class="switch" :class="{ on: settings.autoLaunch }" role="switch" aria-label="开机自启" :aria-checked="settings.autoLaunch" :disabled="isSaving('autostart')" @click="safelyRun('autostart', () => settings.toggleAutoLaunch())"><span /></button></div>
             <div class="system-line"><span>运行模式</span><b>{{ settings.isPortable ? '便携模式' : '标准安装' }}</b></div>
             <div class="system-line"><span>版本</span><b v-if="buildInfo">v{{ buildInfo.version }} · {{ buildInfo.profile }}</b><b v-else>读取中…</b></div>
             <div class="system-line"><span>构建时间</span><b v-if="buildInfo">{{ buildInfo.built_at }}</b><b v-else>—</b></div>
             <div v-if="buildInfo" class="system-line exe-line"><span>程序位置</span><code>{{ buildInfo.exe_path }}</code></div>
-            <p v-if="buildInfo" class="build-hint">排查问题时请核对这里的构建时间 —— 如果它不是最近一次构建的时间，说明启动的是旧副本。</p>
+            <div v-if="dataPaths" class="system-line exe-line"><span>数据目录</span><code>{{ dataPaths.data_dir }}</code></div>
+            <div v-if="dataPaths" class="system-line exe-line"><span>设置数据库</span><code>{{ dataPaths.database }}</code></div>
+            <div v-if="dataPaths" class="system-line exe-line"><span>AI 会话文件</span><code>{{ dataPaths.interactive_tasks }}</code></div>
+            <p v-if="buildInfo" class="build-hint">排查问题时请核对程序位置、数据库路径与构建时间；切换便携模式会使用不同的数据目录。</p>
           </article>
           <WindowSizeSettings />
         </section>
       </main>
     </div>
-    <template #footer><div class="settings-footer"><span>修改会立即生效</span><button class="done-btn" @click="close">完成</button></div></template>
+    <template #footer><div class="settings-footer"><span>开关等自动保存；路径、超时和预算须点击对应的保存按钮</span><button class="done-btn" @click="close">完成</button></div></template>
   </NModal>
 </template>
 
 <style scoped>
-.settings-shell { display: grid; grid-template-columns: 150px minmax(0, 1fr); height: min(480px, calc(100vh - 240px)); min-height: 0; gap: 18px; }
+.settings-shell { display: grid; grid-template-columns: 154px minmax(0, 1fr); height: min(480px, calc(100vh - 170px)); min-height: 240px; gap: 18px; }
+:global([data-style="trading"]) .settings-shell,
+:global([data-style="modern"]) .settings-shell { height: min(600px, calc(100dvh - 170px)); }
 .section-nav { display: flex; flex-direction: column; gap: 5px; padding: 4px; border-right: 1px solid var(--color-border-0); }
 .nav-item { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 10px 12px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--color-text-secondary); text-align: left; cursor: pointer; transition: background var(--transition-fast), color var(--transition-fast); }
-.nav-item small { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 9px; letter-spacing: .12em; }
+.nav-item small { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; }
 .nav-item span { font-size: var(--text-sm); font-weight: var(--font-weight-medium); }
 .nav-item:hover { background: var(--color-surface-1); color: var(--color-text-primary); }
 .nav-item.active { background: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface-1)); color: var(--color-accent); }
@@ -574,6 +666,10 @@ onBeforeUnmount(stopCapture);
 .panel-heading h2 { margin: 0; color: var(--color-text-primary); font-size: 18px; letter-spacing: -.02em; }
 .panel-heading p, .card-desc { margin: 3px 0 0; color: var(--color-text-tertiary); font-size: var(--text-xs); }
 .setting-card { padding: 16px; border: 1px solid var(--color-border-0); border-radius: var(--radius-md); background: var(--color-surface-0); box-shadow: var(--shadow-sm); }
+:global([data-style="trading"]) .setting-card,
+:global([data-style="modern"]) .setting-card { padding: var(--panel-padding); background: var(--color-surface-1); }
+:global([data-style="trading"]) .settings-shell,
+:global([data-style="modern"]) .settings-shell { gap: var(--space-4); }
 .hero-card { background: linear-gradient(145deg, color-mix(in srgb, var(--color-accent) 6%, var(--color-surface-0)), var(--color-surface-0) 58%); }
 .accent-card { border-top: 2px solid var(--color-accent); }
 .compact-card { padding: 14px 16px; }
@@ -589,7 +685,7 @@ onBeforeUnmount(stopCapture);
 .session-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-tertiary); }
 .session-status i.trading { background: #3fb950; box-shadow: 0 0 0 4px rgba(63,185,80,.12); }
 .session-status b, .slider-block b { color: var(--color-accent); font-family: var(--font-mono); }
-.session-calendar { margin-top: 8px; color: var(--color-text-tertiary); font-size: 10px; line-height: 1.5; }
+.session-calendar { margin-top: 8px; color: var(--color-text-tertiary); font-size: var(--text-xs); line-height: 1.5; }
 .slider-block { margin-top: 16px; }
 .slider-block > div { display: flex; justify-content: space-between; color: var(--color-text-secondary); font-size: var(--text-xs); }
 .slider-block input[type='range'] { width: 100%; height: 4px; margin: 14px 0 5px; appearance: none; border-radius: 999px; background: var(--color-border-1); }
@@ -617,6 +713,9 @@ onBeforeUnmount(stopCapture);
 .minor-btn { min-height: 32px; padding: 0 12px; border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-secondary); font-family: var(--font-sans); cursor: pointer; }
 .notification-action { margin-top: 10px; }
 .inline-setting { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--color-border-0); }
+.ticker-preview { width: 100%; margin: 12px 0; color: var(--color-text-tertiary); font-size: var(--text-xs); }
+.ticker-preview > div { display: flex; justify-content: space-between; gap: 12px; margin-top: 7px; padding: 12px; border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); }
+.ticker-preview > div span { font-family: var(--font-mono); }
 .color-row, .system-line { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-border-0); color: var(--color-text-secondary); font-size: var(--text-xs); }
 .color-row label { display: flex; align-items: center; gap: 8px; }
 .color-row input { width: 34px; height: 24px; padding: 1px; border: 1px solid var(--color-border-1); border-radius: 4px; background: none; }
@@ -629,7 +728,7 @@ onBeforeUnmount(stopCapture);
 .history-status.connected b { color: #3fb950; }
 .history-status.unavailable b, .history-status.not_started b { color: #d29922; }
 .history-status small { font-family: var(--font-mono); font-size: 10px; }
-.history-field { display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 10px; color: var(--color-text-secondary); font-size: var(--text-xs); }
+.history-field { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 10px; color: var(--color-text-secondary); font-size: var(--text-xs); }
 .history-field input { min-width: 0; min-height: 32px; padding: 0 9px; border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-primary); }
 .field-btns { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .run-dir-line { margin-top: 8px; }
@@ -654,7 +753,10 @@ onBeforeUnmount(stopCapture);
   cursor: pointer;
 }
 .field-error { color: var(--color-warning) !important; }
-.theme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.theme-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.appearance-label { margin: 4px 0 0; color: var(--color-text-secondary); font-size: var(--text-sm); }
+.style-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 760px) { .style-grid { grid-template-columns: 1fr; } }
 .theme-card { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 14px; border: 1px solid var(--color-border-0); border-radius: var(--radius-md); background: var(--color-surface-0); color: var(--color-text-primary); cursor: pointer; transition: transform var(--transition-fast), border-color var(--transition-fast); }
 .theme-card:hover { transform: translateY(-2px); border-color: var(--color-border-1); }
 .theme-card.active { border-color: var(--color-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 12%, transparent); }
@@ -664,10 +766,22 @@ onBeforeUnmount(stopCapture);
 .theme-card.dark > i { background: #111820; box-shadow: inset 0 0 0 1px #2b3541; }
 .theme-card.dark > i span { background: #26313d; }
 .theme-card.dark > i span:first-child { background: #1d2732; }
+.style-card > i { height: 72px; grid-template-rows: 14px 1fr; background: var(--color-surface-1); box-shadow: inset 0 0 0 1px var(--color-border-0); }
+.style-card > i span:first-child { grid-row: auto; grid-column: 1 / 3; background: var(--color-accent-dim); }
+.style-card > i span { background: var(--color-surface-2); }
+.style-card.modern-preview > i { gap: 7px; padding: 10px; border-radius: 12px; }
+.style-card.modern-preview > i span { border-radius: 7px; }
+.style-card.classic-preview > i { background: #f6f8fa; box-shadow: inset 0 0 0 1px #d0d7de; }
+.style-card.classic-preview > i span { background: #e2e5ea; }
+.style-card.classic-preview > i span:first-child { background: #d0d7de; }
+.style-card.trading-preview > i { gap: 3px; padding: 6px; }
+.style-card.trading-preview > i span { border-radius: 2px; }
 .theme-card b { font-size: var(--text-sm); }
 .theme-card small { color: var(--color-text-tertiary); }
 .settings-footer { display: flex; align-items: center; justify-content: space-between; color: var(--color-text-tertiary); font-size: var(--text-xs); }
 .done-btn { height: 32px; padding: 0 20px; border: 0; border-radius: var(--radius-sm); background: var(--color-accent); color: #fff; font-family: var(--font-sans); cursor: pointer; }
+.settings-shell :is(button, input, select, summary):focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .settings-panel { animation: none; } .settings-shell * { transition-duration: 0.01ms !important; } }
 @keyframes panel-in { from { opacity: 0; transform: translateY(3px); } }
 @media (max-width: 680px) {
   .settings-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
@@ -676,9 +790,13 @@ onBeforeUnmount(stopCapture);
   .nav-item.active::before { top: auto; right: 12px; bottom: 0; width: auto; height: 2px; }
   .settings-content { padding: 0; }
   .explain-grid { grid-template-columns: 1fr; }
+  .history-field, .history-program-row { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+  .history-field .field-btns { justify-content: flex-start; }
+  .history-program-row code { overflow-wrap: anywhere; }
 }
 @media (max-width: 460px) {
   .theme-grid { grid-template-columns: 1fr; }
+  .style-grid { grid-template-columns: 1fr; }
   .card-title-row { align-items: flex-start; }
   .settings-footer > span { display: none; }
   .settings-footer { justify-content: flex-end; }

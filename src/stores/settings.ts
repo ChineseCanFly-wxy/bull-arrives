@@ -55,6 +55,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const datasources = ref<[string, string][]>([]);
   const activeDatasource = ref('tencent');
   const theme = ref<'dark' | 'light'>('light');
+  const visualStyle = ref<'classic' | 'trading' | 'modern'>('classic');
   const autoLaunch = ref(false);
   const isPortable = ref(false);
   const tickerHotkey = ref('Alt+Q');
@@ -87,6 +88,12 @@ export const useSettingsStore = defineStore('settings', () => {
     calendar: '等待行情推断交易日历…',
   });
   const error = ref<string | null>(null);
+  const settingRevisions = new Map<string, number>();
+  let revision = 0;
+
+  function markSettingChanged(key: string) {
+    settingRevisions.set(key, ++revision);
+  }
 
   function clampOpacity(v: number): number {
     if (Number.isNaN(v)) return 100;
@@ -112,7 +119,10 @@ export const useSettingsStore = defineStore('settings', () => {
         activeDatasource.value = value || 'tencent';
         break;
       case 'theme':
-        applyTheme((value as 'dark' | 'light') || 'light');
+        applyTheme(value === 'dark' ? 'dark' : 'light');
+        break;
+      case 'visual_style':
+        applyVisualStyle(value === 'modern' || value === 'trading' ? value : 'classic');
         break;
       case 'ticker_hotkey':
         tickerHotkey.value = value || 'Alt+Q';
@@ -176,15 +186,21 @@ export const useSettingsStore = defineStore('settings', () => {
   /// Called by the receiving window when a `setting-changed` event arrives.
   /// Updates local state only — never re-broadcasts, which would loop.
   function applyRemoteSetting(key: string, value: string) {
+    markSettingChanged(key);
     settings.value[key] = value;
     applySettingLocally(key, value);
   }
 
   async function fetchSettings() {
     try {
-      settings.value = await invoke<Record<string, string>>('get_settings');
+      const startedAt = revision;
+      const loaded = await invoke<Record<string, string>>('get_settings');
+      settings.value = { ...loaded, ...Object.fromEntries(
+        Object.entries(settings.value).filter(([key]) => (settingRevisions.get(key) ?? 0) > startedAt),
+      ) };
       applySettingLocally('active_datasource', settings.value['active_datasource'] || 'tencent');
       applySettingLocally('theme', settings.value['theme'] || 'light');
+      applySettingLocally('visual_style', settings.value['visual_style'] || 'classic');
       applySettingLocally('ticker_hotkey', settings.value['ticker_hotkey'] || 'Alt+Q');
       applySettingLocally('ticker_opacity', settings.value['ticker_opacity'] ?? '100');
       applySettingLocally('ticker_single_color', settings.value['ticker_single_color'] ?? '0');
@@ -202,35 +218,49 @@ export const useSettingsStore = defineStore('settings', () => {
       applySettingLocally('local_history_engine_dir', settings.value['local_history_engine_dir'] || '');
       applySettingLocally('local_history_engine_path', settings.value['local_history_engine_path'] || '');
       applySettingLocally('local_history_updater_path', settings.value['local_history_updater_path'] || '');
-      await fetchStockDbStatus();
       applySettingLocally('refresh_interval', settings.value['refresh_interval'] ?? '0');
-      datasources.value = await invoke<[string, string][]>('list_datasources');
-      autoLaunch.value = await isEnabled();
-      isPortable.value = await invoke<boolean>('get_portable_mode');
+      error.value = null;
     } catch (e) {
       console.error('Failed to fetch settings:', e);
       error.value = `加载设置失败: ${e}`;
+      return false;
     }
+    await fetchStockDbStatus();
+    try {
+      datasources.value = await invoke<[string, string][]>('list_datasources');
+    } catch (e) {
+      console.warn('[settings] Failed to list datasources:', e);
+    }
+    try {
+      autoLaunch.value = await isEnabled();
+    } catch (e) {
+      console.warn('[settings] Failed to read auto-launch:', e);
+    }
+    try {
+      isPortable.value = await invoke<boolean>('get_portable_mode');
+    } catch (e) {
+      console.warn('[settings] Failed to read portable mode:', e);
+    }
+    return true;
   }
 
   async function toggleAutoLaunch() {
+    const previous = settings.value['auto_launch'] ?? String(autoLaunch.value);
+    const next = !autoLaunch.value;
+    if (!await setSetting('auto_launch', String(next))) return false;
     try {
-      // Persist to DB first so that on restart the app knows the desired state.
-      const newValue = String(!autoLaunch.value);
-      if (!await setSetting('auto_launch', newValue)) return false;
-      // Then toggle the OS-level autostart.
-      if (autoLaunch.value) {
-        await disable();
-      } else {
-        await enable();
-      }
-      autoLaunch.value = !autoLaunch.value;
+      if (next) await enable();
+      else await disable();
+      autoLaunch.value = next;
+      return true;
     } catch (e) {
       console.error('[settings] toggleAutoLaunch failed:', e);
-      error.value = `自动启动切换失败: ${e}`;
+      const rollback = await setSetting('auto_launch', previous);
+      error.value = rollback
+        ? `自动启动切换失败，设置已回退：${e}`
+        : `自动启动切换失败，且设置回退失败：${e}`;
       return false;
     }
-    return true;
   }
 
   /// Persist a setting, apply it locally, then broadcast to every other
@@ -239,6 +269,8 @@ export const useSettingsStore = defineStore('settings', () => {
   async function setSetting(key: string, value: string) {
     try {
       await invoke('set_setting', { key, value });
+      error.value = null;
+      markSettingChanged(key);
       settings.value[key] = value;
       applySettingLocally(key, value);
       await emit(SETTING_CHANGED_EVENT, { key, value }).catch((e) => {
@@ -256,6 +288,7 @@ export const useSettingsStore = defineStore('settings', () => {
     const previous = activeDatasource.value;
     try {
       await invoke('switch_datasource', { name });
+      markSettingChanged('active_datasource');
       activeDatasource.value = name;
       settings.value['active_datasource'] = name;
       emit(SETTING_CHANGED_EVENT, { key: 'active_datasource', value: name }).catch((e) => {
@@ -283,11 +316,24 @@ export const useSettingsStore = defineStore('settings', () => {
     // creating an infinite event loop between windows.
   }
 
+  function applyVisualStyle(style: 'classic' | 'trading' | 'modern') {
+    visualStyle.value = style;
+    document.documentElement.setAttribute('data-style', style);
+  }
+
+  async function setVisualStyle(style: 'classic' | 'trading' | 'modern') {
+    return setSetting('visual_style', style);
+  }
+
   async function setTickerHotkey(hotkey: string) {
     try {
       await invoke('set_ticker_hotkey', { hotkey });
+      markSettingChanged('ticker_hotkey');
       tickerHotkey.value = hotkey;
       settings.value['ticker_hotkey'] = hotkey;
+      await emit(SETTING_CHANGED_EVENT, { key: 'ticker_hotkey', value: hotkey }).catch((e) => {
+        console.error('[settings] Failed to broadcast ticker hotkey:', e);
+      });
     } catch (e) {
       console.error('[settings] setTickerHotkey failed:', e);
       error.value = `热键设置失败: ${e}`;
@@ -300,12 +346,19 @@ export const useSettingsStore = defineStore('settings', () => {
     const v = clampOpacity(value);
     try {
       await invoke('set_ticker_opacity', { opacity: v });
+      markSettingChanged('ticker_opacity');
       tickerOpacity.value = v;
       settings.value['ticker_opacity'] = String(v);
       await emit(SETTING_CHANGED_EVENT, { key: 'ticker_opacity', value: String(v) }).catch(() => {});
     } catch (e) {
       console.error('[settings] setTickerOpacity failed:', e);
       error.value = `透明度设置失败: ${e}`;
+      if (String(e).includes('透明度已保存')) {
+        // 原生窗口应用失败时后端已落盘，界面仍须显示实际保存的数值。
+        markSettingChanged('ticker_opacity');
+        tickerOpacity.value = v;
+        settings.value['ticker_opacity'] = String(v);
+      }
       return false;
     }
     return true;
@@ -332,6 +385,7 @@ export const useSettingsStore = defineStore('settings', () => {
     const v = clampInterval(secs);
     try {
       await invoke('set_refresh_interval', { secs: v });
+      markSettingChanged('refresh_interval');
       refreshInterval.value = v;
       settings.value['refresh_interval'] = String(v);
       await emit(SETTING_CHANGED_EVENT, { key: 'refresh_interval', value: String(v) }).catch(() => {});
@@ -424,14 +478,14 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   return {
-    settings, datasources, activeDatasource, theme, autoLaunch, isPortable,
+    settings, datasources, activeDatasource, theme, visualStyle, autoLaunch, isPortable,
     tickerHotkey, tickerOpacity, tickerSingleColor, tickerTextColor, tickerDisplayMode, tickerPageSize,
     quoteScheduleEnabled, alertsEnabled, newsNotificationsEnabled, notificationDesktopAlways,
     aiEnabled, aiMonitorEnabled, localHistoryEnabled, localHistoryUrl, localHistoryEngineDir,
     localHistoryEnginePath, localHistoryUpdaterPath, stockDbStatus,
     refreshInterval, marketSession, error,
     fetchSettings, setSetting, switchDatasource, toggleTheme, toggleAutoLaunch,
-    applyTheme, applyRemoteSetting, setTickerHotkey, setTickerOpacity,
+    applyTheme, applyVisualStyle, setVisualStyle, applyRemoteSetting, setTickerHotkey, setTickerOpacity,
     setTickerSingleColor, setTickerTextColor, setTickerDisplayMode, setTickerPageSize,
     setRefreshInterval, fetchMarketSession, effectiveInterval,
     fetchStockDbStatus, initStockDbListener, stopStockDbListener,

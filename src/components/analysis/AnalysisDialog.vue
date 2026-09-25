@@ -2,9 +2,10 @@
 // src/components/analysis/AnalysisDialog.vue
 // 个股技术分析对话框：展示多因子评分、结论与关键指标快照。
 
-import { computed, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { NModal, NTag, NSpin } from 'naive-ui';
 import { useAnalysisStore } from '@/stores/analysis';
+import { useSettingsStore } from '@/stores/settings';
 import { evaluateBacktest, tradeRuleFocus, tradeRuleLabel, verdictTone } from '@/types/analysis';
 import PriceLevelChart from '@/components/analysis/PriceLevelChart.vue';
 import AgentWorkbench from '@/components/analysis/AgentWorkbench.vue';
@@ -19,6 +20,43 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:show': [value: boolean] }>();
 
 const store = useAnalysisStore();
+const settings = useSettingsStore();
+const storeStyleWidth = computed(() => settings.visualStyle === 'classic' ? 760 : 900);
+const storeStyleHeight = computed(() => settings.visualStyle === 'classic' ? 120 : 110);
+const selectedTaskId = ref<string | null>(null);
+const liveQuestion = ref('');
+let taskTimer: ReturnType<typeof setInterval> | null = null;
+
+watch(() => [props.show, props.symbol, selectedTaskId.value] as const, ([visible, , taskId]) => {
+  if (taskTimer) { clearInterval(taskTimer); taskTimer = null; }
+  if (visible && taskId) {
+    void store.inspectInteractiveTask(taskId);
+    taskTimer = setInterval(() => void store.inspectInteractiveTask(taskId), 3000);
+  }
+});
+onBeforeUnmount(() => { if (taskTimer) clearInterval(taskTimer); });
+
+async function sendLiveQuestion() {
+  const question = liveQuestion.value.trim();
+  if (!question) return;
+  await store.askLiveAnalysis(question);
+  if (!store.liveError) liveQuestion.value = '';
+}
+
+function confirmDeleteInteractiveTask(taskId: string) {
+  const task = store.interactiveTasks.find(item => item.id === taskId);
+  if (!task) return;
+  const launched = task.state !== 'prepared';
+  const message = launched
+    ? task.live
+      ? '请先结束应用内会话。确认清理此任务目录中的文件？应用数据库内的分析快照不会删除。'
+      : '请先在 Claude Code 中结束该会话。确认会话已结束并清理此任务目录中的文件？应用数据库内的分析快照不会删除。'
+    : '确认清理此任务目录中的文件？应用数据库内的分析快照不会删除。';
+  if (window.confirm(message)) {
+    if (selectedTaskId.value === taskId) selectedTaskId.value = null;
+    void store.deleteInteractiveAnalysis(taskId, launched);
+  }
+}
 
 const visible = computed({
   get: () => props.show,
@@ -134,8 +172,8 @@ function rate(v: number): string {
     v-model:show="visible"
     preset="card"
     title="个股技术分析"
-    :style="{ width: 'min(760px, calc(100vw - 24px))' }"
-    :content-style="{ maxHeight: 'calc(100vh - 120px)', overflow: 'auto' }"
+    :style="{ width: `min(${storeStyleWidth}px, calc(100vw - 24px))` }"
+    :content-style="{ maxHeight: `calc(100dvh - ${storeStyleHeight}px)`, overflow: 'auto' }"
     :bordered="false"
     size="small"
   >
@@ -169,6 +207,52 @@ function rate(v: number): string {
           </div>
           <div class="agent-card">
             <AgentWorkbench v-if="store.analysis.agent_context_fingerprint" :fingerprint="store.analysis.agent_context_fingerprint" :busy="store.agentLoading || store.teamLoading" :installed="!!store.agentStatus?.installed" :visible="props.show" @ask="store.analyzeWithAgent($event)" />
+            <section class="live-agent" aria-label="应用内 Claude Code 会话">
+              <div class="interactive-intro"><b>应用内实时会话</b><span>这里显示 Claude Code 实际返回的文本与工具调用摘要；不会显示内部思维或工具内容。每轮预算最多 $0.20，账户额度另计。权限未获放行时请改用下方外部终端；文本回复不等于已校验的结构化分析。</span></div>
+              <button class="agent-btn" :disabled="!store.agentStatus?.installed || store.liveBusy || store.liveStatus?.running" @click="store.startLiveAnalysis">新建应用内会话</button>
+              <p v-if="store.liveError" class="error-line" role="alert">{{ store.liveError }}</p>
+              <template v-if="store.liveStatus">
+                <p class="muted">{{ store.liveStatus.running ? 'Claude Code 本轮正在运行' : '本轮未运行' }} · {{ store.liveStatus.can_resume ? '会话已由 CLI 确认' : '会话尚未确认' }}</p>
+                <div class="live-feed" role="log" aria-live="polite" aria-relevant="additions">
+                  <div v-for="event in store.liveStatus.events" :key="event.seq" :class="['live-line', event.kind]">{{ event.text }}</div>
+                </div>
+                <textarea v-model="liveQuestion" aria-label="向应用内 Claude Code 追问" placeholder="输入要追问的快照问题（最多 1000 字）" maxlength="1000" :disabled="store.liveStatus.running || store.liveBusy || !store.liveStatus.can_resume" />
+                <div class="live-actions">
+                  <button class="agent-btn" :disabled="!liveQuestion.trim() || store.liveStatus.running || store.liveBusy || !store.liveStatus.can_resume" @click="sendLiveQuestion">发送追问</button>
+                  <button v-if="store.liveStatus.running" class="link-btn" @click="store.cancelLiveAnalysis">中断本轮</button>
+                </div>
+              </template>
+            </section>
+            <div class="interactive-agent">
+              <div class="interactive-intro"><b>独立终端交互（兼容入口）</b><span>在独立终端查看过程、补充问题，完成后手动导入经校验的结果。此模式会保留本地分析快照供会话恢复；终端工具权限由 Claude Code 及你本人确认，不是独立沙箱。账户额度和模型配置仍由 Claude Code 管理。</span></div>
+              <button class="agent-btn" :disabled="!store.agentStatus?.installed || !store.analysis.agent_context_fingerprint || store.interactiveBusy" :title="store.agentStatus?.installed ? '启动可见的 Claude Code 交互会话' : store.agentStatus?.guidance" @click="store.startInteractiveAnalysis">
+                {{ store.interactiveBusy ? '处理中…' : '打开 Claude Code 终端' }}
+              </button>
+              <p v-if="store.interactiveNotice" class="muted" role="status">{{ store.interactiveNotice }}</p>
+              <p v-if="store.interactiveError" class="error-line" role="alert">{{ store.interactiveError }}</p>
+              <div v-if="store.historicalInteractiveResult" class="historical-result">
+                <b>历史快照分析 · {{ store.historicalInteractiveResult.generated_at }}</b>
+                <p>{{ store.historicalInteractiveResult.summary }}</p>
+                <small>仅用于回顾，不代表当前行情；请使用当前快照重新分析。</small>
+              </div>
+              <div v-for="task in store.interactiveTasks" :key="task.id" class="interactive-task">
+                <span><b>{{ task.symbol }}</b> · 数据 {{ task.as_of }} · {{ task.context_fingerprint === store.analysis?.agent_context_fingerprint ? '当前快照' : '历史快照' }} · {{ task.state === 'validated' ? '结果已校验' : task.live ? '应用内会话' : task.state === 'opened' ? '终端已请求打开，运行状态未知' : '任务文件已准备' }}</span>
+                <button class="link-btn" :aria-expanded="selectedTaskId === task.id" @click="selectedTaskId = selectedTaskId === task.id ? null : task.id">{{ selectedTaskId === task.id ? '收起状态' : '查看状态' }}</button>
+                <button v-if="task.live && task.context_fingerprint === store.analysis?.agent_context_fingerprint" class="link-btn" :disabled="store.liveBusy" @click="store.restoreLiveAnalysis(task.id)">查看应用内会话</button>
+                <button v-if="task.state !== 'prepared' && !task.live" class="link-btn" :disabled="store.interactiveBusy" @click="store.resumeInteractiveAnalysis(task.id)">终端继续</button>
+                <button class="link-btn" :disabled="store.interactiveBusy" @click="store.importInteractiveAnalysis(task.id)">导入结果</button>
+                <button class="link-btn" :disabled="store.interactiveBusy" @click="confirmDeleteInteractiveTask(task.id)">清理任务文件</button>
+                <div v-if="selectedTaskId === task.id" class="task-activity" role="status">
+                  <template v-if="store.interactiveActivities[task.id]">
+                    <span>{{ store.interactiveActivities[task.id].output_present ? '已检测到待导入文件（内容尚未校验）' : '尚未检测到可导入文件' }}</span>
+                    <span v-if="store.interactiveActivities[task.id].output_bytes !== null">{{ store.interactiveActivities[task.id].output_bytes }} 字节 · 修改于 {{ store.interactiveActivities[task.id].output_modified_at || '未知时间' }}</span>
+                    <span>上次检查：{{ store.interactiveActivities[task.id].last_checked_at }} · 无法从此处判断 Claude Code 是否仍在运行；完整对话请看终端。</span>
+                  </template>
+                  <span v-else>正在读取任务文件状态…</span>
+                </div>
+                <small>任务目录：{{ task.directory }}。任务文件会保留到你主动清理；{{ task.live ? '应用内会话的消息只在本次运行的应用进程内保存，重启后可继续提问，但历史消息不会恢复。' : '如果终端未启动，可在该目录手动运行 Claude Code。' }}清理任务文件不会删除应用数据库中的分析快照。</small>
+              </div>
+            </div>
             <div class="agent-actions">
               <button
                 class="agent-btn"
@@ -499,7 +583,8 @@ function rate(v: number): string {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  padding: var(--space-3);
+  padding: var(--panel-padding);
+  border: 1px solid var(--color-border-0);
   border-radius: var(--radius-md);
   background: var(--color-bg-card);
 }
@@ -750,8 +835,39 @@ function rate(v: number): string {
 .bt-note {
   line-height: 1.6;
 }
-.agent-card { border: 1px solid var(--color-border-0); border-radius: var(--radius-sm); padding: 10px; }
-.agent-actions { display: flex; align-items: center; gap: 10px; }
+.agent-card { display: flex; flex-direction: column; gap: var(--space-3); border: 1px solid var(--color-border-0); border-radius: var(--radius-md); padding: var(--panel-padding); background: var(--color-surface-1); }
+.interactive-agent { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding: var(--panel-padding); border: 1px solid var(--color-border-0); border-radius: var(--radius-md); background: var(--color-surface-2); }
+.live-agent { display: grid; gap: var(--space-2); min-width: 0; padding: var(--panel-padding); border: 1px solid var(--color-border-0); border-radius: var(--radius-md); background: var(--color-surface-1); }
+.live-agent > .agent-btn { justify-self: start; }
+.live-feed { min-height: 80px; max-height: 260px; overflow: auto; padding: var(--space-2); background: var(--color-surface-0); font-size: var(--text-xs); line-height: 1.6; }
+.live-line { white-space: pre-wrap; overflow-wrap: anywhere; }
+.live-line + .live-line:not(.text_delta) { margin-top: var(--space-2); }
+.live-line.user { color: var(--color-accent); }
+.live-line.tool { color: var(--color-text-tertiary); }
+.live-line.error { color: var(--color-error); }
+.live-agent textarea { width: 100%; min-height: 64px; padding: var(--space-2); border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); background: var(--color-surface-0); color: var(--color-text-primary); resize: vertical; }
+.live-actions { display: flex; gap: var(--space-2); align-items: center; }
+:global([data-style="classic"]) .score-hero { border: 0; padding: var(--space-3); }
+:global([data-style="classic"]) .agent-card { display: block; border-radius: var(--radius-sm); padding: 10px; background: transparent; }
+:global([data-style="classic"]) .interactive-agent { gap: 8px; margin: 10px 0; padding: 12px; border-radius: var(--radius-sm); background: var(--color-bg-2); }
+.interactive-intro { display: flex; flex-direction: column; gap: 4px; color: var(--color-text-secondary); font-size: var(--text-xs); line-height: 1.6; }
+.interactive-intro b { color: var(--color-text-primary); font-size: var(--text-sm); }
+.historical-result { padding: 10px; border-left: 2px solid var(--color-warning); background: var(--color-bg-card); color: var(--color-text-secondary); font-size: var(--text-xs); }
+.historical-result p { margin: 6px 0; white-space: pre-wrap; }
+.historical-result small { color: var(--color-warning); }
+.interactive-task { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; width: 100%; padding-top: 8px; border-top: 1px solid var(--color-border-0); font-size: var(--text-xs); }
+.interactive-task span { flex: 1; min-width: 160px; }
+.task-activity { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 8px; border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-secondary); }
+.task-activity span { min-width: 0; overflow-wrap: anywhere; }
+.interactive-task small { width: 100%; overflow-wrap: anywhere; color: var(--color-text-tertiary); }
+.agent-actions { display: flex; align-items: center; gap: var(--space-2); }
+:global([data-style="trading"]) .agent-actions,
+:global([data-style="modern"]) .agent-actions { flex-wrap: wrap; }
+@media (max-width: 620px) {
+  .score-num { font-size: 36px; }
+  .interactive-task span { min-width: 100%; }
+  .agent-card { padding: var(--space-2); }
+}
 .agent-btn { border: 0; border-radius: var(--radius-sm); padding: 7px 12px; background: var(--color-accent); color: white; cursor: pointer; }
 .agent-btn:disabled { opacity: .45; cursor: not-allowed; }
 .agent-unavailable, .agent-invalid { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; color: var(--color-text-secondary); font-size: var(--text-xs); }

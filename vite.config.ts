@@ -50,6 +50,19 @@ export default defineConfig(async () => ({
         toast: fileURLToPath(new URL("./toast.html", import.meta.url)),
         tickerQuick: fileURLToPath(new URL("./ticker-quick.html", import.meta.url)),
       },
+      output: {
+        manualChunks(id) {
+          // Keep the chart engine separate from the shared window entries.
+          if (id.includes("/node_modules/klinecharts/")) return "klinecharts";
+          // This is the largest UI subtree. Let Rollup keep its dependencies
+          // together rather than forcing cycles between Naive UI components.
+          if (id.includes("/node_modules/naive-ui/es/data-table/")) return "naive-data-table";
+          // The four windows share the Vue runtime; utility libraries can be
+          // cached independently of the application code.
+          if (id.includes("/node_modules/vue/") || id.includes("/node_modules/@vue/") || id.includes("/node_modules/pinia/")) return "vue-runtime";
+          if (id.includes("/node_modules/lodash-es/") || id.includes("/node_modules/date-fns/")) return "vendor-utils";
+        },
+      },
     },
   },
 }));

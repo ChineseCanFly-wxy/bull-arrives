@@ -48,6 +48,9 @@
   /* ── Brand / Accent ── */
   --color-accent: #58a6ff;
   --color-accent-dim: rgba(88, 166, 255, 0.12);
+  --color-accent-contrast: #0d1117;
+  --color-surface-hover: #222c3b;
+  --color-focus-ring: #79b8ff;
 
   /* ── Typography ── */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
@@ -91,6 +94,10 @@
   /* ── Layout Tokens ── */
   --header-height: 40px;
   --index-bar-height: 84px;
+  --control-height: 28px;
+  --table-row-height: 36px;
+  --workspace-gutter: 16px;
+  --panel-padding: 12px;
 
   /* ── Z-Index Scale ── */
   --z-base: 0;
@@ -140,12 +147,106 @@
 
   --color-accent: #0969da;
   --color-accent-dim: rgba(9, 105, 218, 0.08);
+  --color-accent-contrast: #ffffff;
+  --color-surface-hover: #e7eef8;
+  --color-focus-ring: #0969da;
 
   --color-bg-elevated: rgba(0, 0, 0, 0.04);
   --color-bg-card: rgba(0, 0, 0, 0.04);
 
   --shadow-sm: 0 1px 3px rgba(31,35,40,0.08);
   --shadow-md: 0 4px 16px rgba(31,35,40,0.10);
+}
+
+/* Classic preserves the original palette and density. Brightness remains
+   independent from the two new visual styles. */
+[data-style="trading"] {
+  --color-surface-0: #0b1420;
+  --color-surface-1: #111f2d;
+  --color-surface-2: #1b2e40;
+  --color-surface-3: #283b4c;
+  --color-border-0: #254051;
+  --color-border-1: #345469;
+  --color-text-primary: #f1f6fa;
+  --color-text-secondary: #a8c3d1;
+  --color-text-tertiary: #85a2b4;
+  --color-accent: #6dd2e0;
+  --color-accent-dim: rgba(109, 210, 224, 0.13);
+  --color-accent-contrast: #0b1420;
+  --color-focus-ring: #a6eff3;
+  --color-surface-hover: #243b4c;
+  --header-height: 46px;
+  --control-height: 30px;
+  --table-row-height: 38px;
+}
+
+[data-theme="light"][data-style="trading"] {
+  --color-surface-0: #f1f5f7;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #e4edf2;
+  --color-surface-3: #d7e5eb;
+  --color-border-0: #c9d9df;
+  --color-border-1: #a8c1ca;
+  --color-text-primary: #162c36;
+  --color-text-secondary: #435e6c;
+  --color-text-tertiary: #5e7582;
+  --color-accent: #086f80;
+  --color-accent-dim: rgba(8, 111, 128, 0.11);
+  --color-accent-contrast: #ffffff;
+  --color-focus-ring: #086f80;
+  --color-surface-hover: #dcecf0;
+}
+
+[data-style="modern"] {
+  --space-3: 14px;
+  --space-4: 20px;
+  --radius-sm: 7px;
+  --radius-md: 11px;
+  --radius-lg: 16px;
+  --header-height: 54px;
+  --index-bar-height: 98px;
+  --control-height: 34px;
+  --table-row-height: 44px;
+  --workspace-gutter: 20px;
+  --panel-padding: 20px;
+  --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+[data-theme="dark"][data-style="modern"] {
+  --color-surface-0: #101823;
+  --color-surface-1: #192536;
+  --color-surface-2: #233348;
+  --color-surface-3: #304259;
+  --color-border-0: #314159;
+  --color-border-1: #475a72;
+  --color-text-primary: #f0f5fc;
+  --color-text-secondary: #b5c6da;
+  --color-text-tertiary: #91a5bf;
+  --color-accent: #81bcff;
+  --color-accent-dim: rgba(129, 188, 255, 0.16);
+  --color-focus-ring: #acd4ff;
+  --color-surface-hover: #2b3d54;
+  --color-bg-elevated: rgba(255, 255, 255, 0.06);
+  --color-bg-card: rgba(255, 255, 255, 0.07);
+}
+
+[data-theme="light"][data-style="modern"] {
+  --color-surface-0: #f3f6fb;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #eaf0f8;
+  --color-surface-3: #dde7f2;
+  --color-border-0: #d8e1ed;
+  --color-border-1: #bdccde;
+  --color-text-primary: #152337;
+  --color-text-secondary: #455b74;
+  --color-text-tertiary: #62758d;
+  --color-accent: #1659b7;
+  --color-accent-dim: rgba(22, 89, 183, 0.10);
+  --color-focus-ring: #1659b7;
+  --color-surface-hover: #e2ebf8;
+  --color-bg-elevated: rgba(22, 89, 183, 0.04);
+  --color-bg-card: rgba(22, 89, 183, 0.04);
+  --shadow-md: 0 12px 32px rgba(38, 61, 87, 0.12);
 }
 
 /* ================================================================
@@ -167,6 +268,21 @@ body {
   overflow: hidden;
   margin: 0;
   padding: 0;
+}
+
+:is([data-style="trading"], [data-style="modern"]) :where(button, [role="button"], [role="tab"], input, select, textarea):focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is([data-style="trading"], [data-style="modern"]) *,
+  :is([data-style="trading"], [data-style="modern"]) *::before,
+  :is([data-style="trading"], [data-style="modern"]) *::after {
+    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Tabular numbers for financial columns */

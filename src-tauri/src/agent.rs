@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+pub mod interactive;
+pub mod live;
 pub mod workbench;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 90;
@@ -98,8 +100,6 @@ const CLAUDE_ARGS: &[&str] = &[
     "--no-session-persistence",
     "--append-system-prompt-file",
     "workflow.md",
-    "--max-budget-usd",
-    "0.20",
     "-p",
     PROMPT,
 ];
@@ -927,7 +927,7 @@ fn has_short_component(path: &Path) -> bool {
 }
 
 /// 只有 Windows 才有 8.3 短名；其它平台含 `~` 的目录名是普通名字。
-fn short_name_risk(path: &Path) -> bool {
+pub(super) fn short_name_risk(path: &Path) -> bool {
     cfg!(windows) && has_short_component(path)
 }
 
@@ -944,7 +944,7 @@ fn strip_verbatim(path: PathBuf) -> PathBuf {
 }
 
 /// 把路径解析成不含 8.3 短名的长名写法；解析失败时原样返回，交给调用方判断。
-fn long_path(path: &Path) -> PathBuf {
+pub(super) fn long_path(path: &Path) -> PathBuf {
     match std::fs::canonicalize(path) {
         Ok(resolved) => strip_verbatim(resolved),
         Err(_) => path.to_path_buf(),
@@ -1124,6 +1124,13 @@ pub fn launcher_exit_code() -> Option<i32> {
     let Some(path) = args.next() else {
         return Some(2);
     };
+    let budget = args.next().and_then(|value| value.into_string().ok()).filter(|value| valid_budget(value)).unwrap_or_else(|| "0.20".into());
+    let live_session = if args.next().as_deref() == Some(std::ffi::OsStr::new("--live")) {
+        let Some(id) = args.next().and_then(|value| value.into_string().ok()).and_then(|value| uuid::Uuid::parse_str(&value).ok()) else { return Some(2); };
+        Some((id, args.next().as_deref() == Some(std::ffi::OsStr::new("--resume"))))
+    } else {
+        None
+    };
     let Ok(dir) = std::env::current_dir() else {
         return Some(2);
     };
@@ -1135,11 +1142,25 @@ pub fn launcher_exit_code() -> Option<i32> {
         std::thread::sleep(Duration::from_millis(10));
     }
     let mut command = Command::new(path);
-    command
-        .args(CLAUDE_ARGS)
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+    if let Some((id, resume)) = live_session {
+        let Ok(prompt) = std::fs::read_to_string(dir.join("live-prompt.txt")) else { return Some(2); };
+        if prompt.len() > 4000 { return Some(2); }
+        command.args([
+            "--restricted", "--strict-mcp-config", "--mcp-config", "empty-mcp.json",
+            "--disable-slash-commands", "--no-chrome", "--permission-mode", "dontAsk",
+            "--permission-prompts", "none", "--tools", "Read,Write,Edit",
+            "--allowedTools", "Read(input.json),Read(schema.json),Read(workflow.md),Write(response.json),Edit(response.json)",
+            "--output-format", "stream-json", "--include-partial-messages", "--verbose", "--max-budget-usd", &budget,
+        ]);
+        if resume { command.args(["--resume", &id.to_string()]); }
+        else { command.args(["--session-id", &id.to_string()]); }
+        command.args(["-p", &prompt]);
+    } else {
+        command
+            .args(&CLAUDE_ARGS[..CLAUDE_ARGS.len() - 2])
+            .args(["--max-budget-usd", &budget, "-p", PROMPT]);
+    }
+    command.stdin(Stdio::null()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
     hide_window(&mut command);
     Some(
         command
@@ -1281,6 +1302,18 @@ fn collect_diagnostics(mut stream: impl Read + Send + 'static) -> std::thread::J
     })
 }
 
+fn valid_budget(value: &str) -> bool {
+    value.parse::<f64>().is_ok_and(|budget| budget.is_finite() && (0.05..=10.0).contains(&budget))
+}
+
+fn agent_budget(db: &Database) -> String {
+    db.get_setting("agent_budget_usd")
+        .ok()
+        .flatten()
+        .filter(|value| valid_budget(value))
+        .unwrap_or_else(|| "0.20".into())
+}
+
 fn diagnostic_hint(output: &str) -> &'static str {
     let text = output.to_ascii_lowercase();
     if ["unknown option", "unknown argument", "unrecognized option"]
@@ -1299,11 +1332,16 @@ fn diagnostic_hint(output: &str) -> &'static str {
     .any(|s| text.contains(s))
     {
         "Claude Code 登录或认证失败，请先在终端确认 claude 可正常使用"
+    } else if ["quota exceeded", "usage limit", "insufficient credits", "credit balance", "billing limit"]
+        .iter()
+        .any(|s| text.contains(s))
+    {
+        "Claude Code 账户额度或余额不足；应用内预算与账户额度是两种不同限制，请查看 Claude Code 的实际提示"
     } else if ["max_budget", "budget", "spending cap"]
         .iter()
         .any(|s| text.contains(s))
     {
-        "本次调用达到预算上限（0.20 美元），请检查 Claude Code 默认模型及服务商计费配置"
+        "本次调用达到应用设置的单次预算上限；可在设置 → 智能中查看或调整，账户额度仍由服务商管理"
     } else if ["rate limit", "rate_limit", "429", "overloaded"]
         .iter()
         .any(|s| text.contains(s))
@@ -1343,7 +1381,7 @@ fn diagnostic_hint(output: &str) -> &'static str {
     }
 }
 
-fn run_process(path: &Path, dir: &Path, timeout: Duration, run_id: u64) -> Result<(), String> {
+fn run_process(path: &Path, dir: &Path, timeout: Duration, run_id: u64, budget: &str) -> Result<(), String> {
     if CANCEL_RUN.load(Ordering::SeqCst) == run_id {
         return Err("Claude Code 分析已中止".into());
     }
@@ -1360,9 +1398,11 @@ fn run_process(path: &Path, dir: &Path, timeout: Duration, run_id: u64) -> Resul
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if use_launcher {
-        command.arg(LAUNCHER_ARG).arg(path);
+        command.arg(LAUNCHER_ARG).arg(path).arg(budget);
     } else {
-        command.args(CLAUDE_ARGS);
+        command
+            .args(&CLAUDE_ARGS[..CLAUDE_ARGS.len() - 2])
+            .args(["--max-budget-usd", budget, "-p", PROMPT]);
     }
     minimal_environment(&mut command);
     hide_window(&mut command);
@@ -1498,6 +1538,7 @@ async fn run_structured(
         input_json,
         schema,
     )?;
+    let budget = agent_budget(db);
     let timeout = db
         .get_setting("agent_timeout_seconds")
         .ok()
@@ -1524,6 +1565,7 @@ async fn run_structured(
         schema,
         workbench::workflow(task, role),
         timeout,
+        budget,
     )
     .await;
     workbench::clear_live();
@@ -1543,6 +1585,7 @@ async fn execute_structured(
     schema: &str,
     workflow: &str,
     timeout: u64,
+    budget: String,
 ) -> Result<(String, String), String> {
     let run_id = NEXT_RUN.fetch_add(1, Ordering::SeqCst);
     CANCEL_RUN.store(0, Ordering::SeqCst);
@@ -1559,7 +1602,7 @@ async fn execute_structured(
     let run_dir = dir.path().to_path_buf();
     tokio::task::spawn_blocking(move || {
         let _run_guard = run_guard;
-        run_process(&path, &run_dir, Duration::from_secs(timeout), run_id)
+        run_process(&path, &run_dir, Duration::from_secs(timeout), run_id, &budget)
     })
     .await
     .map_err(|error| format!("Agent 任务异常：{error}"))??;
@@ -2223,7 +2266,7 @@ mod tests {
         assert!(native_install_candidates(home).contains(&home.join(".local/bin/claude.exe")));
     }
 
-    fn frozen() -> FrozenInput {
+    pub(super) fn frozen() -> FrozenInput {
         let analysis = crate::quant::scorer::analyze(
             &(0..80)
                 .map(|i| crate::domain::KLineData {
@@ -2364,6 +2407,20 @@ mod tests {
         )
         .is_err());
         assert!(parse_team_output(valid, "other", "technical", 1, &input, false).is_err());
+    }
+
+    #[test]
+    fn agent_budget_is_bounded_and_configurable() {
+        let dir = RunDir::create("budget-regression").unwrap();
+        let db = Database::open(dir.path().to_path_buf()).unwrap();
+        assert_eq!(agent_budget(&db), "0.20");
+        db.set_setting("agent_budget_usd", "1.25").unwrap();
+        assert_eq!(agent_budget(&db), "1.25");
+        for invalid in ["NaN", "inf", "-1", "0", "100", "not-a-number"] {
+            assert!(!valid_budget(invalid));
+        }
+        db.set_setting("agent_budget_usd", "NaN").unwrap();
+        assert_eq!(agent_budget(&db), "0.20");
     }
 
     #[test]

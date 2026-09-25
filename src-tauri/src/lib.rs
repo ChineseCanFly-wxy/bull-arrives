@@ -353,9 +353,13 @@ pub fn run() {
             ])
             .expect("Failed to initialize logger");
             log::info!("Bull Arrives v{} starting", env!("CARGO_PKG_VERSION"));
+            log::info!("Executable: {:?}", std::env::current_exe());
             log::info!("Data directory: {:?} (portable: {})", app_dir, is_portable);
+            log::info!("Settings database: {:?}", app_dir.join("bull-arrives.db"));
 
-            let db = Arc::new(Database::open(app_dir).expect("Failed to open database"));
+            let db = Arc::new(Database::open(app_dir.clone()).expect("Failed to open database"));
+            let interactive_root = crate::agent::long_path(&app_dir).join("agent-interactive");
+            app.manage(crate::agent::interactive::InteractiveRoot(interactive_root));
             log::info!("Database opened successfully");
 
             // Initialize data source manager (Sina registered first as default)
@@ -576,6 +580,9 @@ pub fn run() {
                                     return;
                                 }
                                 stockdb.shutdown();
+                                crate::agent::live::cancel_all();
+                                let polling = app.state::<Arc<cache::PollingConfig>>().inner().clone();
+                                polling.request_shutdown();
                                 if let Some(w) = app.get_webview_window("main") {
                                     let _ = w.close();
                                 }
@@ -584,7 +591,9 @@ pub fn run() {
                                 }
                                 let handle = app.clone();
                                 tauri::async_runtime::spawn(async move {
-                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                    if tokio::time::timeout(std::time::Duration::from_secs(8), polling.wait_stopped()).await.is_err() {
+                                        log::warn!("行情调度停止等待超时；退出时缓存可能尚未落盘");
+                                    }
                                     handle.exit(0);
                                 });
                             }
@@ -994,6 +1003,16 @@ pub fn run() {
             commands::agent::test_agent_connection,
             commands::agent::analyze_stock_agent,
             commands::agent::analyze_stock_team,
+            commands::agent::start_interactive_analysis,
+            commands::agent::start_live_analysis,
+            commands::agent::ask_live_analysis,
+            commands::agent::get_live_analysis,
+            commands::agent::cancel_live_analysis,
+            commands::agent::list_interactive_analyses,
+            commands::agent::resume_interactive_analysis,
+            commands::agent::import_interactive_analysis,
+            commands::agent::delete_interactive_analysis,
+            commands::agent::inspect_interactive_analysis,
             commands::agent::get_prediction_calibration,
             commands::agent::cancel_agent_analysis,
             commands::rank::scan_and_rank,
@@ -1041,6 +1060,7 @@ pub fn run() {
             commands::settings::switch_datasource,
             commands::settings::list_datasources,
             commands::settings::get_portable_mode,
+            commands::settings::get_data_paths,
             commands::settings::set_refresh_interval,
             commands::settings::get_market_session,
             commands::settings::get_build_info,
@@ -1082,6 +1102,8 @@ pub fn run() {
                 app_handle
                     .state::<Arc<stockdb::StockDbManager>>()
                     .shutdown();
+                crate::agent::live::cancel_all();
+                app_handle.state::<Arc<cache::PollingConfig>>().request_shutdown();
             }
 
             #[cfg(target_os = "macos")]

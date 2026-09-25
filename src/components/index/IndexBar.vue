@@ -75,13 +75,14 @@ defineExpose({
 .index-bar {
   display: flex;
   flex-wrap: nowrap;
-  justify-content: center;
+  justify-content: flex-start;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--workspace-gutter);
   background: var(--color-surface-0);
   overflow-x: auto;
 }
 
+:global([data-style="classic"]) .index-bar { justify-content: center; padding-inline: var(--space-4); }
 .index-placeholder {
   display: flex;
   align-items: center;

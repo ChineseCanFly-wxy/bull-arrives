@@ -4,6 +4,8 @@ import { invoke } from '@tauri-apps/api/core';
 import App from './App.vue';
 import './assets/styles/variables.css';
 import './assets/styles/dark.css';
+import './assets/chart-switcher.css';
+import './assets/workspace.css';
 
 // 前端构建指纹（vite define 注入）。用于确认 WebView 加载的确实是最新构建。
 declare const __BULL_FRONTEND_BUILD__: string;

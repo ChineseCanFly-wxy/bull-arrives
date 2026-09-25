@@ -344,6 +344,9 @@ struct FetchOutcome {
 pub struct PollingConfig {
     interval_secs: AtomicU64,
     changed: Notify,
+    shutting_down: AtomicBool,
+    stopped: AtomicBool,
+    stopped_notify: Notify,
 }
 
 impl PollingConfig {
@@ -351,6 +354,9 @@ impl PollingConfig {
         Self {
             interval_secs: AtomicU64::new(interval_secs),
             changed: Notify::new(),
+            shutting_down: AtomicBool::new(false),
+            stopped: AtomicBool::new(false),
+            stopped_notify: Notify::new(),
         }
     }
 
@@ -362,6 +368,20 @@ impl PollingConfig {
     pub fn set_interval_secs(&self, secs: u64) {
         self.interval_secs.store(secs, Ordering::Relaxed);
         self.changed.notify_one();
+    }
+
+    /// Finish an in-flight fetch (including its awaited cache writes), then stop polling.
+    pub fn request_shutdown(&self) {
+        self.shutting_down.store(true, Ordering::Release);
+        self.changed.notify_one();
+    }
+
+    pub async fn wait_stopped(&self) {
+        loop {
+            let notified = self.stopped_notify.notified();
+            if self.stopped.load(Ordering::Acquire) { return; }
+            notified.await;
+        }
     }
 
     /// Resolve the effective interval for a session, honouring auto mode.
@@ -395,6 +415,7 @@ impl Scheduler {
             let fetching = Arc::new(AtomicBool::new(false));
 
             loop {
+                if config.shutting_down.load(Ordering::Acquire) { break; }
                 // ── Session transition handling ──
                 let session = MarketSession::current();
                 if session != last_session {
@@ -432,6 +453,7 @@ impl Scheduler {
                 let outcome =
                     Self::fetch_once(&data_manager, &cache, &db, &app_handle, &fetching, false)
                         .await;
+                if config.shutting_down.load(Ordering::Acquire) { break; }
 
                 // ── Adaptive interval ──
                 // Adaptive polling (probe → normal → idle) is only used during
@@ -470,6 +492,8 @@ impl Scheduler {
                     }
                 }
             }
+            config.stopped.store(true, Ordering::Release);
+            config.stopped_notify.notify_waiters();
         });
     }
 
@@ -571,12 +595,17 @@ impl Scheduler {
                         }
                         let cache_for_persist = cache.clone();
                         let quotes_for_db = quotes.to_vec();
+                        let persist_started = std::time::Instant::now();
                         if let Err(error) = tokio::task::spawn_blocking(move || {
                             cache_for_persist.persist_quotes(&quotes_for_db);
                         })
                         .await
                         {
                             log::warn!("行情缓存落盘任务失败: {}", error);
+                        }
+                        let persist_ms = persist_started.elapsed().as_millis();
+                        if persist_ms >= 250 {
+                            log::info!("[cache] quote persistence delayed next fetch by {persist_ms} ms");
                         }
 
                         // Compare: did any price actually change?

@@ -51,16 +51,18 @@ const isUp = computed(() => props.index.change_pct >= 0);
   background: var(--color-surface-1);
   border: 1px solid var(--color-border-0);
   border-radius: var(--radius-md);
-  padding: var(--space-3);
-  flex: 1;
-  min-width: 0;
-  height: 68px;
+  padding: var(--space-2) var(--space-3);
+  flex: 1 0 144px;
+  min-width: 144px;
+  height: calc(var(--index-bar-height) - 16px);
+  max-width: 260px;
   flex-shrink: 0;
   cursor: pointer;
   /* Only transition border/shadow on selection; background transitions on hover
      are handled separately to avoid visual pulse when up/down state flips */
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
+:global([data-style="classic"]) .index-card { flex: 1 0 0; min-width: 0; max-width: none; padding: var(--space-3); }
 .index-card:hover {
   background: var(--color-bg-elevated, rgba(255,255,255,0.04));
   border-color: var(--color-border, rgba(255,255,255,0.12));

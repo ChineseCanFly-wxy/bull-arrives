@@ -42,28 +42,43 @@ onErrorCaptured((err, instance, info) => {
   return false;
 });
 
-// Naive UI primary color overrides — match our CSS --color-accent per theme
+// Match Naive UI controls to the selected brightness and visual style.
 const themeOverrides = computed<GlobalThemeOverrides>(() => {
   const isDark = settings.theme === 'dark';
+  const isModern = settings.visualStyle === 'modern';
+  const isTrading = settings.visualStyle === 'trading';
+  const accent = isModern ? (isDark ? '#81bcff' : '#1659b7')
+    : isTrading ? (isDark ? '#6dd2e0' : '#086f80')
+    : (isDark ? '#58a6ff' : '#0969da');
+  const border = isModern ? (isDark ? '#314159' : '#d8e1ed')
+    : isTrading ? (isDark ? '#254051' : '#c9d9df')
+    : (isDark ? '#1e293b' : '#d0d7de');
+  const hover = isModern ? (isDark ? '#acd4ff' : '#3276cf')
+    : isTrading ? (isDark ? '#a6eff3' : '#138296')
+    : (isDark ? '#79b8ff' : '#2180e0');
+  const pressed = isModern ? (isDark ? '#388bfd' : '#104890')
+    : isTrading ? (isDark ? '#40b1c1' : '#055264')
+    : (isDark ? '#388bfd' : '#085bb8');
   return {
     common: {
-      primaryColor: isDark ? '#58a6ff' : '#0969da',
-      primaryColorHover: isDark ? '#79b8ff' : '#2180e0',
-      primaryColorPressed: isDark ? '#388bfd' : '#085bb8',
-      primaryColorSuppl: isDark ? '#58a6ff' : '#0969da',
-      infoColor: isDark ? '#58a6ff' : '#0969da',
-      infoColorHover: isDark ? '#79b8ff' : '#2180e0',
-      infoColorPressed: isDark ? '#388bfd' : '#085bb8',
-      infoColorSuppl: isDark ? '#58a6ff' : '#0969da',
-      borderColor: isDark ? '#1e293b' : '#d0d7de',
-      dividerColor: isDark ? '#1e293b' : '#d0d7de',
+      primaryColor: accent,
+      primaryColorHover: hover,
+      primaryColorPressed: pressed,
+      primaryColorSuppl: accent,
+      infoColor: accent,
+      infoColorHover: hover,
+      infoColorPressed: pressed,
+      infoColorSuppl: accent,
+      borderColor: border,
+      dividerColor: border,
+      borderRadius: isModern ? '11px' : isTrading ? '4px' : '6px',
     },
   };
 });
 
 onMounted(async () => {
   try {
-    await settings.fetchSettings();
+    if (!await settings.fetchSettings()) throw new Error(settings.error || '加载设置失败');
     await settings.initStockDbListener();
     settings.applyTheme(settings.theme);
     await watchlist.fetchWatchlist();

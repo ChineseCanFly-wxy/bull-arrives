@@ -1,0 +1,26 @@
+/* Shared chrome for the two new styles; the original UI remains unchanged. */
+:is([data-style="trading"], [data-style="modern"]) .n-modal.n-card,
+:is([data-style="trading"], [data-style="modern"]) .n-modal.n-dialog {
+  border: 1px solid var(--color-border-0);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  max-height: calc(100dvh - 20px);
+}
+
+:is([data-style="trading"], [data-style="modern"]) .n-modal.n-card .n-card-header,
+:is([data-style="trading"], [data-style="modern"]) .n-modal.n-dialog .n-dialog__title {
+  color: var(--color-text-primary);
+}
+
+:is([data-style="trading"], [data-style="modern"]) .n-modal.n-card .n-card__content,
+:is([data-style="trading"], [data-style="modern"]) .n-modal.n-dialog .n-dialog__content {
+  min-width: 0;
+}
+
+:is([data-style="trading"], [data-style="modern"]) .n-modal.n-card .n-card__footer {
+  border-top: 1px solid var(--color-border-0);
+}
+
+@media (max-width: 680px) {
+  :is([data-style="trading"], [data-style="modern"]) .n-modal.n-card .n-card__content { padding-inline: var(--space-3); }
+}

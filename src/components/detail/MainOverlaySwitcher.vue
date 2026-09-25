@@ -30,36 +30,3 @@ const overlays: { key: MainOverlayType; label: string }[] = [
     </button>
   </div>
 </template>
-
-<style scoped>
-.main-overlay-switcher {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius-md);
-  background: var(--color-surface-2);
-}
-
-.switcher-tab {
-  padding: 3px 12px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-tertiary);
-  font-size: var(--text-xs);
-  font-family: var(--font-sans);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  line-height: 1.4;
-}
-
-.switcher-tab:hover {
-  color: var(--color-text-secondary);
-}
-
-.switcher-tab.active {
-  background: var(--color-accent-dim);
-  color: var(--color-accent);
-  font-weight: var(--font-weight-medium);
-}
-</style>

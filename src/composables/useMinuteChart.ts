@@ -19,7 +19,8 @@ export function useMinuteChart(options: {
   const { chart, loading, error, periodToKlinecharts, syncPrecision, initChartCore, disposeChart: coreDispose, reapplyStyles } = useChartCore(options);
 
   let abortController: AbortController | null = null;
-  let refreshTimer: ReturnType<typeof setInterval> | null = null;
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let refreshGeneration = 0;
 
   /** subscribeBar 回调引用，增量推送数据到图表避免全量重绘导致的抖动 */
   let barSubscriber: ((bar: KCLineData) => void) | null = null;
@@ -74,15 +75,20 @@ export function useMinuteChart(options: {
 
   function startAutoRefresh() {
     stopAutoRefresh();
+    const generation = refreshGeneration;
+    const code = unref(options.code);
+    const market = unref(options.market);
+    let retryDelay = 5000;
 
-    // 分时图增量刷新：通过 barSubscriber 推送增量 bar 避免全量重绘闪烁
-    refreshTimer = setInterval(async () => {
-      if (loading.value) return;
+    // 等当前请求结束后才安排下一次，切换股票时丢弃旧请求结果。
+    const refresh = async () => {
+      if (generation !== refreshGeneration || loading.value) {
+        if (generation === refreshGeneration) refreshTimer = setTimeout(() => void refresh(), 5000);
+        return;
+      }
       try {
-        const data = await invoke<MinuteData[]>('get_intraday', {
-          code: unref(options.code),
-          market: unref(options.market),
-        });
+        const data = await invoke<MinuteData[]>('get_intraday', { code, market });
+        if (generation !== refreshGeneration) return;
         const allBars = mapMinuteToChart(data);
         if (allBars.length > 0) {
           const now = Date.now();
@@ -95,15 +101,22 @@ export function useMinuteChart(options: {
             chart.value.setDataLoader(dataLoader);
           }
         }
+        retryDelay = 5000;
       } catch (e) {
+        if (generation !== refreshGeneration) return;
         console.error('[useMinuteChart] incremental update failed:', e);
+        retryDelay = Math.min(retryDelay * 2, 30000);
+      } finally {
+        if (generation === refreshGeneration) refreshTimer = setTimeout(() => void refresh(), retryDelay);
       }
-    }, 5000);
+    };
+    refreshTimer = setTimeout(() => void refresh(), retryDelay);
   }
 
   function stopAutoRefresh() {
+    refreshGeneration++;
     if (refreshTimer !== null) {
-      clearInterval(refreshTimer);
+      clearTimeout(refreshTimer);
       refreshTimer = null;
     }
   }
@@ -111,6 +124,7 @@ export function useMinuteChart(options: {
   // ---- 数据加载 ----
 
   async function loadData() {
+    stopAutoRefresh();
     if (abortController) {
       abortController.abort();
     }

@@ -7,6 +7,7 @@
 
 use chrono::{DateTime, FixedOffset};
 use serde::Serialize;
+use std::collections::HashMap;
 
 use crate::db::monitors::Monitor;
 use crate::db::Database;
@@ -99,6 +100,7 @@ pub fn evaluate_monitors<F>(
     }
 
     let global_enabled = setting_flag(db, "alerts_enabled", true);
+    if !global_enabled { return; }
     let monitors = match db.get_monitors() {
         Ok(monitors) => monitors,
         Err(error) => {
@@ -107,15 +109,17 @@ pub fn evaluate_monitors<F>(
         }
     };
 
+    // 保留重复行情的首次命中语义，与原先逐项 find 一致。
+    let mut quote_index = HashMap::with_capacity(quotes.len());
+    for quote in quotes {
+        quote_index.entry((quote.market.as_str(), quote.code.as_str())).or_insert(quote);
+    }
     let now_rfc3339 = now.to_rfc3339();
     for monitor in monitors {
-        if !monitor.enabled || !global_enabled {
+        if !monitor.enabled {
             continue;
         }
-        let Some(quote) = quotes
-            .iter()
-            .find(|quote| quote.code == monitor.code && quote.market == monitor.market)
-        else {
+        let Some(quote) = quote_index.get(&(monitor.market.as_str(), monitor.code.as_str())) else {
             continue;
         };
         if !crate::alerts::is_fresh_trading_quote(quote, now) {

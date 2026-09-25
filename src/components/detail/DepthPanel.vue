@@ -12,43 +12,47 @@ const props = defineProps<{
 const depth = ref<Depth | null>(null);
 const loading = ref(false);
 const error = ref('');
-let refreshTimer: ReturnType<typeof setInterval> | null = null;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let generation = 0;
+let active = false;
 
-async function fetchDepth(showLoading = false) {
+async function fetchDepth(version: number, showLoading = false) {
   if (showLoading) loading.value = true;
   error.value = '';
+  const code = props.code;
+  const market = props.market;
   try {
-    depth.value = await invoke<Depth>('get_depth', { code: props.code, market: props.market });
+    const result = await invoke<Depth>('get_depth', { code, market });
+    if (version === generation) depth.value = result;
   } catch (e) {
-    error.value = String(e);
+    if (version === generation) error.value = String(e);
   } finally {
-    if (showLoading) loading.value = false;
+    if (version === generation) {
+      loading.value = false;
+      if (active) refreshTimer = setTimeout(() => void fetchDepth(version), 3000);
+    }
   }
 }
 
 function startAutoRefresh() {
   stopAutoRefresh();
-  refreshTimer = setInterval(() => fetchDepth(false), 3000);
+  active = true;
+  depth.value = null;
+  void fetchDepth(generation, true);
 }
 
 function stopAutoRefresh() {
+  active = false;
+  generation++;
   if (refreshTimer !== null) {
-    clearInterval(refreshTimer);
+    clearTimeout(refreshTimer);
     refreshTimer = null;
   }
 }
 
-onMounted(() => {
-  fetchDepth(true);
-  startAutoRefresh();
-});
-
-onUnmounted(() => stopAutoRefresh());
-
-watch(() => [props.code, props.market], () => {
-  fetchDepth(true);
-  startAutoRefresh();
-});
+onMounted(startAutoRefresh);
+onUnmounted(stopAutoRefresh);
+watch(() => [props.code, props.market], startAutoRefresh);
 
 const levels = computed(() => {
   const rawBids = depth.value ? [...depth.value.bids] : [];

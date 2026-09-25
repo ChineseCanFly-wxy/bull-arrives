@@ -30,12 +30,12 @@ const initFailed = ref(false);
 
 onMounted(async () => {
   try {
-    await settings.fetchSettings();
+    await startSettingsListen();
+    if (!await settings.fetchSettings()) throw new Error(settings.error || '加载悬浮窗设置失败');
     settings.applyTheme(settings.theme);
     await watchlist.fetchWatchlist();
     await quoteStore.startListening();
     startCycle();
-    startSettingsListen();
   } catch (e) {
     initFailed.value = true;
     console.error('[TickerBar] init failed:', e);
@@ -53,14 +53,11 @@ onUnmounted(() => {
 /// Pinia stores.  Any setting that changes how the ticker looks (theme,
 /// single-color mode, text color, …) is broadcast as `setting-changed` from
 /// the window that owns the settings dialog; we apply it here directly.
-function startSettingsListen() {
-  listen<SettingChangedPayload>(SETTING_CHANGED_EVENT, (event) => {
+async function startSettingsListen() {
+  if (unlistenSettings) return;
+  unlistenSettings = await listen<SettingChangedPayload>(SETTING_CHANGED_EVENT, (event) => {
     const { key, value } = event.payload;
     settings.applyRemoteSetting(key, value);
-  }).then((unlisten) => {
-    unlistenSettings = unlisten;
-  }).catch((e) => {
-    console.error('[TickerBar] Failed to listen setting-changed:', e);
   });
 }
 
@@ -184,13 +181,13 @@ async function handleClick() {
     initFailed.value = false;
     retryHintVisible.value = true;
     try {
-      await settings.fetchSettings();
+      await startSettingsListen();
+      if (!await settings.fetchSettings()) throw new Error(settings.error || '加载悬浮窗设置失败');
       settings.applyTheme(settings.theme);
       await watchlist.fetchWatchlist();
       await quoteStore.startListening();
       startCycle();
-      startSettingsListen();
-        retryHintVisible.value = false;
+      retryHintVisible.value = false;
     } catch (e) {
       initFailed.value = true;
       retryHintVisible.value = false;

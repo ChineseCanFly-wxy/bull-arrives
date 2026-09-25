@@ -7,6 +7,7 @@ import { useWatchlistStore } from '@/stores/watchlist';
 import { useMonitorStore } from '@/stores/monitor';
 import type { Monitor } from '@/types/monitor';
 import { useQuoteStore } from '@/stores/quote';
+import { useSettingsStore } from '@/stores/settings';
 import type { WatchItem } from '@/types';
 import type { StockAnalysis } from '@/types/analysis';
 import { formatPrice, formatVolume, formatCode, cnCategory } from '@/utils/format';
@@ -22,6 +23,7 @@ import { CLEAR_INDEX_DETAIL_KEY } from '@/utils/keys';
 
 const watchlist = useWatchlistStore();
 const quoteStore = useQuoteStore();
+const settings = useSettingsStore();
 const monitorStore = useMonitorStore();
 const message = useMessage();
 const showAddDialog = ref(false);
@@ -129,6 +131,8 @@ watch(() => watchlist.activeGroupId, () => {
   pendingDeleteGroupId.value = 0;
   scoreSortActive.value = false;
   scoreById.value = new Map();
+  scoreGeneration++;
+  scoring.value = false;
 });
 
 watch(() => watchlist.items, items => {
@@ -164,6 +168,7 @@ const SCORE_CONCURRENCY = 3;
 const scoreById = ref<Map<number, number | null>>(new Map());
 const scoreSortActive = ref(false);
 const scoring = ref(false);
+let scoreGeneration = 0;
 const scoreProgress = ref({ done: 0, total: 0, failed: 0 });
 
 function scoreOf(row: WatchItem): number {
@@ -193,6 +198,7 @@ async function scoreAndSort() {
   const items = [...watchlist.items];
   if (!items.length || scoring.value) return;
 
+  const generation = ++scoreGeneration;
   scoring.value = true;
   scoreSortActive.value = true;
   scoreProgress.value = { done: 0, total: items.length, failed: 0 };
@@ -201,23 +207,27 @@ async function scoreAndSort() {
   const scoreItem = async (item: WatchItem) => {
     try {
       const analysis = await invoke<StockAnalysis>('analyze_stock', { symbol: item.code });
+      if (generation !== scoreGeneration) return;
       next.set(item.id, analysis.total_score);
     } catch (error) {
+      if (generation !== scoreGeneration) return;
       console.warn(`[watchlist] 量化评分失败 ${item.code}:`, error);
       next.set(item.id, null);
       scoreProgress.value = { ...scoreProgress.value, failed: scoreProgress.value.failed + 1 };
     } finally {
-      scoreById.value = new Map(next);
-      scoreProgress.value = { ...scoreProgress.value, done: scoreProgress.value.done + 1 };
+      if (generation === scoreGeneration) {
+        scoreById.value = new Map(next);
+        scoreProgress.value = { ...scoreProgress.value, done: scoreProgress.value.done + 1 };
+      }
     }
   };
 
   try {
-    for (let start = 0; start < items.length; start += SCORE_CONCURRENCY) {
+    for (let start = 0; start < items.length && generation === scoreGeneration; start += SCORE_CONCURRENCY) {
       await Promise.all(items.slice(start, start + SCORE_CONCURRENCY).map(scoreItem));
     }
   } finally {
-    scoring.value = false;
+    if (generation === scoreGeneration) scoring.value = false;
   }
 }
 
@@ -264,7 +274,10 @@ function isSelectionEvent(event: Event): boolean {
   return event.target instanceof Element && event.target.closest('[role="checkbox"]') !== null;
 }
 
-onBeforeUnmount(cancelPendingRowClick);
+onBeforeUnmount(() => {
+  cancelPendingRowClick();
+  scoreGeneration++;
+});
 
 function handleContextMenu(e: MouseEvent, row: WatchItem) {
   e.preventDefault();
@@ -703,7 +716,7 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
 <template>
   <div class="watchlist-container">
     <div class="watchlist-header">
-      <h2 class="section-title">自选股</h2>
+      <div class="section-heading"><span class="section-kicker">WATCHLIST</span><h2 class="section-title">自选股 <small class="watch-count">{{ watchlist.items.length }}</small></h2></div>
       <div class="watchlist-actions">
         <NButton
           v-if="selectedRowKeys.length"
@@ -753,7 +766,7 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
       :single-line="true"
       size="small"
       :row-props="(row: WatchItem) => ({
-        style: `height: 36px; cursor: pointer; ${selectedRow?.id === row.id ? 'background: var(--color-bg-elevated, rgba(255,255,255,0.04))' : ''}`,
+        style: `height: var(--table-row-height); cursor: pointer; ${selectedRow?.id === row.id ? `background: ${settings.visualStyle === 'classic' ? 'var(--color-bg-elevated)' : 'var(--color-accent-dim)'}` : ''}`,
         tabindex: 0,
         title: '单击查看详情；双击或按 Enter 设置提醒',
         'aria-label': `${row.name} ${formatCode(row.code)}，单击查看详情，双击或按 Enter 设置提醒`,
@@ -838,21 +851,35 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 0 var(--space-4);
+  padding: 0 var(--workspace-gutter);
 }
 .watchlist-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: var(--space-3) 0;
+  gap: var(--space-2);
+  padding: var(--space-3) 0 var(--space-2);
   flex-shrink: 0;
 }
+.section-heading { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.section-kicker { font: 600 10px var(--font-mono); letter-spacing: .08em; color: var(--color-accent); }
+:global([data-style="classic"]) .section-kicker,
+:global([data-style="classic"]) .watch-count { display: none; }
+:global([data-style="classic"]) .watchlist-container { padding-inline: var(--space-4); }
+:global([data-style="classic"]) .watchlist-header { gap: 0; padding: var(--space-3) 0; }
+:global([data-style="classic"]) .watchlist-actions { flex-wrap: nowrap; }
+:global([data-style="classic"]) .add-btn { height: 28px; color: #fff; }
+.section-title small { color: var(--color-text-tertiary); font-size: var(--text-xs); font-weight: 400; }
 .watchlist-actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .section-title {
+  margin: 0;
+  white-space: nowrap;
   font-size: var(--text-md);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
@@ -863,11 +890,11 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
   align-items: center;
   gap: 3px;
   padding: 0 12px;
-  height: 28px;
+  height: var(--control-height);
   border: none;
   border-radius: var(--radius-sm);
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-accent-contrast);
   font-size: var(--text-xs);
   font-family: var(--font-sans);
   font-weight: var(--font-weight-medium);
@@ -912,6 +939,11 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
   flex: 1 1 44%;
   min-height: 160px;
 }
+:global([data-style="trading"]) .watchlist-container :deep(.watchlist-table .n-data-table-th),
+:global([data-style="modern"]) .watchlist-container :deep(.watchlist-table .n-data-table-th) { background: var(--color-surface-2); color: var(--color-text-secondary); }
+:global([data-style="trading"]) .watchlist-container :deep(.watchlist-table .n-data-table-td),
+:global([data-style="modern"]) .watchlist-container :deep(.watchlist-table .n-data-table-td) { border-color: var(--color-border-0); }
+:global([data-style="modern"]) .watchlist-container :deep(.watchlist-table) { border: 1px solid var(--color-border-0); border-radius: var(--radius-md); overflow: hidden; }
 /* P&L color classes (used via render functions) */
 :deep(.pct-col) { font-weight: 500; }
 :deep(.pct-col.up) { color: var(--color-up); }
@@ -934,5 +966,14 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+@media (max-width: 680px) {
+  .watchlist-header { align-items: flex-start; flex-wrap: wrap; }
+  .watchlist-actions { justify-content: flex-start; }
+  .section-kicker { display: none; }
+}
+@media (max-height: 550px) {
+  .watchlist-header { padding-block: 4px; }
+  :deep(.watchlist-table) { min-height: 110px; }
 }
 </style>

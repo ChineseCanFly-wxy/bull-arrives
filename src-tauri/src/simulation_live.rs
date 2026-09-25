@@ -333,7 +333,11 @@ mod tests {
             now
         )
         .is_err());
-        let closed = Utc.with_ymd_and_hms(2026, 9, 25, 2, 0, 0).unwrap();
+        // 节假日由离线日历单独验证；此处采用周末，避免并行测试安装的全局交易日历快照干扰。
+        assert!(!crate::datasource::a_share_calendar::trading_day(
+            chrono::NaiveDate::from_ymd_opt(2026, 9, 25).unwrap()
+        ).unwrap());
+        let closed = Utc.with_ymd_and_hms(2026, 9, 27, 2, 0, 0).unwrap();
         assert!(validate(&tick(34.0, closed), closed).is_err());
         assert!(!is_a_share("sh000300"));
         assert!(!is_a_share("sh510300"));

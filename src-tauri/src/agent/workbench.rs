@@ -38,6 +38,7 @@ pub struct AgentInspection {
     pub schema_json: String,
     pub missing_data: Vec<String>,
     pub timeout_seconds: u64,
+    pub budget_usd: String,
     pub executable: Option<String>,
     pub history_summary: String,
 }
@@ -123,6 +124,7 @@ pub fn inspect(db: &Database, fingerprint: &str) -> Result<AgentInspection, Stri
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_TIMEOUT_SECS)
             .clamp(15, 300),
+        budget_usd: agent_budget(db),
         executable: status(db).path,
         history_summary,
     })

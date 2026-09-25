@@ -350,7 +350,7 @@ dependencies = [
 
 [[package]]
 name = "bull-arrives"
-version = "2.2.2"
+version = "2.2.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -377,6 +377,7 @@ dependencies = [
  "tauri-plugin-updater",
  "thiserror 2.0.18",
  "tokio",
+ "uuid",
  "windows 0.58.0",
 ]
 

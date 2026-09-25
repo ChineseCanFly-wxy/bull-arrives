@@ -2027,6 +2027,8 @@ const scrollX = computed(() =>
   border-radius: var(--radius-md);
   background: var(--color-bg-card);
 }
+:global([data-style="trading"]) .filter-panel,
+:global([data-style="modern"]) .filter-panel { background: var(--color-surface-1); border-color: var(--color-border-1); }
 .field {
   display: flex;
   align-items: center;

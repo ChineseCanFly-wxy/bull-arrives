@@ -110,12 +110,15 @@ impl StockDbManager {
             runtime.status.clone()
         };
         status.enabled = self.enabled_in_db();
+        let configured_engine = (status.engine_path.is_none() || status.updater_path.is_none())
+            .then(|| self.configured_engine())
+            .flatten();
         if status.engine_path.is_none() {
-            status.engine_path = self.configured_engine().as_deref().map(path_string);
+            status.engine_path = configured_engine.as_deref().map(path_string);
         }
         if status.updater_path.is_none() {
             status.updater_path = self
-                .configured_updater(self.configured_engine().as_deref())
+                .configured_updater(configured_engine.as_deref())
                 .as_deref()
                 .map(path_string);
         }

@@ -25,7 +25,8 @@ export function useChart(options: {
   const { chart, loading, error, currentPeriod, themeColors, periodToKlinecharts, syncPrecision: syncPrecisionCore, initChartCore, disposeChart: disposeChartCore, reapplyStyles } = useChartCore(options);
 
   let abortController: AbortController | null = null;
-  let refreshTimer: ReturnType<typeof setInterval> | null = null;
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let refreshGeneration = 0;
 
   // 累积全部已加载的 K 线数据（初始 + 历次懒加载），按时间升序
   const allData = ref<KCLineData[]>([]);
@@ -169,54 +170,53 @@ export function useChart(options: {
 
   function startAutoRefresh(period: PeriodType) {
     stopAutoRefresh();
-
-    // Sina doesn't support incremental refresh; use old full-reload behavior
-    if (settings.activeDatasource === 'sina') {
-      const interval = getRefreshInterval(period);
-      refreshTimer = setInterval(() => {
-        if (!loading.value) {
-          loadData(period);
-        }
-      }, interval);
-      return;
-    }
-
-    // K-line: incremental refresh
+    const generation = refreshGeneration;
+    const code = unref(options.code);
+    const market = unref(options.market);
     const interval = getRefreshInterval(period);
-    refreshTimer = setInterval(async () => {
-      if (loading.value) return;
+    let retryDelay = interval;
+
+    const refresh = async () => {
+      if (generation !== refreshGeneration || loading.value) {
+        if (generation === refreshGeneration) refreshTimer = setTimeout(() => void refresh(), interval);
+        return;
+      }
       try {
-        const data = await invoke<KLineData[]>('get_kline', {
-          code: unref(options.code),
-          market: unref(options.market),
-          period: period,
-          count: 10,
-        });
+        if (settings.activeDatasource === 'sina') {
+          await loadData(period, false);
+          if (generation === refreshGeneration) retryDelay = interval;
+          return;
+        }
+        const data = await invoke<KLineData[]>('get_kline', { code, market, period, count: 10 });
+        if (generation !== refreshGeneration) return;
         const newBars = mapKLineToChart(data);
         if (newBars.length > 0) {
           const map = new Map(allData.value.map((d) => [d.timestamp, d]));
-          for (const bar of newBars) {
-            map.set(bar.timestamp, bar);
-          }
+          for (const bar of newBars) map.set(bar.timestamp, bar);
           allData.value = [...map.values()].sort((a, b) => a.timestamp - b.timestamp);
           klineData.value = allData.value;
           if (barSubscriber) {
-            for (const bar of newBars) {
-              barSubscriber(bar);
-            }
+            for (const bar of newBars) barSubscriber(bar);
           } else if (chart.value) {
             chart.value.setDataLoader(dataLoader);
           }
         }
+        retryDelay = interval;
       } catch (e) {
+        if (generation !== refreshGeneration) return;
         console.error('[useChart] incremental update failed:', e);
+        retryDelay = Math.min(retryDelay * 2, 120000);
+      } finally {
+        if (generation === refreshGeneration) refreshTimer = setTimeout(() => void refresh(), retryDelay);
       }
-    }, interval);
+    };
+    refreshTimer = setTimeout(() => void refresh(), retryDelay);
   }
 
   function stopAutoRefresh() {
+    refreshGeneration++;
     if (refreshTimer !== null) {
-      clearInterval(refreshTimer);
+      clearTimeout(refreshTimer);
       refreshTimer = null;
     }
   }
@@ -280,7 +280,8 @@ export function useChart(options: {
 
   // ---- 数据加载 ----
 
-  async function loadData(period: PeriodType) {
+  async function loadData(period: PeriodType, restartRefresh = true) {
+    if (restartRefresh) stopAutoRefresh();
     if (abortController) {
       abortController.abort();
     }
@@ -290,9 +291,11 @@ export function useChart(options: {
     loading.value = true;
     error.value = '';
 
-    // 重置累积数据和分页状态（切换股票/周期时重新开始）
-    allData.value = [];
-    hasMoreForward.value = true;
+    // 切换股票/周期才清空；同标的周期刷新失败时保留上次有效图表。
+    if (restartRefresh) {
+      allData.value = [];
+      hasMoreForward.value = true;
+    }
 
     try {
       const data = await invoke<KLineData[]>('get_kline', {
@@ -317,11 +320,13 @@ export function useChart(options: {
         chart.value.setDataLoader(dataLoader);
         syncPrecisionCore(klineData.value);
       }
-      startAutoRefresh(period);
+      if (restartRefresh) startAutoRefresh(period);
     } catch (e) {
       if (signal.aborted) return;
       error.value = `加载数据失败: ${String(e).slice(0, 160)}`;
       console.error('[useChart] loadData failed:', e);
+      if (restartRefresh) startAutoRefresh(period);
+      else throw e;
     } finally {
       if (!signal.aborted) {
         loading.value = false;

@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 const props = defineProps<{ fingerprint: string; busy: boolean; installed: boolean; visible: boolean }>();
 const emit = defineEmits<{ ask: [question: string] }>();
 interface Prompt { id: string; label: string; content: string; hash: string }
-interface Inspection { prompts: Prompt[]; input_json: string; schema_json: string; missing_data: string[]; timeout_seconds: number; executable: string | null; history_summary: string }
+interface Inspection { prompts: Prompt[]; input_json: string; schema_json: string; missing_data: string[]; timeout_seconds: number; budget_usd: string; executable: string | null; history_summary: string }
 interface Run { id: number; role: string; round: number; task: string; status: string; started_at: string; duration_ms: number | null; prompt_hash: string; error: string | null }
 interface Activity { current: { role: string; round: number; task: string; process_id: number | null; elapsed_ms: number; timeout_seconds: number } | null; runs: Run[] }
 interface Detail { prompt: string; input_json: string; schema_json: string }
@@ -64,11 +64,11 @@ function ask() { if (question.value.trim() && !props.busy && props.installed) em
 <template>
   <section class="workbench">
     <p class="intro">AI 解释本次指标、交易规则与回测，列出支持因素、风险和失效条件。多角色研判依次进行独立分析 → 多空交叉回应 → 风控综合，共最多六次调用。</p>
-    <p class="note">Claude Code 以后台进程运行，不弹出终端。当前采用受限数据分析模式：不联网搜索，不加载全局 skills / MCP，不读取你的项目或持仓。</p>
+    <p class="note">本区域的快照问答、Agent 解读和多角色研判在后台运行，不弹出终端；受限模式不联网搜索，也不加载全局 skills / MCP。若想直接对话，请使用下方“打开 Claude Code 终端”。</p>
     <details>
       <summary>查看分析方法、提示词与本次输入</summary>
       <div v-if="inspection" class="inspection">
-        <p>模型沿用 Claude Code 当前配置；应用未读取具体模型名。每次上限 {{ inspection.timeout_seconds }} 秒、预算上限 $0.20；六次调用的预算上限合计 $1.20，实际费用以服务商为准。</p>
+        <p>模型沿用 Claude Code 当前配置；应用未读取具体模型名。每次上限 {{ inspection.timeout_seconds }} 秒、应用单次预算上限 ${{ inspection.budget_usd }}；多角色最多六次独立调用，账户额度与实际费用以服务商为准。</p>
         <p class="path">执行程序：{{ inspection.executable || '未检测到' }}</p>
         <p>行情上下文：{{ inspection.history_summary }}</p>
         <p><b>本次数据局限</b></p>
@@ -126,6 +126,10 @@ function ask() { if (question.value.trim() && !props.busy && props.installed) em
 
 <style scoped>
 .workbench { margin-bottom: 14px; font-size: var(--text-xs); line-height: 1.7; color: var(--color-text-secondary); }
+:global([data-style="trading"]) .workbench,
+:global([data-style="modern"]) .workbench { margin-bottom: 0; }
+:global([data-style="trading"]) .workbench > details,
+:global([data-style="modern"]) .workbench > details { background: var(--color-surface-0); }
 .intro { color: var(--color-text-primary); margin-top: 0; }
 .note { color: var(--color-text-tertiary); }
 details { margin: 9px 0; padding: 8px 10px; border: 1px solid var(--color-border-0); border-radius: var(--radius-sm); }
@@ -133,6 +137,8 @@ summary { cursor: pointer; color: var(--color-text-primary); font-weight: 600; }
 pre { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px; background: var(--color-surface-2); font: inherit; }
 .path { overflow-wrap: anywhere; }
 .question { display: grid; gap: 6px; margin: 12px 0; }
+:global([data-style="trading"]) .question,
+:global([data-style="modern"]) .question { gap: var(--space-2); margin: var(--space-2) 0; padding: var(--space-3); border: 1px solid var(--color-border-0); border-radius: var(--radius-md); background: var(--color-surface-0); }
 textarea, select { color: var(--color-text-primary); background: var(--color-surface-2); border: 1px solid var(--color-border-0); border-radius: var(--radius-sm); padding: 8px; font: inherit; }
 textarea { width: 100%; box-sizing: border-box; resize: vertical; }
 .question-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -142,5 +148,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .runs { display: grid; gap: 6px; max-height: 250px; overflow: auto; }
 .run { display: flex; gap: 6px 14px; flex-wrap: wrap; text-align: left; }
 .run.selected { border-color: var(--color-accent); }
-.error { color: var(--color-down); }
+.error { color: var(--color-error); }
+:global([data-style="trading"]) .error,
+:global([data-style="modern"]) .error { background: var(--color-error-bg); padding: var(--space-2); border-radius: var(--radius-sm); }
 </style>

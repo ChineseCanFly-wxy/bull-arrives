@@ -14,6 +14,14 @@ export const useQuoteStore = defineStore('quote', () => {
   let unlistenQuotes: UnlistenFn | null = null;
   let unlistenIndices: UnlistenFn | null = null;
 
+  function sameQuote(a: Quote, b: Quote): boolean {
+    return a.code === b.code && a.market === b.market && a.name === b.name
+      && a.price === b.price && a.change === b.change && a.change_pct === b.change_pct
+      && a.prev_close === b.prev_close && a.open === b.open && a.high === b.high
+      && a.low === b.low && a.volume === b.volume && a.turnover === b.turnover
+      && a.turnover_rate === b.turnover_rate && a.timestamp === b.timestamp;
+  }
+
   async function startListening() {
     try {
       unlistenQuotes = await listen<Quote[]>('quotes-updated', (event) => {
@@ -21,8 +29,12 @@ export const useQuoteStore = defineStore('quote', () => {
         for (const q of event.payload) {
           map.set(`${q.market}:${q.code}`, q);
         }
-        quotes.value = map;
         lastUpdate.value = Date.now();
+        const previous = quotes.value;
+        if (map.size !== previous.size || [...map].some(([key, value]) => {
+          const old = previous.get(key);
+          return !old || !sameQuote(value, old);
+        })) quotes.value = map;
       });
 
       unlistenIndices = await listen<IndexQuote[]>('indices-updated', (event) => {
@@ -45,12 +57,14 @@ export const useQuoteStore = defineStore('quote', () => {
       // Pull initial state from the backend cache to cover the race window
       // where the scheduler already emitted data before listeners were ready
       // (e.g. first launch during non-trading hours).
+      const beforeCache = lastUpdate.value;
+      const beforeIndices = indices.value;
       try {
         const [cachedQuotes, cachedIndices] = await Promise.all([
           invoke<Quote[]>('get_quotes'),
           invoke<IndexQuote[]>('get_indices'),
         ]);
-        if (cachedQuotes.length > 0) {
+        if (cachedQuotes.length > 0 && lastUpdate.value === beforeCache) {
           const map = new Map<string, Quote>();
           for (const q of cachedQuotes) {
             map.set(`${q.market}:${q.code}`, q);
@@ -58,7 +72,7 @@ export const useQuoteStore = defineStore('quote', () => {
           quotes.value = map;
           lastUpdate.value = Date.now();
         }
-        if (cachedIndices.length > 0) {
+        if (cachedIndices.length > 0 && indices.value === beforeIndices) {
           indices.value = cachedIndices;
         }
       } catch (e) {

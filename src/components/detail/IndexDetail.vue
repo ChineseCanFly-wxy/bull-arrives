@@ -143,14 +143,17 @@ const statCards = computed(() => [
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  border-top: 1px solid var(--color-border, rgba(255,255,255,0.08));
+  border-top: 1px solid var(--color-border-0);
   background: var(--color-surface-1);
-  padding: 12px 16px;
+  padding: var(--panel-padding) var(--workspace-gutter);
   height: calc(100vh - var(--header-height) - var(--index-bar-height) - 28px);
   overflow: hidden;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  box-shadow: var(--shadow-md);
 }
 
+:global([data-style="classic"]) .index-detail { border-top-color: var(--color-border); padding: 12px 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+:global([data-style="trading"]) .index-detail,
+:global([data-style="modern"]) .index-detail { height: calc(100dvh - var(--header-height) - var(--index-bar-height) - 28px); min-height: 220px; overflow: auto; }
 .detail-header {
   display: flex;
   justify-content: space-between;
@@ -179,6 +182,7 @@ const statCards = computed(() => [
 .detail-close {
   background: none;
   border: none;
+  border-radius: var(--radius-sm);
   color: var(--color-text-tertiary);
   font-size: 20px;
   cursor: pointer;
@@ -186,6 +190,8 @@ const statCards = computed(() => [
   line-height: 1;
 }
 .detail-close:hover { color: var(--color-text-primary); }
+:global([data-style="trading"]) .detail-close:hover,
+:global([data-style="modern"]) .detail-close:hover { background: var(--color-surface-hover); }
 
 .detail-body {
   display: flex;
@@ -256,5 +262,21 @@ const statCards = computed(() => [
   display: flex;
   align-items: center;
   gap: 8px;
+}
+:global([data-style="trading"]) .summary-grid,
+:global([data-style="modern"]) .summary-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+:global([data-style="trading"]) .summary-card,
+:global([data-style="modern"]) .summary-card { padding: var(--space-2) var(--space-3); min-width: 0; }
+:global([data-style="trading"]) .chart-toolbar,
+:global([data-style="modern"]) .chart-toolbar,
+:global([data-style="trading"]) .chart-toolbar-group,
+:global([data-style="modern"]) .chart-toolbar-group { gap: var(--space-2); flex-wrap: wrap; }
+@media (max-width: 780px) {
+  :global([data-style="trading"]) .summary-grid,
+  :global([data-style="modern"]) .summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 500px) {
+  :global([data-style="trading"]) .summary-grid,
+  :global([data-style="modern"]) .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>

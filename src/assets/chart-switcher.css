@@ -1,0 +1,69 @@
+[data-style="classic"] .chart-switcher,
+[data-style="classic"] .main-overlay-switcher,
+[data-style="classic"] .sub-indicator-switcher {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+}
+[data-style="classic"] .switcher-tab {
+  padding: 3px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font: var(--text-xs) var(--font-sans);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  line-height: 1.4;
+}
+[data-style="classic"] .switcher-tab:hover { color: var(--color-text-secondary); }
+[data-style="classic"] .switcher-tab.active { background: var(--color-accent-dim); color: var(--color-accent); font-weight: var(--font-weight-medium); }
+[data-style="classic"] .switcher-more { display: inline-flex; align-items: center; gap: 3px; }
+[data-style="classic"] .more-caret { font-size: 9px; line-height: 1; }
+
+[data-style="trading"] .chart-switcher,
+[data-style="trading"] .main-overlay-switcher,
+[data-style="trading"] .sub-indicator-switcher,
+[data-style="modern"] .chart-switcher,
+[data-style="modern"] .main-overlay-switcher,
+[data-style="modern"] .sub-indicator-switcher {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px;
+  border: 1px solid var(--color-border-0);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+  overflow-x: auto;
+}
+
+[data-style="trading"] .switcher-tab,
+[data-style="modern"] .switcher-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: var(--control-height);
+  padding: 2px var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: 500 var(--text-xs) var(--font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+[data-style="trading"] .switcher-tab:hover,
+[data-style="modern"] .switcher-tab:hover { color: var(--color-text-primary); background: var(--color-surface-hover); }
+[data-style="trading"] .switcher-tab.active,
+[data-style="modern"] .switcher-tab.active { background: var(--color-accent-dim); color: var(--color-accent); font-weight: 600; }
+[data-style="trading"] .switcher-more,
+[data-style="modern"] .switcher-more { gap: 3px; }
+[data-style="trading"] .more-caret,
+[data-style="modern"] .more-caret { font-size: 9px; line-height: 1; }

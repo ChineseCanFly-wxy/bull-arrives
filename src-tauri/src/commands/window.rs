@@ -145,13 +145,14 @@ pub fn set_ticker_opacity(
     opacity: u32,
 ) -> Result<(), String> {
     let opacity = opacity.clamp(5, 100);
-    let window = app
-        .get_webview_window("ticker")
-        .ok_or_else(|| "Ticker window not found".to_string())?;
-    let alpha = ((opacity as f32 / 100.0) * 255.0).round() as u8;
-    crate::apply_ticker_opacity(&window, alpha)?;
+    // 即使悬浮窗暂时不存在，也要先保存用户选择；窗口重新创建时会从数据库恢复。
     db.set_setting("ticker_opacity", &opacity.to_string())
         .map_err(|e| e.to_string())?;
+    if let Some(window) = app.get_webview_window("ticker") {
+        let alpha = ((opacity as f32 / 100.0) * 255.0).round() as u8;
+        crate::apply_ticker_opacity(&window, alpha)
+            .map_err(|e| format!("透明度已保存，但当前悬浮窗应用失败：{e}"))?;
+    }
     log::info!("[ticker] opacity set to {}%", opacity);
     Ok(())
 }

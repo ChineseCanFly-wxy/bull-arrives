@@ -56,7 +56,7 @@ async function openRepository() {
   justify-content: space-between;
   align-items: center;
   height: 28px;
-  padding: 0 var(--space-4);
+  padding: 0 var(--workspace-gutter);
   background: var(--color-surface-1);
   border-top: 1px solid var(--color-border-0);
   flex-shrink: 0;
@@ -88,6 +88,8 @@ async function openRepository() {
 .sb-github:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 .sb-github svg { flex: 0 0 auto; }
 .sb-check-btn.sb-up-to-date { color: #3fb950; }
+:global([data-style="trading"]) .sb-check-btn.sb-up-to-date,
+:global([data-style="modern"]) .sb-check-btn.sb-up-to-date { color: var(--color-accent); }
 .sb-copyright { color: var(--color-text-tertiary); line-height: 1; }
 @media (max-width: 680px) {
   .sb-copyright, .sb-copyright + * { display: none; }

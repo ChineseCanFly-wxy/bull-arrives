@@ -1,3 +1,4 @@
+use crate::agent::interactive::InteractiveRoot;
 use crate::cache::PollingConfig;
 use crate::datasource::history::{self, LocalHistoryConfig};
 use crate::datasource::market_clock::MarketSession;
@@ -226,6 +227,12 @@ pub fn set_setting(
     } else {
         None
     };
+    if key == "theme" && !matches!(value.as_str(), "light" | "dark") {
+        return Err("明暗模式只能为 light 或 dark".into());
+    }
+    if key == "visual_style" && !matches!(value.as_str(), "classic" | "trading" | "modern") {
+        return Err("界面风格只能为 classic、trading 或 modern".into());
+    }
     if key == "ticker_display_mode" && value != "carousel" && value != "fixed" {
         return Err("悬浮窗展示方式只能为 carousel 或 fixed".into());
     }
@@ -248,7 +255,13 @@ pub fn set_setting(
             return Err("悬浮窗每页数量必须在 1–20 之间".into());
         }
     }
-    let value = if key == "agent_claude_path" && !value.trim().is_empty() {
+    let value = if key == "agent_budget_usd" {
+        let budget = value.parse::<f64>().map_err(|_| "Agent 单次预算必须为有效金额")?;
+        if !budget.is_finite() || !(0.05..=10.0).contains(&budget) {
+            return Err("Agent 单次预算必须在 0.05–10 美元之间".into());
+        }
+        format!("{budget:.2}")
+    } else if key == "agent_claude_path" && !value.trim().is_empty() {
         crate::agent::validate_claude_path(&value)?
     } else if key == "agent_timeout_seconds" {
         let seconds = value.parse::<u64>().map_err(|_| "Agent 超时必须为整数秒")?;
@@ -307,6 +320,23 @@ pub fn list_datasources(manager: State<'_, Arc<DataSourceManager>>) -> Vec<(Stri
 #[tauri::command]
 pub fn get_portable_mode(portable: State<'_, PortableMode>) -> bool {
     portable.0
+}
+
+#[derive(serde::Serialize)]
+pub struct DataPaths {
+    pub data_dir: String,
+    pub database: String,
+    pub interactive_tasks: String,
+}
+
+#[tauri::command]
+pub fn get_data_paths(root: State<'_, InteractiveRoot>) -> Result<DataPaths, String> {
+    let data_dir = root.0.parent().ok_or("数据目录不存在")?;
+    Ok(DataPaths {
+        data_dir: data_dir.to_string_lossy().into_owned(),
+        database: data_dir.join("bull-arrives.db").to_string_lossy().into_owned(),
+        interactive_tasks: root.0.to_string_lossy().into_owned(),
+    })
 }
 
 /// Set the quote polling interval in seconds.

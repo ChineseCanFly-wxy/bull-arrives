@@ -169,7 +169,11 @@ impl Database {
             // 5s pre-open, 10s lunch break, 30s closed)
             ("refresh_interval", "0"),
             ("theme", "light"),
+            ("visual_style", "classic"),
             ("ticker_visible", "1"),
+            ("ticker_opacity", "100"),
+            ("ticker_single_color", "0"),
+            ("ticker_text_color", "#9AA5B1"),
             ("ticker_display_mode", "carousel"),
             ("ticker_page_size", "2"),
             ("quote_schedule_enabled", "0"),
@@ -187,6 +191,7 @@ impl Database {
             // Claude Code 由应用探测并使用其自身登录；不在应用内保存凭据。
             ("agent_claude_path", ""),
             ("agent_timeout_seconds", "90"),
+            ("agent_budget_usd", "0.20"),
             // 本地 stockdb 会启动外部程序，必须由用户明确开启。
             ("local_history_enabled", "0"),
             ("local_history_url", "http://127.0.0.1:7899"),

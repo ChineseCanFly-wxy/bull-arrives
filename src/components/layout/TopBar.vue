@@ -84,18 +84,21 @@ function openSimulation() {
 
 <template>
   <header class="top-bar">
-    <!-- Slogan -->
-    <span class="brand-slogan">实时行情 · 多源切换 · 免费高效</span>
+    <div class="brand-block" aria-label="Bull Arrives 行情工作台">
+      <span class="classic-slogan">实时行情 · 多源切换 · 免费高效</span>
+      <span class="brand-mark" aria-hidden="true">↗</span>
+      <span class="brand-name">Bull Arrives</span>
+      <span class="brand-slogan">行情工作台</span>
+    </div>
 
-    <!-- Right: data source switcher + settings cog -->
-    <div class="top-bar-right">
-      <button class="cog-btn" style="width:auto;padding:0 10px;font-size:12px" title="策略研究、自动选股与模拟验证" @click="showResearch=true">研究中心</button>
+    <nav class="top-bar-right" aria-label="工作台导航">
+      <button class="nav-primary" title="策略研究、自动选股与模拟验证" @click="showResearch=true">研究中心</button>
       <n-dropdown
         trigger="click"
         :options="dsOptions"
         @select="handleDsSelect"
       >
-        <span class="ds-tag" title="点击切换数据源">
+        <button class="ds-tag" type="button" :aria-label="`切换数据源，当前为${dsDisplayName}`" title="点击切换数据源">
           <span class="ds-label">{{ dsDisplayName }}</span>
           <n-icon :size="12" class="ds-swap-icon">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -105,7 +108,7 @@ function openSimulation() {
               <path d="M3 9V8a4 4 0 0 1 4-4h10" />
             </svg>
           </n-icon>
-        </span>
+        </button>
       </n-dropdown>
 
       <button
@@ -185,7 +188,7 @@ function openSimulation() {
           <path d="M16.4 12.4l1.3 1.3a1 1 0 0 1 0 1.4l-1.1 1.1a1 1 0 0 1-1.4 0l-1.3-1.3a6.5 6.5 0 0 1-1.6.7l-.2 1.7a1 1 0 0 1-1 .9h-2.2a1 1 0 0 1-1-.9l-.2-1.7a6.5 6.5 0 0 1-1.6-.7L5 15.6a1 1 0 0 1-1.4 0L2.5 14.5a1 1 0 0 1 0-1.4l1.3-1.3a6.5 6.5 0 0 1-.7-1.6L1.4 10a1 1 0 0 1-.9-1V6.8a1 1 0 0 1 .9-1l1.7-.2a6.5 6.5 0 0 1 .7-1.6L2.5 2.7a1 1 0 0 1 0-1.4L3.6.2a1 1 0 0 1 1.4 0L6.3 1.5a6.5 6.5 0 0 1 1.6-.7l.2-1.7a1 1 0 0 1 1-.9h2.2a1 1 0 0 1 1 .9l.2 1.7a6.5 6.5 0 0 1 1.6.7l1.3-1.3a1 1 0 0 1 1.4 0l1.1 1.1a1 1 0 0 1 0 1.4l-1.3 1.3a6.5 6.5 0 0 1 .7 1.6l1.7.2a1 1 0 0 1 .9 1V9a1 1 0 0 1-.9 1l-1.7.2a6.5 6.5 0 0 1-.7 1.6Z" />
         </svg>
       </button>
-    </div>
+    </nav>
 
     <SettingsDialog v-if="showSettings" v-model:show="showSettings" />
     <UniverseScreenerDialog v-if="showScreener" v-model:show="showScreener" />
@@ -207,27 +210,87 @@ function openSimulation() {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-3);
   height: var(--header-height);
-  padding: 0 var(--space-4);
+  min-height: var(--header-height);
+  padding: 0 var(--workspace-gutter);
   background: var(--color-surface-1);
   border-bottom: 1px solid var(--color-border-0);
-  flex-shrink: 0;
   -webkit-app-region: drag;
 }
-
-.top-bar-right {
-  display: inline-flex;
+.classic-slogan { display: none; }
+:global([data-style="classic"]) .top-bar { gap: 0; padding: 0 var(--space-4); }
+:global([data-style="classic"]) .brand-block { gap: 0; }
+:global([data-style="classic"]) .classic-slogan { display: inline; font-size: var(--text-xs); color: var(--color-text-tertiary); letter-spacing: .02em; }
+:global([data-style="classic"]) .brand-mark,
+:global([data-style="classic"]) .brand-name,
+:global([data-style="classic"]) .brand-slogan { display: none; }
+:global([data-style="classic"]) .top-bar-right { overflow: visible; }
+:global([data-style="classic"]) .nav-primary { height: 22px; padding: 0 10px; border-color: transparent; background: transparent; color: var(--color-text-tertiary); font: 400 12px var(--font-sans); }
+:global([data-style="classic"]) .nav-primary:hover { color: var(--color-accent); background: var(--color-accent-dim); }
+:global([data-style="classic"]) .cog-btn { width: 22px; height: 22px; }
+:global([data-style="classic"]) .ds-tag { height: 20px; border-color: transparent; }
+.brand-block {
+  display: flex;
   align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
   gap: var(--space-2);
+  white-space: nowrap;
+}
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  font-weight: 700;
+}
+.brand-name {
+  font-size: var(--text-md);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -.02em;
+}
+.brand-slogan {
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--color-border-1);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+}
+.top-bar-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: var(--space-2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
   -webkit-app-region: no-drag;
 }
-
-/* ── Slogan ── */
-.brand-slogan {
-  font-size: var(--text-xs);
-  color: var(--color-text-tertiary);
+.top-bar-right > * { flex: 0 0 auto; }
+.nav-primary {
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-0);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-dim);
+  color: var(--color-accent);
+  font: 600 var(--text-sm) var(--font-sans);
   white-space: nowrap;
-  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.nav-primary:hover { background: var(--color-surface-hover); }
+@media (max-width: 780px) {
+  .brand-slogan { display: none; }
+  .top-bar { gap: var(--space-2); }
+  :global([data-style="classic"]) .top-bar-right { overflow-x: auto; overflow-y: hidden; }
+}
+@media (max-width: 580px) {
+  .brand-name { display: none; }
 }
 
 /* ── Data source tag ── */
@@ -235,8 +298,9 @@ function openSimulation() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 20px;
+  height: var(--control-height);
   padding: 0 var(--space-2);
+  border: 1px solid var(--color-border-0);
   border-radius: var(--radius-sm);
   background: var(--color-accent-dim);
   color: var(--color-accent);
@@ -262,8 +326,9 @@ function openSimulation() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: var(--control-height);
+  height: var(--control-height);
+  flex: 0 0 auto;
   padding: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);

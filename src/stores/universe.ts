@@ -454,14 +454,9 @@ export const useUniverseStore = defineStore('universe', () => {
   /** 修改结果表每页条数（1–100），并持久化；若结果已展示则回到第 1 页重新取数 */
   async function setPageSize(value: number) {
     const v = Math.min(PAGE_SIZE_MAX, Math.max(PAGE_SIZE_MIN, Math.round(value)));
-    const changed = pageSize.value !== v;
+    if (pageSize.value === v) return;
+    await invoke('set_setting', { key: PAGE_SIZE_SETTING_KEY, value: String(v) });
     pageSize.value = v;
-    if (!changed) return;
-    try {
-      await invoke('set_setting', { key: PAGE_SIZE_SETTING_KEY, value: String(v) });
-    } catch (e) {
-      console.warn('[universe] 保存每页条数失败:', e);
-    }
     if (resultsVisible.value && hasLoaded.value) {
       await fetchPage(1);
     }

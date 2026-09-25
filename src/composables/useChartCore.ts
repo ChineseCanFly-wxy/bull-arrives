@@ -34,24 +34,31 @@ export function useChartCore(options: {
 
   function themeColors() {
     const isDark = settings.theme === 'dark';
+    const isClassic = settings.visualStyle === 'classic';
+    const tokens = getComputedStyle(document.documentElement);
+    const color = (name: string, fallback: string) => tokens.getPropertyValue(name).trim() || fallback;
     return {
-      lineColor: isDark ? '#58a6ff' : '#0969da',
+      up: isClassic ? '#f85149' : color('--color-up', '#f85149'),
+      down: isClassic ? '#3fb950' : color('--color-down', '#3fb950'),
+      neutral: isClassic ? '#8b949e' : color('--color-text-secondary', '#8b949e'),
+      lineColor: isClassic ? (isDark ? '#58a6ff' : '#0969da') : color('--color-accent', '#58a6ff'),
+      areaLineColor: isClassic ? '#58a6ff' : color('--color-accent', '#58a6ff'),
       gridHColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)',
       gridVColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.04)',
       axisColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.1)',
-      tickColor: isDark ? '#8b949e' : '#656d76',
-      tooltipBg: isDark ? 'rgba(22,27,34,0.95)' : 'rgba(255,255,255,0.95)',
-      tooltipText: isDark ? '#c9d1d9' : '#24292f',
+      tickColor: isClassic ? (isDark ? '#8b949e' : '#656d76') : color('--color-text-secondary', '#8b949e'),
+      tooltipBg: isClassic ? (isDark ? 'rgba(22,27,34,0.95)' : 'rgba(255,255,255,0.95)') : color('--color-surface-1', '#161b22'),
+      tooltipText: isClassic ? (isDark ? '#c9d1d9' : '#24292f') : color('--color-text-primary', '#e6edf3'),
       separatorColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
       crosshairBg: isDark ? 'rgba(22,27,34,0.9)' : 'rgba(31,35,40,0.85)',
       crosshairText: isDark ? '#c9d1d9' : '#e6edf3',
       // 副图指标配色 — 柱子与主图蜡烛一致，深/浅主题自适应
-      indicatorBarUp: isDark ? 'rgba(248,81,73,0.7)' : 'rgba(248,81,73,0.72)',
-      indicatorBarDown: isDark ? 'rgba(63,185,80,0.7)' : 'rgba(63,185,80,0.72)',
+      indicatorBarUp: isClassic ? (isDark ? 'rgba(248,81,73,0.7)' : 'rgba(248,81,73,0.72)') : color('--color-up', '#f85149'),
+      indicatorBarDown: isClassic ? (isDark ? 'rgba(63,185,80,0.7)' : 'rgba(63,185,80,0.72)') : color('--color-down', '#3fb950'),
       indicatorBarNoChange: isDark ? 'rgba(139,148,158,0.6)' : 'rgba(139,148,158,0.6)',
       // 量比柱低透明度
-      volumeBarUp: isDark ? 'rgba(248,81,73,0.5)' : 'rgba(248,81,73,0.55)',
-      volumeBarDown: isDark ? 'rgba(63,185,80,0.5)' : 'rgba(63,185,80,0.55)',
+      volumeBarUp: isClassic ? (isDark ? 'rgba(248,81,73,0.5)' : 'rgba(248,81,73,0.55)') : color('--color-up', '#f85149'),
+      volumeBarDown: isClassic ? (isDark ? 'rgba(63,185,80,0.5)' : 'rgba(63,185,80,0.55)') : color('--color-down', '#3fb950'),
       volumeBarNoChange: isDark ? 'rgba(139,148,158,0.45)' : 'rgba(139,148,158,0.5)',
       // 多条均线配色
       lineColors: isDark
@@ -74,8 +81,8 @@ export function useChartCore(options: {
       },
       candle: {
         type: 'area',
-        bar: { upColor: '#f85149', downColor: '#3fb950', upBorderColor: '#f85149', downBorderColor: '#3fb950', upWickColor: '#f85149', downWickColor: '#3fb950', noChangeColor: '#8b949e', noChangeBorderColor: '#8b949e', noChangeWickColor: '#8b949e', compareRule: 'current_open' },
-        area: { lineSize: 1.5, lineColor: '#58a6ff' },
+        bar: { upColor: c.up, downColor: c.down, upBorderColor: c.up, downBorderColor: c.down, upWickColor: c.up, downWickColor: c.down, noChangeColor: c.neutral, noChangeBorderColor: c.neutral, noChangeWickColor: c.neutral, compareRule: 'current_open' },
+        area: { lineSize: 1.5, lineColor: c.areaLineColor },
         tooltip: {
           legend: {
             // klinecharts 内置的 {change} 按「上一根 bar」计算，用在分时图上会得到
@@ -88,7 +95,7 @@ export function useChartCore(options: {
               if (typeof close === 'number' && typeof prevClose === 'number' && prevClose > 0) {
                 const pct = ((close - prevClose) / prevClose) * 100;
                 changeText = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
-                changeColor = pct > 0 ? '#f85149' : pct < 0 ? '#3fb950' : '#8b949e';
+                changeColor = pct > 0 ? c.up : pct < 0 ? c.down : c.neutral;
               }
               return [
                 { title: '时间', value: '{time}' },
@@ -108,11 +115,11 @@ export function useChartCore(options: {
         priceMark: {
           high: { show: false },
           low: { show: false },
-          last: { show: false, upColor: '#f85149', downColor: '#3fb950', noChangeColor: '#8b949e', extendTexts: [] },
+          last: { show: false, upColor: c.up, downColor: c.down, noChangeColor: c.neutral, extendTexts: [] },
         },
       },
       indicator: {
-        ohlc: { upColor: '#f85149', downColor: '#3fb950', noChangeColor: '#8b949e', compareRule: 'current_open' },
+        ohlc: { upColor: c.up, downColor: c.down, noChangeColor: c.neutral, compareRule: 'current_open' },
         bars: [
           { upColor: c.indicatorBarUp, downColor: c.indicatorBarDown, noChangeColor: c.indicatorBarNoChange },
         ],
@@ -151,8 +158,8 @@ export function useChartCore(options: {
     chart.value.setStyles({
       candle: {
         type: 'candle_solid',
-        bar: { upColor: '#f85149', downColor: '#3fb950', upBorderColor: '#f85149', downBorderColor: '#3fb950', upWickColor: '#f85149', downWickColor: '#3fb950', noChangeColor: '#8b949e', noChangeBorderColor: '#8b949e', noChangeWickColor: '#8b949e', compareRule: 'current_open' },
-        area: { lineSize: 1.5, lineColor: '#58a6ff' },
+        bar: { upColor: c.up, downColor: c.down, upBorderColor: c.up, downBorderColor: c.down, upWickColor: c.up, downWickColor: c.down, noChangeColor: c.neutral, noChangeBorderColor: c.neutral, noChangeWickColor: c.neutral, compareRule: 'current_open' },
+        area: { lineSize: 1.5, lineColor: c.areaLineColor },
         tooltip: {
           legend: {
             template: [
@@ -172,7 +179,7 @@ export function useChartCore(options: {
         priceMark: {
           high: { show: false },
           low: { show: false },
-          last: { show: false, upColor: '#f85149', downColor: '#3fb950', noChangeColor: '#8b949e', extendTexts: [] },
+          last: { show: false, upColor: c.up, downColor: c.down, noChangeColor: c.neutral, extendTexts: [] },
         },
       },
     });
@@ -270,9 +277,10 @@ export function useChartCore(options: {
   }
 
   // Theme change: reapply styles
-  watch(() => settings.theme, () => {
+  watch(() => [settings.theme, settings.visualStyle], () => {
     reapplyStyles();
-  });
+    resizeChart();
+  }, { flush: 'post' });
 
   onUnmounted(() => {
     disposeChart();
