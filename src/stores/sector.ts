@@ -156,7 +156,7 @@ export const useSectorStore = defineStore('sector', () => {
         ...response.items,
       ];
       rotationStatuses.value = response.statuses;
-      rotationSource.value = `${response.source} · ${response.request_count} 次请求`;
+      rotationSource.value = response.source;
       if (!response.statuses.some(status => status.ok)) {
         rotationError.value = response.statuses.map(status => status.error).filter(Boolean).join('；') || '轮动数据获取失败';
       }

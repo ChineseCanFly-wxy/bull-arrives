@@ -1,5 +1,5 @@
 use super::*;
-use std::sync::Mutex;
+use std::{collections::BTreeMap, sync::Mutex};
 
 pub fn workflow(task: &str, role: &str) -> &'static str {
     match (task, role) {
@@ -141,44 +141,48 @@ pub struct LiveRun {
     pub timeout_seconds: u64,
 }
 
-static LIVE: OnceLock<Mutex<Option<(LiveRun, Instant)>>> = OnceLock::new();
-fn live() -> &'static Mutex<Option<(LiveRun, Instant)>> {
-    LIVE.get_or_init(|| Mutex::new(None))
+static LIVE: OnceLock<Mutex<BTreeMap<u64, (LiveRun, Instant)>>> = OnceLock::new();
+fn live() -> &'static Mutex<BTreeMap<u64, (LiveRun, Instant)>> {
+    LIVE.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
-pub fn set_live(value: LiveRun) {
-    *live().lock().unwrap_or_else(|e| e.into_inner()) = Some((value, Instant::now()));
+pub fn set_live(id: u64, value: LiveRun) {
+    live().lock().unwrap_or_else(|e| e.into_inner()).insert(id, (value, Instant::now()));
 }
-pub fn set_pid(pid: u32) {
-    if let Some((value, _)) = live().lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+pub fn set_pid(id: u64, pid: u32) {
+    if let Some((value, _)) = live().lock().unwrap_or_else(|e| e.into_inner()).get_mut(&id) {
         value.process_id = Some(pid);
     }
 }
-pub fn clear_live() {
-    *live().lock().unwrap_or_else(|e| e.into_inner()) = None;
+pub fn clear_live(id: u64) {
+    live().lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
 }
-pub fn current(fingerprint: &str) -> Option<LiveRun> {
+pub fn has_live() -> bool {
+    !live().lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+}
+pub fn current(fingerprint: &str) -> Vec<LiveRun> {
     live()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
+        .values()
         .filter(|(v, _)| v.fingerprint == fingerprint)
         .map(|(v, started)| {
             let mut value = v.clone();
             value.elapsed_ms = started.elapsed().as_millis() as u64;
             value
         })
+        .collect()
 }
 
 #[derive(Serialize)]
 pub struct Activity {
-    pub current: Option<LiveRun>,
+    pub current: Vec<LiveRun>,
     pub runs: Vec<crate::db::agent::AgentRunRecord>,
 }
 
 pub fn activity(db: &Database, fingerprint: &str) -> Result<Activity, String> {
     let current = current(fingerprint);
     let mut runs = db.agent_run_history(fingerprint)?;
-    if current.is_none() {
+    if current.is_empty() {
         for run in &mut runs {
             if run.status == "running" {
                 run.status = "interrupted".into();

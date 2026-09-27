@@ -1,0 +1,203 @@
+{
+  "symbols": [
+    "600519",
+    "600036",
+    "600000",
+    "600030",
+    "600276",
+    "601318",
+    "601398",
+    "000001",
+    "000333",
+    "000651",
+    "002415",
+    "300750"
+  ],
+  "coverage": {
+    "600519": {
+      "daily": 1629,
+      "minute": 100500,
+      "first_daily": 20200102,
+      "last_daily": 20260918,
+      "last_minute": 20260918150000
+    },
+    "600036": {
+      "daily": 1629,
+      "minute": 100500,
+      "first_daily": 20200102,
+      "last_daily": 20260918,
+      "last_minute": 20260918150000
+    },
+    "600000": {
+      "daily": 1623,
+      "minute": 100479,
+      "first_daily": 20200102,
+      "last_daily": 20260918,
+      "last_minute": 20260918150000
+    },
+    "600030": {
+      "daily": 1623,
+      "minute": 100504,
+      "first_daily": 20200102,
+      "last_daily": 20260918,
+      "last_minute": 20260918150000
+    },
+    "600276": {
+      "daily": 1629,
+      "minute": 100488,
+      "first_daily": 20200102,
+      "last_daily": 20260918,
+      "last_minute": 20260918150000
+    },
+    "601318": {
+      "daily": 1629,
+      "minute": 100259,
+      "first_daily": 20200102,
+      "last_daily": 20260918,
+      "last_minute": 20260918150000
+    },
+    "601398": {
+      "daily": 1629,
+      "minute": 100501,
+      "first_daily": 20200102,
+      "last_daily": 20260918,
+      "last_minute": 20260918150000
+    },
+    "000001": {
+      "daily": 1629,
+      "minute": 100493,
+      "first_daily": 20200102,
+      "last_daily": 20260918,
+      "last_minute": 20260918150000
+    },
+    "000333": {
+      "daily": 1629,
+      "minute": 100470,
+      "first_daily": 20200102,
+      "last_daily": 20260918,
+      "last_minute": 20260918150000
+    },
+    "000651": {
+      "daily": 1629,
+      "minute": 100472,
+      "first_daily": 20200102,
+      "last_daily": 20260918,
+      "last_minute": 20260918150000
+    },
+    "002415": {
+      "daily": 1629,
+      "minute": 100483,
+      "first_daily": 20200102,
+      "last_daily": 20260918,
+      "last_minute": 20260918150000
+    },
+    "300750": {
+      "daily": 1629,
+      "minute": 100468,
+      "first_daily": 20200102,
+      "last_daily": 20260918,
+      "last_minute": 20260918150000
+    }
+  },
+  "cost_round_trip_pct": 0.46,
+  "splits": {
+    "daily_oos_from": 20240101,
+    "minute_oos_from": 20260101
+  },
+  "portfolio_drawdown_note": "未构造资金、仓位、并发订单和公司行动账本；组合最大回撤不可得，禁止把逐笔复利当组合收益",
+  "modes": {
+    "swing_v2": {
+      "all": {
+        "trades": 408,
+        "win_rate_pct": 26.96,
+        "mean_net_pct": 0.164,
+        "median_net_pct": -1.839,
+        "worst_trade_pct": -19.674,
+        "portfolio_max_drawdown_pct": null
+      },
+      "train": {
+        "trades": 219,
+        "win_rate_pct": 26.03,
+        "mean_net_pct": -0.222,
+        "median_net_pct": -1.936,
+        "worst_trade_pct": -19.674,
+        "portfolio_max_drawdown_pct": null
+      },
+      "oos": {
+        "trades": 189,
+        "win_rate_pct": 28.04,
+        "mean_net_pct": 0.611,
+        "median_net_pct": -1.74,
+        "worst_trade_pct": -13.508,
+        "portfolio_max_drawdown_pct": null
+      },
+      "exits": {
+        "trend": 389,
+        "vwap": 0,
+        "risk_or_time": 19
+      }
+    },
+    "intraday_v2": {
+      "all": {
+        "trades": 462,
+        "win_rate_pct": 30.09,
+        "mean_net_pct": -0.449,
+        "median_net_pct": -0.663,
+        "worst_trade_pct": -10.184,
+        "portfolio_max_drawdown_pct": null
+      },
+      "train": {
+        "trades": 336,
+        "win_rate_pct": 33.63,
+        "mean_net_pct": -0.356,
+        "median_net_pct": -0.586,
+        "worst_trade_pct": -10.184,
+        "portfolio_max_drawdown_pct": null
+      },
+      "oos": {
+        "trades": 126,
+        "win_rate_pct": 20.63,
+        "mean_net_pct": -0.697,
+        "median_net_pct": -0.762,
+        "worst_trade_pct": -7.116,
+        "portfolio_max_drawdown_pct": null
+      },
+      "exits": {
+        "trend": 0,
+        "vwap": 462,
+        "risk_or_time": 0
+      }
+    },
+    "long_term_v2": {
+      "all": {
+        "trades": 136,
+        "win_rate_pct": 25.74,
+        "mean_net_pct": 0.19,
+        "median_net_pct": -3.663,
+        "worst_trade_pct": -13.508,
+        "portfolio_max_drawdown_pct": null
+      },
+      "train": {
+        "trades": 72,
+        "win_rate_pct": 25.0,
+        "mean_net_pct": -0.137,
+        "median_net_pct": -4.022,
+        "worst_trade_pct": -11.719,
+        "portfolio_max_drawdown_pct": null
+      },
+      "oos": {
+        "trades": 64,
+        "win_rate_pct": 26.56,
+        "mean_net_pct": 0.557,
+        "median_net_pct": -2.793,
+        "worst_trade_pct": -13.508,
+        "portfolio_max_drawdown_pct": null
+      },
+      "exits": {
+        "trend": 133,
+        "vwap": 0,
+        "risk_or_time": 3
+      }
+    }
+  }
+}

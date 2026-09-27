@@ -7,32 +7,26 @@ use crate::datasource::eastmoney_universe::universe_client;
 use crate::datasource::headers::with_browser_headers;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-/// `push2delay` 在部分网络出口比标准 push2 域名稳定；其余主机作为兜底。
-const HOSTS: [&str; 5] = [
+/// 正式网关在部分网络会断开 TLS；push2test 是东财网页自身配置的备用网关。
+/// 保留实际网关与行情时间，避免将请求时间当成报价时间。
+const HOSTS: [&str; 4] = [
     "https://push2delay.eastmoney.com",
-    "https://push2.eastmoney.com",
-    "https://82.push2.eastmoney.com",
-    "https://17.push2.eastmoney.com",
-    "https://79.push2.eastmoney.com",
-];
-const MEMBER_HOSTS: [&str; 6] = [
-    "https://push2delay.eastmoney.com",
-    "https://29.push2.eastmoney.com",
-    "https://17.push2.eastmoney.com",
-    "https://79.push2.eastmoney.com",
+    "https://push2test.eastmoney.com",
     "https://push2.eastmoney.com",
     "https://82.push2.eastmoney.com",
 ];
-const KLINE_HOSTS: [&str; 3] = [
+static HOST_HINT: AtomicUsize = AtomicUsize::new(0);
+const KLINE_HOSTS: [&str; 4] = [
     "https://push2his.eastmoney.com",
+    "https://push2test.eastmoney.com",
     "https://17.push2his.eastmoney.com",
     "https://91.push2his.eastmoney.com",
 ];
-const ROTATION_HOST: &str = "https://push2delay.eastmoney.com";
 const UT_TOKEN: &str = "bd1d9ddb04089700cf9c27f6f7426281";
 const PAGE_SIZE: u32 = 100;
 const MAX_PAGES: u32 = 20;
@@ -181,7 +175,66 @@ pub struct SectorRotation {
     pub items: Vec<SectorSummary>,
     pub statuses: Vec<RotationStatus>,
     pub source: String,
-    pub request_count: u8,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SectorCatalogItem {
+    pub kind: SectorKind,
+    pub code: String,
+    pub name: String,
+}
+
+fn parse_filter_catalog(payload: &serde_json::Value) -> Vec<SectorCatalogItem> {
+    let mut seen = HashSet::new();
+    payload["bklist"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let kind = match row["type"].as_u64()? {
+                2 => SectorKind::Industry,
+                3 => SectorKind::Concept,
+                _ => return None,
+            };
+            let code = row["code"].as_str()?;
+            let name = row["name"].as_str()?.trim();
+            if !valid_sector_code(code) || name.is_empty() || !seen.insert((kind, code.to_owned()))
+            {
+                return None;
+            }
+            Some(SectorCatalogItem {
+                kind,
+                code: code.into(),
+                name: name.into(),
+            })
+        })
+        .collect()
+}
+
+/// 筛选选项只需代码和名称，使用东财网页的目录，避免依赖实时资金排行。
+pub async fn fetch_filter_catalog() -> Result<Vec<SectorCatalogItem>, String> {
+    let response = with_browser_headers(
+        universe_client().get("https://quote.eastmoney.com/center/api/sidemenu_new.json"),
+        "https://quote.eastmoney.com/center/",
+    )
+    .timeout(REQUEST_TIMEOUT)
+    .send()
+    .await
+    .map_err(|error| error.to_string())?
+    .error_for_status()
+    .map_err(|error| error.to_string())?;
+    let payload = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|error| error.to_string())?;
+    let items = parse_filter_catalog(&payload);
+    if ![SectorKind::Industry, SectorKind::Concept]
+        .iter()
+        .all(|kind| items.iter().any(|item| item.kind == *kind))
+    {
+        return Err("行业/概念目录不完整，请重试".into());
+    }
+    Ok(items)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -192,6 +245,8 @@ enum SectorError {
     Http(#[from] reqwest::Error),
     #[error("板块接口没有返回有效数据")]
     Empty,
+    #[error("板块数据不完整：返回 {received} / 应有 {total} 条")]
+    Incomplete { received: usize, total: usize },
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,6 +258,26 @@ struct ClistResponse {
 struct ClistData {
     total: Option<u32>,
     diff: Option<serde_json::Value>,
+}
+
+struct QuotePage<T> {
+    items: Vec<T>,
+    total: usize,
+    as_of: String,
+    source: String,
+}
+
+fn quote_time(rows: &[serde_json::Value]) -> String {
+    rows.iter()
+        .filter_map(|row| number_at(row, &["f124"]))
+        .filter_map(|time| chrono::DateTime::from_timestamp(time as i64, 0))
+        .max()
+        .map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| "行情时间未返回".into())
 }
 
 fn number(value: &serde_json::Value) -> Option<f64> {
@@ -286,6 +361,7 @@ fn values_from_diff(diff: Option<serde_json::Value>) -> Vec<serde_json::Value> {
     }
 }
 
+#[cfg(test)]
 fn diff_rows(kind: SectorKind, diff: Option<serde_json::Value>) -> Vec<SectorSummary> {
     values_from_diff(diff)
         .iter()
@@ -329,20 +405,14 @@ fn parse_member(row: &serde_json::Value) -> Option<SectorMember> {
     })
 }
 
-fn diff_members(diff: Option<serde_json::Value>) -> Vec<SectorMember> {
-    values_from_diff(diff)
-        .iter()
-        .filter_map(parse_member)
-        .collect()
-}
-
-async fn fetch_page_uncached(
-    kind: SectorKind,
+async fn fetch_clist<T>(
+    filter: &str,
+    field: &str,
+    fields: &str,
     page: u32,
     page_size: u32,
-) -> Result<(Vec<SectorSummary>, usize), SectorError> {
-    let client = universe_client();
-    let fields = "f1,f2,f3,f4,f5,f6,f8,f9,f12,f14,f20,f23,f62,f66,f72,f78,f84,f104,f105,f109,f127,f128,f136,f160,f184";
+    parse: impl Fn(&serde_json::Value, usize) -> Option<T>,
+) -> Result<QuotePage<T>, SectorError> {
     let params = [
         ("pn", page.to_string()),
         ("pz", page_size.to_string()),
@@ -351,55 +421,84 @@ async fn fetch_page_uncached(
         ("ut", UT_TOKEN.to_owned()),
         ("fltt", "2".to_owned()),
         ("invt", "2".to_owned()),
-        ("fid", kind.rank_field().to_owned()),
-        ("fs", kind.market_filter().to_owned()),
-        ("fields", fields.to_owned()),
+        ("fid", field.to_owned()),
+        ("fs", filter.to_owned()),
+        ("fields", format!("{fields},f124")),
     ];
-    let mut last_error = None;
-
+    let mut last_error = SectorError::Empty;
+    let hint = HOST_HINT.load(Ordering::Relaxed) % HOSTS.len();
     for round in 0..RETRY_ROUNDS {
-        for host in HOSTS {
+        for offset in 0..HOSTS.len() {
+            let index = (hint + offset) % HOSTS.len();
+            let host = HOSTS[index];
             let url = format!("{host}/api/qt/clist/get");
-            let response = with_browser_headers(client.get(&url), "https://quote.eastmoney.com/")
+            let result = async {
+                let response = with_browser_headers(
+                    universe_client().get(&url),
+                    "https://quote.eastmoney.com/",
+                )
                 .query(&params)
                 .timeout(REQUEST_TIMEOUT)
                 .send()
-                .await;
-            let response = match response {
-                Ok(response) => response,
-                Err(error) => {
-                    last_error = Some(SectorError::Http(error));
-                    continue;
+                .await?;
+                if !response.status().is_success() {
+                    return Err(SectorError::Status(response.status().as_u16()));
                 }
-            };
-            if !response.status().is_success() {
-                last_error = Some(SectorError::Status(response.status().as_u16()));
-                continue;
+                let data = response
+                    .json::<ClistResponse>()
+                    .await?
+                    .data
+                    .ok_or(SectorError::Empty)?;
+                let total = data.total.ok_or(SectorError::Empty)? as usize;
+                let raw = values_from_diff(data.diff);
+                let as_of = quote_time(&raw);
+                let items: Vec<_> = raw
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, row)| {
+                        parse(
+                            row,
+                            (page.saturating_sub(1) as usize * page_size as usize) + i + 1,
+                        )
+                    })
+                    .collect();
+                if items.len() != raw.len()
+                    || (items.is_empty()
+                        && page.saturating_sub(1) as usize * (page_size as usize) < total)
+                {
+                    return Err(SectorError::Empty);
+                }
+                Ok(QuotePage {
+                    items,
+                    total,
+                    as_of,
+                    source: host.trim_start_matches("https://").to_owned(),
+                })
             }
-
-            match response.json::<ClistResponse>().await {
-                Ok(payload) => {
-                    let Some(data) = payload.data else {
-                        last_error = Some(SectorError::Empty);
-                        continue;
-                    };
-                    let total = data.total.unwrap_or(0) as usize;
-                    let rows = diff_rows(kind, data.diff);
-                    if rows.is_empty() {
-                        last_error = Some(SectorError::Empty);
-                        continue;
-                    }
-                    return Ok((rows, total));
+            .await;
+            match result {
+                Ok(value) => {
+                    HOST_HINT.store(index, Ordering::Relaxed);
+                    return Ok(value);
                 }
-                Err(error) => last_error = Some(SectorError::Http(error)),
+                Err(error) => last_error = error,
             }
         }
         if round + 1 < RETRY_ROUNDS {
-            tokio::time::sleep(Duration::from_millis(300 * (round as u64 + 1))).await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
         }
     }
+    Err(last_error)
+}
 
-    Err(last_error.unwrap_or(SectorError::Empty))
+async fn fetch_page_uncached(
+    kind: SectorKind,
+    page: u32,
+    page_size: u32,
+) -> Result<QuotePage<SectorSummary>, SectorError> {
+    fetch_clist(kind.market_filter(), kind.rank_field(),
+        "f1,f2,f3,f4,f5,f6,f8,f9,f12,f14,f20,f23,f62,f66,f72,f78,f84,f104,f105,f109,f127,f128,f136,f160,f184",
+        page, page_size, |row, rank| parse_summary(kind, row, rank)).await
 }
 
 fn valid_sector_code(code: &str) -> bool {
@@ -412,66 +511,42 @@ async fn fetch_member_page_uncached(
     sector_code: &str,
     page: u32,
     page_size: u32,
-) -> Result<(Vec<SectorMember>, usize), SectorError> {
-    let client = universe_client();
-    let params = [
-        ("pn", page.to_string()),
-        ("pz", page_size.to_string()),
-        ("po", "1".to_owned()),
-        ("np", "1".to_owned()),
-        ("ut", UT_TOKEN.to_owned()),
-        ("fltt", "2".to_owned()),
-        ("invt", "2".to_owned()),
-        ("fid", "f12".to_owned()),
-        ("fs", format!("b:{sector_code} f:!50")),
-        ("fields", "f2,f3,f4,f6,f8,f9,f12,f14,f20,f23".to_owned()),
-    ];
-    let mut last_error = None;
+) -> Result<QuotePage<SectorMember>, SectorError> {
+    fetch_clist(
+        &format!("b:{sector_code} f:!50"),
+        "f12",
+        "f2,f3,f4,f6,f8,f9,f12,f14,f20,f23",
+        page,
+        page_size,
+        |row, _| parse_member(row),
+    )
+    .await
+}
 
-    for round in 0..RETRY_ROUNDS {
-        for host in MEMBER_HOSTS {
-            let url = format!("{host}/api/qt/clist/get");
-            let response =
-                match with_browser_headers(client.get(&url), "https://quote.eastmoney.com/")
-                    .query(&params)
-                    .timeout(REQUEST_TIMEOUT)
-                    .send()
-                    .await
-                {
-                    Ok(response) => response,
-                    Err(error) => {
-                        last_error = Some(SectorError::Http(error));
-                        continue;
-                    }
-                };
-            if !response.status().is_success() {
-                last_error = Some(SectorError::Status(response.status().as_u16()));
-                continue;
-            }
+fn require_complete(received: usize, total: usize) -> Result<(), SectorError> {
+    if received == total && total > 0 {
+        Ok(())
+    } else {
+        Err(SectorError::Incomplete { received, total })
+    }
+}
 
-            match response.json::<ClistResponse>().await {
-                Ok(payload) => {
-                    let Some(data) = payload.data else {
-                        last_error = Some(SectorError::Empty);
-                        continue;
-                    };
-                    let total = data.total.unwrap_or(0) as usize;
-                    let rows = diff_members(data.diff);
-                    if rows.is_empty() {
-                        last_error = Some(SectorError::Empty);
-                        continue;
-                    }
-                    return Ok((rows, total));
-                }
-                Err(error) => last_error = Some(SectorError::Http(error)),
-            }
-        }
-        if round + 1 < RETRY_ROUNDS {
-            tokio::time::sleep(Duration::from_millis(300 * (round as u64 + 1))).await;
+/// 网关可能将 pz=5000 截成 100 条；必须补齐后再筛选或统计。
+async fn fetch_all_members(sector_code: &str) -> Result<QuotePage<SectorMember>, SectorError> {
+    let mut result = fetch_member_page_uncached(sector_code, 1, 5_000).await?;
+    let received = result.items.len();
+    if received > 0 && received < result.total {
+        for page in 2..=result.total.div_ceil(received).min(100) {
+            let next =
+                fetch_member_page_uncached(sector_code, page as u32, received as u32).await?;
+            require_complete(next.total, result.total)?;
+            result.items.extend(next.items);
         }
     }
-
-    Err(last_error.unwrap_or(SectorError::Empty))
+    let mut seen = HashSet::new();
+    result.items.retain(|item| seen.insert(item.code.clone()));
+    require_complete(result.items.len(), result.total)?;
+    Ok(result)
 }
 
 fn sort_summaries(rows: &mut [SectorSummary]) {
@@ -484,24 +559,22 @@ fn sort_summaries(rows: &mut [SectorSummary]) {
     });
 }
 
-async fn fetch_catalog(kind: SectorKind) -> Result<Vec<SectorSummary>, SectorError> {
-    let (mut rows, total) = fetch_page_uncached(kind, 1, PAGE_SIZE).await?;
-    let pages = ((total.max(rows.len()) as u32 + PAGE_SIZE - 1) / PAGE_SIZE).min(MAX_PAGES);
+async fn fetch_catalog(kind: SectorKind) -> Result<QuotePage<SectorSummary>, SectorError> {
+    let mut result = fetch_page_uncached(kind, 1, PAGE_SIZE).await?;
+    let pages = (result.total as u32).div_ceil(PAGE_SIZE).min(MAX_PAGES);
     for page in 2..=pages {
-        let (mut next, _) = fetch_page_uncached(kind, page, PAGE_SIZE).await?;
-        rows.append(&mut next);
+        let next = fetch_page_uncached(kind, page, PAGE_SIZE).await?;
+        require_complete(next.total, result.total)?;
+        result.items.extend(next.items);
     }
-
-    let mut unique = HashMap::with_capacity(rows.len());
-    for row in rows {
-        unique.entry(row.code.clone()).or_insert(row);
+    let mut seen = HashSet::new();
+    result.items.retain(|row| seen.insert(row.code.clone()));
+    require_complete(result.items.len(), result.total)?;
+    sort_summaries(&mut result.items);
+    for (i, row) in result.items.iter_mut().enumerate() {
+        row.rank = i as u32 + 1;
     }
-    let mut rows: Vec<_> = unique.into_values().collect();
-    sort_summaries(&mut rows);
-    if rows.is_empty() {
-        return Err(SectorError::Empty);
-    }
-    Ok(rows)
+    Ok(result)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -549,10 +622,6 @@ struct CachedMemberCodes {
 static MEMBER_CODE_CACHE: OnceLock<RwLock<HashMap<(SectorKind, String), CachedMemberCodes>>> =
     OnceLock::new();
 
-fn now_text() -> String {
-    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
-}
-
 fn page_of(rows: &[SectorSummary], page: u32, page_size: u32) -> Vec<SectorSummary> {
     let start = page.saturating_sub(1) as usize * page_size as usize;
     rows.iter()
@@ -592,22 +661,23 @@ pub async fn fetch_summaries(
     let result = if keyword.is_empty() {
         fetch_page_uncached(kind, page, page_size)
             .await
-            .map(|(mut rows, total)| {
-                sort_summaries(&mut rows);
+            .map(|mut result| {
+                sort_summaries(&mut result.items);
                 SectorSummaryPage {
                     kind,
                     page,
                     page_size,
-                    total: total.max(rows.len()),
-                    items: rows,
-                    as_of: now_text(),
-                    source: "eastmoney".to_owned(),
+                    total: result.total,
+                    items: result.items,
+                    as_of: result.as_of,
+                    source: result.source,
                     stale: false,
                 }
             })
     } else {
-        fetch_catalog(kind).await.map(|rows| {
-            let filtered: Vec<_> = rows
+        fetch_catalog(kind).await.map(|result| {
+            let filtered: Vec<_> = result
+                .items
                 .iter()
                 .filter(|row| row.name.contains(&keyword) || row.code.contains(&keyword))
                 .cloned()
@@ -618,8 +688,8 @@ pub async fn fetch_summaries(
                 page_size,
                 total: filtered.len(),
                 items: page_of(&filtered, page, page_size),
-                as_of: now_text(),
-                source: "eastmoney".to_owned(),
+                as_of: result.as_of,
+                source: result.source,
                 stale: false,
             }
         })
@@ -681,15 +751,15 @@ pub async fn fetch_members(
 
     let result = fetch_member_page_uncached(&sector_code, page, page_size)
         .await
-        .map(|(items, total)| SectorMemberPage {
+        .map(|result| SectorMemberPage {
             kind,
             sector_code: sector_code.clone(),
             page,
             page_size,
-            total: total.max(items.len()),
-            items,
-            as_of: now_text(),
-            source: "eastmoney".to_owned(),
+            total: result.total,
+            items: result.items,
+            as_of: result.as_of,
+            source: result.source,
             stale: false,
         });
 
@@ -719,8 +789,7 @@ pub async fn fetch_members(
 
 /// 获取一个行业/概念的全部成分股代码，供全市场筛选器使用。
 ///
-/// 东财成分接口支持一次返回完整板块；这里使用与涨停统计相同的 5000 上限，
-/// 并以 `MEMBER_TTL` 缓存，保证翻页时不重复请求同一板块。
+/// 与涨停统计共用完整成分分页校验，以 `MEMBER_TTL` 缓存完整代码集合。
 pub async fn fetch_member_codes(
     kind: SectorKind,
     sector_code: &str,
@@ -741,10 +810,10 @@ pub async fn fetch_member_codes(
         }
     }
 
-    let (items, _) = fetch_member_page_uncached(&sector_code, 1, 5_000)
+    let result = fetch_all_members(&sector_code)
         .await
         .map_err(|error| error.to_string())?;
-    let value: HashSet<String> = items.into_iter().map(|item| item.code).collect();
+    let value: HashSet<String> = result.items.into_iter().map(|item| item.code).collect();
     if value.is_empty() {
         return Err(format!("板块 {sector_code} 没有返回成分股"));
     }
@@ -759,29 +828,23 @@ pub async fn fetch_member_codes(
     Ok(value)
 }
 
-/// 用一次响应取回全部成分，保证派生数量来自同一快照；接口若截断则拒绝返回局部统计。
+/// 取齐全部成分后计算派生数量；缺页或重复时拒绝返回局部统计。
 pub async fn fetch_limit_up_stats(sector_code: &str) -> Result<SectorLimitUpStats, String> {
     let sector_code = sector_code.trim().to_uppercase();
     if !valid_sector_code(&sector_code) {
         return Err("板块代码格式无效".into());
     }
-    let (items, total) = fetch_member_page_uncached(&sector_code, 1, 5_000)
+    let result = fetch_all_members(&sector_code)
         .await
         .map_err(|error| error.to_string())?;
-    if items.len() < total {
-        return Err(format!(
-            "成分股快照被截断（返回 {} / 应有 {}），未生成局部涨停家数",
-            items.len(),
-            total
-        ));
-    }
+    let items = result.items;
     let limit_up_count = items.iter().filter(|item| member_is_limit_up(item)).count();
     Ok(SectorLimitUpStats {
         sector_code,
         limit_up_count,
         member_count: items.len(),
-        as_of: now_text(),
-        source: "eastmoney_snapshot_derived".into(),
+        as_of: result.as_of,
+        source: format!("{} · derived", result.source),
         methodology: "非官方派生：同一成分股快照按板块涨跌幅阈值统计当前涨停（主板 10%，含 2026-07-06 起并轨的主板 ST/*ST；创业板/科创板 20%；北交所 30%）；N/C 无涨跌幅限制新股不计。".into(),
     })
 }
@@ -884,46 +947,29 @@ pub async fn fetch_history(sector_code: &str, period: &str) -> Result<SectorHist
                     .map(|item| item.date.clone())
                     .unwrap_or_default(),
                 items,
-                source: "eastmoney · 90.BK · unadjusted".to_owned(),
+                source: format!(
+                    "{} · 90.BK · unadjusted",
+                    host.trim_start_matches("https://")
+                ),
             });
         }
     }
     Err(last_error)
 }
 
-async fn fetch_rotation_kind(kind: SectorKind) -> Result<Vec<SectorSummary>, String> {
-    // 单次取完整目录，确保行业/概念轮动合计最多两个按需请求。
-    let fields = "f2,f3,f12,f14,f62,f66,f72,f78,f84,f109,f127,f160,f184";
-    let params = [
-        ("pn", "1".to_owned()),
-        ("pz", "500".to_owned()),
-        ("po", "1".to_owned()),
-        ("np", "1".to_owned()),
-        ("ut", UT_TOKEN.to_owned()),
-        ("fltt", "2".to_owned()),
-        ("invt", "2".to_owned()),
-        ("fid", "f62".to_owned()),
-        ("fs", kind.market_filter().to_owned()),
-        ("fields", fields.to_owned()),
-    ];
-    let url = format!("{ROTATION_HOST}/api/qt/clist/get");
-    let response = with_browser_headers(universe_client().get(&url), "https://data.eastmoney.com/")
-        .query(&params)
-        .timeout(REQUEST_TIMEOUT)
-        .send()
+async fn fetch_rotation_kind(kind: SectorKind) -> Result<QuotePage<SectorSummary>, String> {
+    // 东财单页最多约 100 条；复用排行目录的分页和多域名重试。
+    let mut result = tokio::time::timeout(Duration::from_secs(30), fetch_catalog(kind))
         .await
-        .map_err(|error| format!("轮动请求失败：{error}"))?
-        .error_for_status()
-        .map_err(|error| format!("轮动接口 HTTP 错误：{error}"))?
-        .json::<ClistResponse>()
-        .await
-        .map_err(|error| format!("轮动响应解析失败：{error}"))?;
-    let rows = diff_rows(kind, response.data.and_then(|data| data.diff));
-    if rows.is_empty() {
-        Err("轮动接口没有返回有效数据".into())
-    } else {
-        Ok(rows)
-    }
+        .map_err(|_| "板块目录请求超时".to_owned())?
+        .map_err(|error| error.to_string())?;
+    result.items.sort_by(|a, b| {
+        b.main_net_inflow
+            .unwrap_or(f64::NEG_INFINITY)
+            .partial_cmp(&a.main_net_inflow.unwrap_or(f64::NEG_INFINITY))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(result)
 }
 
 pub async fn fetch_rotation() -> SectorRotation {
@@ -931,36 +977,40 @@ pub async fn fetch_rotation() -> SectorRotation {
         fetch_rotation_kind(SectorKind::Industry),
         fetch_rotation_kind(SectorKind::Concept)
     );
-    let as_of = now_text();
     let mut items = Vec::new();
     let mut statuses = Vec::with_capacity(2);
+    let mut sources = Vec::new();
     for (kind, result) in [
         (SectorKind::Industry, industry),
         (SectorKind::Concept, concept),
     ] {
         match result {
-            Ok(mut rows) => {
-                items.append(&mut rows);
+            Ok(mut result) => {
+                items.append(&mut result.items);
+                sources.push(result.source);
                 statuses.push(RotationStatus {
                     kind,
                     ok: true,
                     error: None,
-                    as_of: as_of.clone(),
+                    as_of: result.as_of,
                 });
             }
             Err(error) => statuses.push(RotationStatus {
                 kind,
                 ok: false,
                 error: Some(error),
-                as_of: as_of.clone(),
+                as_of: String::new(),
             }),
         }
     }
     SectorRotation {
         items,
         statuses,
-        source: "eastmoney · f127/f109/f160 · f62/f184".to_owned(),
-        request_count: 2,
+        source: {
+            sources.sort();
+            sources.dedup();
+            sources.join(" / ")
+        },
     }
 }
 
@@ -968,6 +1018,96 @@ pub async fn fetch_rotation() -> SectorRotation {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn rejects_partial_members_and_uses_quote_timestamp() {
+        assert!(require_complete(100, 3874).is_err());
+        assert!(require_complete(0, 0).is_err());
+        assert!(require_complete(3874, 3874).is_ok());
+        let rows = vec![json!({"f124": 1790235570_i64})];
+        assert_eq!(
+            quote_time(&rows),
+            chrono::DateTime::from_timestamp(1790235570, 0)
+                .unwrap()
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        );
+        assert_eq!(quote_time(&[json!({"f124": "-"})]), "行情时间未返回");
+    }
+
+    #[tokio::test]
+    #[ignore = "需要东方财富实时网络；覆盖排行、成分、筛选代码、轮动与三种K线"]
+    async fn live_sector_flow_smoke() {
+        for kind in [SectorKind::Industry, SectorKind::Concept] {
+            let page = fetch_summaries(kind, 1, 50, "", true).await.unwrap();
+            assert_eq!(page.items.len(), 50);
+            assert!(page.total > 100);
+            assert_ne!(page.as_of, "行情时间未返回");
+            eprintln!(
+                "{kind:?}: {} sectors / {} / {}",
+                page.total, page.source, page.as_of
+            );
+            let next = fetch_summaries(kind, 2, 50, "", true).await.unwrap();
+            assert!(page
+                .items
+                .iter()
+                .all(|row| next.items.iter().all(|other| other.code != row.code)));
+        }
+        let members = fetch_members(SectorKind::Industry, "BK0421", 1, 50, true)
+            .await
+            .unwrap();
+        assert!(!members.items.is_empty());
+        let codes = fetch_member_codes(SectorKind::Concept, "BK0596")
+            .await
+            .unwrap();
+        assert!(codes.len() > 100, "大板块不能被截成第一页");
+        eprintln!(
+            "BK0421 members: {}; BK0596 complete codes: {}",
+            members.total,
+            codes.len()
+        );
+        let stats = fetch_limit_up_stats("BK0421").await.unwrap();
+        assert_eq!(stats.member_count, members.total);
+        let rotation = fetch_rotation().await;
+        assert!(
+            rotation.statuses.iter().all(|status| status.ok),
+            "{:?}",
+            rotation.statuses
+        );
+        assert!(rotation
+            .items
+            .iter()
+            .any(|row| row.main_net_inflow.is_some()));
+        eprintln!("rotation: {} / {}", rotation.items.len(), rotation.source);
+        for period in ["daily", "weekly", "monthly"] {
+            let history = fetch_history("BK0421", period).await.unwrap();
+            assert!(!history.items.is_empty());
+            eprintln!(
+                "{period}: {} bars through {} / {}",
+                history.items.len(),
+                history.as_of,
+                history.source
+            );
+        }
+    }
+
+    #[test]
+    fn filter_catalog_keeps_industries_and_concepts_without_quotes() {
+        let rows = parse_filter_catalog(&json!({"bklist": [
+            {"type":1,"code":"BK0169","name":"四川板块"},
+            {"type":2,"code":"BK0421","name":"铁路公路"},
+            {"type":3,"code":"BK0955","name":"C2M概念"},
+            {"type":2,"code":"BK0421","name":"铁路公路"},
+            {"type":2,"code":"600000","name":"股票"},
+            {"type":3,"code":"BK0493","name":" "}
+        ]}));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].kind, SectorKind::Industry);
+        assert_eq!(rows[0].code, "BK0421");
+        assert_eq!(rows[1].kind, SectorKind::Concept);
+        assert_eq!(rows[1].name, "C2M概念");
+    }
 
     #[test]
     fn parses_current_clist_summary_by_field_name() {

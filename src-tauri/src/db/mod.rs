@@ -181,6 +181,9 @@ impl Database {
             ("alerts_enabled", "1"),
             // 资讯轮询会联网并可能弹通知，默认关闭。
             ("news_notifications_enabled", "0"),
+            ("news_notification_mode", "direct"),
+            ("news_ai_daily_limit", "3"),
+            ("news_ai_keywords", ""),
             ("news_flash_initialized", "0"),
             ("news_announcement_initialized", "0"),
             // AI / 量化智能总开关：关闭后所有「自动运行」的智能功能一并停止。
@@ -190,8 +193,8 @@ impl Database {
             ("ai_monitor_enabled", "1"),
             // Claude Code 由应用探测并使用其自身登录；不在应用内保存凭据。
             ("agent_claude_path", ""),
-            ("agent_timeout_seconds", "90"),
-            ("agent_budget_usd", "0.20"),
+            ("agent_timeout_seconds", "180"),
+            ("agent_budget_usd", "10.00"),
             // 本地 stockdb 会启动外部程序，必须由用户明确开启。
             ("local_history_enabled", "0"),
             ("local_history_url", "http://127.0.0.1:7899"),
@@ -209,6 +212,15 @@ impl Database {
             if self.get_setting(k)?.is_none() {
                 self.set_setting(k, v)?;
             }
+        }
+        // Older builds used "ai" to send every filtered story to Claude. Move that costly mode to selective AI.
+        if self.get_setting("news_notification_mode")?.as_deref() == Some("ai") {
+            self.set_setting("news_notification_mode", "hybrid")?;
+        }
+        if !self.get_setting("agent_budget_usd")?.as_deref()
+            .and_then(|value| value.parse::<f64>().ok())
+            .is_some_and(|value| value.is_finite() && (10.0..=50.0).contains(&value)) {
+            self.set_setting("agent_budget_usd", "10.00")?;
         }
         // 旧版本默认打开了“允许读取本地服务”，但并未授权应用自动执行 exe。
         // 首次升级到托管版时安全地关闭一次，之后只保留用户的新选择。

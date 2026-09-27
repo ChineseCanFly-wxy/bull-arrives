@@ -15,17 +15,17 @@ pub mod interactive;
 pub mod live;
 pub mod workbench;
 
-const DEFAULT_TIMEOUT_SECS: u64 = 90;
+const DEFAULT_TIMEOUT_SECS: u64 = 180;
 const MAX_INPUT_BYTES: usize = 512 * 1024;
 const MAX_OUTPUT_BYTES: u64 = 64 * 1024;
 const SCHEMA_VERSION: &str = "agent-analysis-v2";
 const PROMPT_REVISION: &str = "single-stock-v4";
-const NEWS_SCHEMA_VERSION: &str = "agent-news-v1";
-const NEWS_PROMPT_REVISION: &str = "news-summary-v2";
+const NEWS_SCHEMA_VERSION: &str = "agent-news-v3";
+const NEWS_PROMPT_REVISION: &str = "news-summary-v4";
 const FILTER_SCHEMA_VERSION: &str = "agent-filter-v1";
 const FILTER_PROMPT_REVISION: &str = "dynamic-filter-v1";
 const TEAM_SCHEMA_VERSION: &str = "agent-team-v1";
-const TEAM_PROMPT_REVISION: &str = "multi-role-v2";
+const TEAM_PROMPT_REVISION: &str = "multi-role-v3";
 const LAUNCHER_ARG: &str = "--bull-arrives-agent-launcher";
 const START_FILE: &str = ".start";
 /// 每次调用用的工作目录都放在这个子目录下。
@@ -53,9 +53,9 @@ const NEWS_OUTPUT_SCHEMA: &str = r#"{
   "type":"object","additionalProperties":false,
   "required":["schema_version","context_fingerprint","items"],
   "properties":{
-    "schema_version":{"const":"agent-news-v1"},
+    "schema_version":{"const":"agent-news-v3"},
     "context_fingerprint":{"type":"string","minLength":64,"maxLength":64},
-    "items":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","additionalProperties":false,"required":["id","summary","sentiment","confidence","evidence"],"properties":{"id":{"type":"string","minLength":1,"maxLength":160},"summary":{"type":"string","description":"Paraphrase facts from this item's title and body only. Never include metadata or key=value labels.","minLength":1,"maxLength":180},"sentiment":{"enum":["positive","negative","neutral","uncertain"]},"confidence":{"type":"integer","minimum":0,"maximum":100},"evidence":{"type":"string","description":"One contiguous exact substring copied from this item's title or body only, without any label or added character.","minLength":1,"maxLength":120}}}}
+    "items":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","additionalProperties":false,"required":["id","summary","viewpoint","sentiment","impact_level","industries","industry_basis","stocks","stock_names","confidence","evidence"],"properties":{"id":{"type":"string","minLength":1,"maxLength":160},"summary":{"type":"string","description":"Facts from this item's title and body only.","minLength":1,"maxLength":180},"viewpoint":{"type":"string","description":"Cautious market interpretation, not a trading recommendation.","minLength":1,"maxLength":160},"sentiment":{"enum":["positive","negative","neutral","uncertain"]},"impact_level":{"enum":["high","medium","low","uncertain"]},"industries":{"type":"array","maxItems":3,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":24}},"industry_basis":{"enum":["source","inferred","unknown"]},"stocks":{"type":"array","maxItems":5,"uniqueItems":true,"items":{"type":"string","minLength":6,"maxLength":6}},"stock_names":{"type":"array","maxItems":5,"uniqueItems":true,"items":{"type":"string","minLength":2,"maxLength":24}},"confidence":{"type":"integer","minimum":0,"maximum":100},"evidence":{"type":"string","description":"One contiguous exact substring copied from this item's title or body only.","minLength":1,"maxLength":120}}}}
   }
 }"#;
 
@@ -83,21 +83,8 @@ const TEAM_OUTPUT_SCHEMA: &str = r#"{
 }"#;
 
 const CLAUDE_ARGS: &[&str] = &[
-    "--safe-mode",
-    "--strict-mcp-config",
-    "--mcp-config",
-    "empty-mcp.json",
-    "--disable-slash-commands",
-    "--no-chrome",
-    "--permission-mode",
-    "dontAsk",
-    "--permission-prompts",
-    "none",
-    "--tools",
-    "Read,Write",
     "--allowedTools",
-    "Read(input.json),Read(schema.json),Edit(response.json)",
-    "--no-session-persistence",
+    "Read(input.json),Read(schema.json),Read(workflow.md),Write(response.json),Edit(response.json)",
     "--append-system-prompt-file",
     "workflow.md",
     "-p",
@@ -106,8 +93,6 @@ const CLAUDE_ARGS: &[&str] = &[
 
 static RUN_GATE: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
 static NEXT_RUN: AtomicU64 = AtomicU64::new(1);
-static CURRENT_RUN: AtomicU64 = AtomicU64::new(0);
-static CANCEL_RUN: AtomicU64 = AtomicU64::new(0);
 static CANCEL_EPOCH: AtomicU64 = AtomicU64::new(0);
 static RUN_DIR_NONCE: AtomicU64 = AtomicU64::new(1);
 
@@ -240,7 +225,13 @@ pub struct NewsAgentItem {
 pub struct NewsSummaryItem {
     pub id: String,
     pub summary: String,
+    pub viewpoint: String,
     pub sentiment: String,
+    pub impact_level: String,
+    pub industries: Vec<String>,
+    pub industry_basis: String,
+    pub stocks: Vec<String>,
+    pub stock_names: Vec<String>,
     pub confidence: u8,
     pub evidence: String,
 }
@@ -276,7 +267,13 @@ struct NewsModelOutput {
 struct NewsSummaryItemOutput {
     id: String,
     summary: String,
+    viewpoint: String,
     sentiment: String,
+    impact_level: String,
+    industries: Vec<String>,
+    industry_basis: String,
+    stocks: Vec<String>,
+    stock_names: Vec<String>,
     confidence: u8,
     evidence: String,
 }
@@ -448,20 +445,17 @@ fn parse_news_output(raw: &str, input: &NewsFrozenInput) -> Result<Vec<NewsSumma
     {
         return Err("Claude Code 返回的资讯摘要批次不匹配".into());
     }
-    let sources: BTreeMap<_, _> = input
-        .items
-        .iter()
-        .map(|item| (item.id.as_str(), format!("{}\n{}", item.title, item.body)))
-        .collect();
+    let sources: BTreeMap<_, _> = input.items.iter().map(|item| (item.id.as_str(), item)).collect();
     let mut seen = HashSet::new();
     output
         .items
         .into_iter()
         .map(|item| {
-            let source = sources
+            let source_item = sources
                 .get(item.id.as_str())
                 .ok_or_else(|| "Claude Code 返回了未知资讯编号".to_string())?;
-            let invented_number = ascii_number_tokens(&item.summary)
+            let source = format!("{}\n{}", source_item.title, source_item.body);
+            let invented_number = ascii_number_tokens(&format!("{} {}", item.summary, item.viewpoint))
                 .iter()
                 .any(|number| !source.contains(number));
             let advice = [
@@ -473,29 +467,67 @@ fn parse_news_output(raw: &str, input: &NewsFrozenInput) -> Result<Vec<NewsSumma
                 "应卖出",
             ]
             .iter()
-            .any(|phrase| item.summary.contains(phrase));
+            .any(|phrase| item.summary.contains(phrase) || item.viewpoint.contains(phrase));
+            let industries_valid = item.industries.len() <= 3
+                && item.industries.iter().all(|industry| {
+                    !industry.trim().is_empty()
+                        && industry.chars().count() <= 24
+                        && !industry.contains(['\r', '\n'])
+                })
+                && item.industries.iter().collect::<HashSet<_>>().len() == item.industries.len()
+                && match item.industry_basis.as_str() {
+                    "source" => !item.industries.is_empty()
+                        && item.industries.iter().all(|industry| source.contains(industry)),
+                    "inferred" => !item.industries.is_empty(),
+                    "unknown" => item.industries.is_empty(),
+                    _ => false,
+                };
+            let stocks_valid = item.stocks.len() <= 5
+                && item.stocks.iter().collect::<HashSet<_>>().len() == item.stocks.len()
+                && item.stocks.iter().all(|stock| source_item.symbols.contains(stock));
+            let names_valid = item.stock_names.len() <= 5
+                && item.stock_names.iter().collect::<HashSet<_>>().len() == item.stock_names.len()
+                && item.stock_names.iter().all(|name| {
+                    (2..=24).contains(&name.chars().count())
+                        && source.contains(name)
+                        && !matches!(name.as_str(), "公司" | "上市公司" | "企业" | "股东")
+                        && !name.contains(['\r', '\n'])
+                });
             if !seen.insert(item.id.clone())
                 || item.summary.trim().is_empty()
                 || item.summary.chars().count() > 180
                 || item.summary.contains('\r')
                 || item.summary.contains('\n')
+                || item.viewpoint.trim().is_empty()
+                || item.viewpoint.chars().count() > 160
+                || item.viewpoint.contains(['\r', '\n'])
                 || item.evidence.trim().is_empty()
                 || item.evidence.chars().count() > 120
                 || !source.contains(item.evidence.trim())
                 || item.confidence > 100
                 || invented_number
                 || advice
+                || !industries_valid
+                || !stocks_valid
+                || !names_valid
                 || !matches!(
                     item.sentiment.as_str(),
                     "positive" | "negative" | "neutral" | "uncertain"
                 )
+                || !matches!(item.impact_level.as_str(), "high" | "medium" | "low" | "uncertain")
             {
                 return Err("Claude Code 资讯摘要含无效字段或非原文依据".into());
             }
             Ok(NewsSummaryItem {
                 id: item.id,
                 summary: item.summary.trim().to_string(),
+                viewpoint: item.viewpoint.trim().to_string(),
                 sentiment: item.sentiment,
+                impact_level: item.impact_level,
+                industries: item.industries,
+                industry_basis: item.industry_basis,
+                stocks: item.stocks,
+                stock_names: item.stock_names,
                 confidence: item.confidence,
                 evidence: item.evidence.trim().to_string(),
             })
@@ -770,22 +802,24 @@ fn parse_output(
         "cautious" => "谨慎，当前量化依据的确定性不足",
         _ => return Err("结论枚举无效".into()),
     };
-    if !valid_explanation(&output.summary, 500)
-        || !(2..=6).contains(&output.claims.len())
-        || !output.claims.iter().any(|claim| claim.kind == "risk")
-    {
-        return Err("AI 解读缺少有效中文说明或风险依据（数值应引用证据卡）".into());
+    validate_explanation(&output.summary, 500, "summary")?;
+    if !(2..=6).contains(&output.claims.len()) {
+        return Err("claims 应包含两到六条判断".into());
+    }
+    if !output.claims.iter().any(|claim| claim.kind == "risk") {
+        return Err("claims 缺少风险判断".into());
     }
     let claims = output
         .claims
         .into_iter()
-        .map(|claim| {
+        .enumerate()
+        .map(|(index, claim)| {
             if !matches!(claim.kind.as_str(), "support" | "risk" | "watch")
-                || !valid_explanation(&claim.text, 300)
                 || !(1..=4).contains(&claim.evidence_fields.len())
             {
                 return Err("AI 判断格式无效".to_string());
             }
+            validate_explanation(&claim.text, 300, &format!("claims[{}].text", index + 1))?;
             let mut seen = HashSet::new();
             let evidence = claim
                 .evidence_fields
@@ -877,10 +911,14 @@ fn parse_output(
     })
 }
 
-fn valid_explanation(text: &str, max: usize) -> bool {
-    !text.trim().is_empty()
-        && text.chars().count() <= max
-        && !text.chars().any(|c| c.is_ascii_digit())
+fn validate_explanation(text: &str, max: usize, field: &str) -> Result<(), String> {
+    if text.trim().is_empty() || text.chars().count() > max {
+        return Err(format!("{field} 不能为空且不能超过 {max} 字"));
+    }
+    if text.chars().any(|c| c.is_ascii_digit()) {
+        return Err(format!("{field} 含阿拉伯数字；请让 Claude 把价格、日期、代码和指标数值改成文字描述，数字由 evidence_fields 对应的证据卡展示，然后重新导入"));
+    }
+    Ok(())
 }
 
 fn executable_identity(path: &Path) -> Result<String, String> {
@@ -913,7 +951,7 @@ fn cache_key(fingerprint: &str, path: &Path) -> Result<String, String> {
 /// Windows 的 8.3 短名（`WEIXY4~1`、`PROGRA~2`、`FOO~1.TXT`）。
 ///
 /// 这类路径会让 Claude Code 的文件放行规则（`Read(input.json)` 等）匹配不上，
-/// `dontAsk` 模式下 Read / Write 会被整体拒绝，任务文件既读不到也写不出。
+/// 任务文件的 Read / Write 预授权会因短名路径匹配失败，导致文件无法读取或写入。
 /// 实测：工作目录为 `C:\Users\WEIXY4~1\...` 时必然失败，换成同名长名路径即通过。
 fn has_short_component(path: &Path) -> bool {
     path.components().any(|component| {
@@ -1047,15 +1085,6 @@ impl Drop for RunDir {
     }
 }
 
-struct CurrentRun(u64);
-
-impl Drop for CurrentRun {
-    fn drop(&mut self) {
-        let _ = CURRENT_RUN.compare_exchange(self.0, 0, Ordering::SeqCst, Ordering::SeqCst);
-        workbench::clear_live();
-    }
-}
-
 #[cfg(windows)]
 fn hide_window(command: &mut Command) {
     use std::os::windows::process::CommandExt;
@@ -1064,40 +1093,6 @@ fn hide_window(command: &mut Command) {
 
 #[cfg(not(windows))]
 fn hide_window(_: &mut Command) {}
-
-fn minimal_environment(command: &mut Command) {
-    command.env_clear();
-    for key in [
-        "SystemRoot",
-        "WINDIR",
-        "USERPROFILE",
-        "APPDATA",
-        "LOCALAPPDATA",
-        "TEMP",
-        "TMP",
-        "HOMEDRIVE",
-        "HOMEPATH",
-        "USERNAME",
-        "HOME",
-        "PATH",
-        "CLAUDE_CONFIG_DIR",
-        "CLAUDE_CODE_GIT_BASH_PATH",
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "ALL_PROXY",
-        "NO_PROXY",
-        "http_proxy",
-        "https_proxy",
-        "all_proxy",
-        "no_proxy",
-        "NODE_EXTRA_CA_CERTS",
-        "SSL_CERT_FILE",
-    ] {
-        if let Some(value) = std::env::var_os(key) {
-            command.env(key, value);
-        }
-    }
-}
 
 fn app_launcher_path() -> Result<PathBuf, String> {
     #[cfg(all(windows, test))]
@@ -1124,7 +1119,7 @@ pub fn launcher_exit_code() -> Option<i32> {
     let Some(path) = args.next() else {
         return Some(2);
     };
-    let budget = args.next().and_then(|value| value.into_string().ok()).filter(|value| valid_budget(value)).unwrap_or_else(|| "0.20".into());
+    let budget = args.next().and_then(|value| value.into_string().ok()).filter(|value| valid_budget(value)).unwrap_or_else(|| "10.00".into());
     let live_session = if args.next().as_deref() == Some(std::ffi::OsStr::new("--live")) {
         let Some(id) = args.next().and_then(|value| value.into_string().ok()).and_then(|value| uuid::Uuid::parse_str(&value).ok()) else { return Some(2); };
         Some((id, args.next().as_deref() == Some(std::ffi::OsStr::new("--resume"))))
@@ -1146,9 +1141,6 @@ pub fn launcher_exit_code() -> Option<i32> {
         let Ok(prompt) = std::fs::read_to_string(dir.join("live-prompt.txt")) else { return Some(2); };
         if prompt.len() > 4000 { return Some(2); }
         command.args([
-            "--restricted", "--strict-mcp-config", "--mcp-config", "empty-mcp.json",
-            "--disable-slash-commands", "--no-chrome", "--permission-mode", "dontAsk",
-            "--permission-prompts", "none", "--tools", "Read,Write,Edit",
             "--allowedTools", "Read(input.json),Read(schema.json),Read(workflow.md),Write(response.json),Edit(response.json)",
             "--output-format", "stream-json", "--include-partial-messages", "--verbose", "--max-budget-usd", &budget,
         ]);
@@ -1156,9 +1148,10 @@ pub fn launcher_exit_code() -> Option<i32> {
         else { command.args(["--session-id", &id.to_string()]); }
         command.args(["-p", &prompt]);
     } else {
+        let Some(id) = std::env::var("BULL_ARRIVES_CLAUDE_SESSION_ID").ok().and_then(|value| uuid::Uuid::parse_str(&value).ok()) else { return Some(2); };
         command
             .args(&CLAUDE_ARGS[..CLAUDE_ARGS.len() - 2])
-            .args(["--max-budget-usd", &budget, "-p", PROMPT]);
+            .args(["--session-id", &id.to_string(), "--max-budget-usd", &budget, "-p", PROMPT]);
     }
     command.stdin(Stdio::null()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
     hide_window(&mut command);
@@ -1303,7 +1296,7 @@ fn collect_diagnostics(mut stream: impl Read + Send + 'static) -> std::thread::J
 }
 
 fn valid_budget(value: &str) -> bool {
-    value.parse::<f64>().is_ok_and(|budget| budget.is_finite() && (0.05..=10.0).contains(&budget))
+    value.parse::<f64>().is_ok_and(|budget| budget.is_finite() && (10.0..=50.0).contains(&budget))
 }
 
 fn agent_budget(db: &Database) -> String {
@@ -1311,7 +1304,7 @@ fn agent_budget(db: &Database) -> String {
         .ok()
         .flatten()
         .filter(|value| valid_budget(value))
-        .unwrap_or_else(|| "0.20".into())
+        .unwrap_or_else(|| "10.00".into())
 }
 
 fn diagnostic_hint(output: &str) -> &'static str {
@@ -1381,8 +1374,8 @@ fn diagnostic_hint(output: &str) -> &'static str {
     }
 }
 
-fn run_process(path: &Path, dir: &Path, timeout: Duration, run_id: u64, budget: &str) -> Result<(), String> {
-    if CANCEL_RUN.load(Ordering::SeqCst) == run_id {
+fn run_process(path: &Path, dir: &Path, timeout: Duration, run_id: u64, cancel_epoch: u64, budget: &str, session_id: uuid::Uuid) -> Result<(), String> {
+    if CANCEL_EPOCH.load(Ordering::SeqCst) != cancel_epoch {
         return Err("Claude Code 分析已中止".into());
     }
     let use_launcher = cfg!(windows);
@@ -1398,18 +1391,17 @@ fn run_process(path: &Path, dir: &Path, timeout: Duration, run_id: u64, budget: 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if use_launcher {
-        command.arg(LAUNCHER_ARG).arg(path).arg(budget);
+        command.arg(LAUNCHER_ARG).arg(path).arg(budget).env("BULL_ARRIVES_CLAUDE_SESSION_ID", session_id.to_string());
     } else {
         command
             .args(&CLAUDE_ARGS[..CLAUDE_ARGS.len() - 2])
-            .args(["--max-budget-usd", budget, "-p", PROMPT]);
+            .args(["--session-id", &session_id.to_string(), "--max-budget-usd", budget, "-p", PROMPT]);
     }
-    minimal_environment(&mut command);
     hide_window(&mut command);
     let mut child = command
         .spawn()
         .map_err(|error| format!("无法启动 Claude Code：{error}"))?;
-    workbench::set_pid(child.id());
+    workbench::set_pid(run_id, child.id());
     let stdout = collect_diagnostics(child.stdout.take().unwrap());
     let stderr = collect_diagnostics(child.stderr.take().unwrap());
     let job = match ProcessJob::assign(&child) {
@@ -1420,7 +1412,7 @@ fn run_process(path: &Path, dir: &Path, timeout: Duration, run_id: u64, budget: 
             return Err(format!("无法限制 Claude Code 进程树：{error}"));
         }
     };
-    if CANCEL_RUN.load(Ordering::SeqCst) == run_id {
+    if CANCEL_EPOCH.load(Ordering::SeqCst) != cancel_epoch {
         terminate(&mut child, &job);
         return Err("Claude Code 分析已中止".into());
     }
@@ -1459,7 +1451,7 @@ fn run_process(path: &Path, dir: &Path, timeout: Duration, run_id: u64, budget: 
                 return Err(format!("无法读取 Claude Code 进程状态：{error}"));
             }
         }
-        if CANCEL_RUN.load(Ordering::SeqCst) == run_id {
+        if CANCEL_EPOCH.load(Ordering::SeqCst) != cancel_epoch {
             terminate(&mut child, &job);
             return Err("Claude Code 分析已中止".into());
         }
@@ -1476,12 +1468,7 @@ fn run_process(path: &Path, dir: &Path, timeout: Duration, run_id: u64, budget: 
 
 pub fn cancel() -> bool {
     CANCEL_EPOCH.fetch_add(1, Ordering::SeqCst);
-    let run_id = CURRENT_RUN.load(Ordering::SeqCst);
-    if run_id == 0 {
-        return false;
-    }
-    CANCEL_RUN.store(run_id, Ordering::SeqCst);
-    true
+    workbench::has_live()
 }
 
 fn cached_response(
@@ -1512,10 +1499,15 @@ async fn run_structured(
     schema: &str,
     timeout_cap: Option<u64>,
 ) -> Result<(String, String), String> {
+    let cancel_epoch = CANCEL_EPOCH.load(Ordering::SeqCst);
     let _permit = RUN_GATE
-        .get_or_init(|| tokio::sync::Semaphore::new(1))
-        .try_acquire()
-        .map_err(|_| "已有 Claude Code 分析正在运行，请稍后重试".to_string())?;
+        .get_or_init(|| tokio::sync::Semaphore::new(3))
+        .acquire()
+        .await
+        .map_err(|_| "Claude Code 并发队列已关闭".to_string())?;
+    if CANCEL_EPOCH.load(Ordering::SeqCst) != cancel_epoch {
+        return Err("Claude Code 分析已中止".into());
+    }
     if input_json.len() > MAX_INPUT_BYTES {
         return Err("Agent 输入超过 512 KiB".into());
     }
@@ -1528,6 +1520,7 @@ async fn run_structured(
         .and_then(Value::as_str)
         .unwrap_or(fingerprint);
     let prompt = workbench::prompt_text(task, role);
+    let session_id = uuid::Uuid::new_v4();
     let record = db.start_agent_run(
         original,
         task,
@@ -1537,6 +1530,7 @@ async fn run_structured(
         &prompt,
         input_json,
         schema,
+        Some(&session_id.to_string()),
     )?;
     let budget = agent_budget(db);
     let timeout = db
@@ -1547,7 +1541,8 @@ async fn run_structured(
         .unwrap_or(DEFAULT_TIMEOUT_SECS)
         .clamp(15, 300)
         .min(timeout_cap.unwrap_or(300));
-    workbench::set_live(workbench::LiveRun {
+    let run_id = NEXT_RUN.fetch_add(1, Ordering::SeqCst);
+    workbench::set_live(run_id, workbench::LiveRun {
         fingerprint: original.into(),
         task: task.into(),
         role: role.into(),
@@ -1566,9 +1561,12 @@ async fn run_structured(
         workbench::workflow(task, role),
         timeout,
         budget,
+        session_id,
+        run_id,
+        cancel_epoch,
     )
     .await;
-    workbench::clear_live();
+    workbench::clear_live(run_id);
     db.finish_agent_run(
         record,
         started.elapsed().as_millis() as u64,
@@ -1586,11 +1584,10 @@ async fn execute_structured(
     workflow: &str,
     timeout: u64,
     budget: String,
+    session_id: uuid::Uuid,
+    run_id: u64,
+    cancel_epoch: u64,
 ) -> Result<(String, String), String> {
-    let run_id = NEXT_RUN.fetch_add(1, Ordering::SeqCst);
-    CANCEL_RUN.store(0, Ordering::SeqCst);
-    CURRENT_RUN.store(run_id, Ordering::SeqCst);
-    let run_guard = CurrentRun(run_id);
     let root = run_root(run_root_setting.as_deref())?;
     let dir = RunDir::create_in(&root, fingerprint)
         .map_err(|error| format!("无法创建 Agent 专用工作目录：{error}"))?;
@@ -1601,8 +1598,7 @@ async fn execute_structured(
         .map_err(|error| format!("无法准备 Agent 专用工作目录：{error}"))?;
     let run_dir = dir.path().to_path_buf();
     tokio::task::spawn_blocking(move || {
-        let _run_guard = run_guard;
-        run_process(&path, &run_dir, Duration::from_secs(timeout), run_id, &budget)
+        run_process(&path, &run_dir, Duration::from_secs(timeout), run_id, cancel_epoch, &budget, session_id)
     })
     .await
     .map_err(|error| format!("Agent 任务异常：{error}"))??;
@@ -1765,7 +1761,7 @@ pub async fn summarize_news(
         &fingerprint,
         &input_json,
         NEWS_OUTPUT_SCHEMA,
-        Some(30),
+        None,
     )
     .await?;
     parse_news_output(&raw, &input)
@@ -2010,11 +2006,13 @@ pub async fn analyze_team(db: &Database, fingerprint: &str) -> AgentTeamResponse
         };
     };
     let mut roles = Vec::new();
-    for role in ["technical", "bull", "bear"] {
-        if CANCEL_EPOCH.load(Ordering::SeqCst) != cancel_epoch {
-            break;
-        }
-        roles.push(analyze_role(db, fingerprint, &input, role, 1, &[]).await);
+    if CANCEL_EPOCH.load(Ordering::SeqCst) == cancel_epoch {
+        let (technical, bull, bear) = tokio::join!(
+            analyze_role(db, fingerprint, &input, "technical", 1, &[]),
+            analyze_role(db, fingerprint, &input, "bull", 1, &[]),
+            analyze_role(db, fingerprint, &input, "bear", 1, &[]),
+        );
+        roles.extend([technical, bull, bear]);
     }
     let prior: Vec<_> = roles
         .iter()
@@ -2022,11 +2020,12 @@ pub async fn analyze_team(db: &Database, fingerprint: &str) -> AgentTeamResponse
         .cloned()
         .collect();
     // Each side sees the same independent first-round evidence before rebuttal.
-    for role in ["bull", "bear"] {
-        if CANCEL_EPOCH.load(Ordering::SeqCst) != cancel_epoch {
-            break;
-        }
-        roles.push(analyze_role(db, fingerprint, &input, role, 2, &prior).await);
+    if CANCEL_EPOCH.load(Ordering::SeqCst) == cancel_epoch {
+        let (bull, bear) = tokio::join!(
+            analyze_role(db, fingerprint, &input, "bull", 2, &prior),
+            analyze_role(db, fingerprint, &input, "bear", 2, &prior),
+        );
+        roles.extend([bull, bear]);
     }
     let debate: Vec<_> = roles
         .iter()
@@ -2343,6 +2342,10 @@ mod tests {
             now()
         )
         .is_err());
+        assert!(parse_output(&valid.replace("当前价格接近均线", "收盘价895.86接近均线"), &input, now())
+            .unwrap_err().contains("summary 含阿拉伯数字"));
+        assert!(parse_output(&valid.replace("价格可与均线对照", "价格895.86可与均线对照"), &input, now())
+            .unwrap_err().contains("claims[1].text 含阿拉伯数字"));
         assert!(parse_output(
             &valid.replace("\"kind\":\"risk\"", "\"kind\":\"support\""),
             &input,
@@ -2372,7 +2375,13 @@ mod tests {
             "items": [{
                 "id": "news:1",
                 "summary": "公司预计利润增长10%",
+                "viewpoint": "主营改善可能偏利好，实际影响仍需核对公告全文",
                 "sentiment": "positive",
+                "impact_level": "uncertain",
+                "industries": [],
+                "industry_basis": "unknown",
+                "stocks": ["600000"],
+                "stock_names": [],
                 "confidence": 80,
                 "evidence": "利润增长10%"
             }]
@@ -2389,6 +2398,24 @@ mod tests {
             .to_string()
             .replace("公司预计利润增长10%", "建议买入，利润增长10%");
         assert!(parse_news_output(&advice, &input).is_err());
+        let wrong_stock = valid.to_string().replace("600000", "000001");
+        assert!(parse_news_output(&wrong_stock, &input).is_err());
+        let mut fake_industry = valid.clone();
+        fake_industry["items"][0]["industry_basis"] = serde_json::json!("source");
+        fake_industry["items"][0]["industries"] = serde_json::json!(["半导体"]);
+        assert!(parse_news_output(&fake_industry.to_string(), &input).is_err());
+        let mut fake_name = fake_industry;
+        fake_name["items"][0]["industry_basis"] = serde_json::json!("unknown");
+        fake_name["items"][0]["industries"] = serde_json::json!([]);
+        fake_name["items"][0]["stock_names"] = serde_json::json!(["不存在公司"]);
+        assert!(parse_news_output(&fake_name.to_string(), &input).is_err());
+        let mut named_items = items;
+        named_items[0].title = "甲公司预计利润增长10%".into();
+        let (named_fingerprint, named_input) = news_input(&named_items).unwrap();
+        let mut named_output = valid;
+        named_output["context_fingerprint"] = serde_json::json!(named_fingerprint);
+        named_output["items"][0]["stock_names"] = serde_json::json!(["甲公司"]);
+        assert_eq!(parse_news_output(&named_output.to_string(), &named_input).unwrap()[0].stock_names, vec!["甲公司"]);
     }
 
     #[test]
@@ -2413,29 +2440,27 @@ mod tests {
     fn agent_budget_is_bounded_and_configurable() {
         let dir = RunDir::create("budget-regression").unwrap();
         let db = Database::open(dir.path().to_path_buf()).unwrap();
-        assert_eq!(agent_budget(&db), "0.20");
-        db.set_setting("agent_budget_usd", "1.25").unwrap();
-        assert_eq!(agent_budget(&db), "1.25");
-        for invalid in ["NaN", "inf", "-1", "0", "100", "not-a-number"] {
+        assert_eq!(agent_budget(&db), "10.00");
+        db.set_setting("agent_budget_usd", "25.00").unwrap();
+        assert_eq!(agent_budget(&db), "25.00");
+        db.set_setting("agent_budget_usd", "50.00").unwrap();
+        assert_eq!(agent_budget(&db), "50.00");
+        for invalid in ["NaN", "inf", "-1", "0", "0.20", "9.99", "50.01", "100", "not-a-number"] {
             assert!(!valid_budget(invalid));
         }
         db.set_setting("agent_budget_usd", "NaN").unwrap();
-        assert_eq!(agent_budget(&db), "0.20");
+        assert_eq!(agent_budget(&db), "10.00");
+        db.set_setting("agent_budget_usd", "0.20").unwrap();
+        drop(db);
+        let db = Database::open(dir.path().to_path_buf()).unwrap();
+        assert_eq!(db.get_setting("agent_budget_usd").unwrap().as_deref(), Some("10.00"));
     }
 
     #[test]
-    fn claude_permissions_remain_minimal() {
+    fn claude_uses_normal_settings_with_task_file_grants() {
         let args = CLAUDE_ARGS.join(" ");
-        assert!(args.contains("--safe-mode"));
-        assert!(args.contains("--strict-mcp-config"));
-        assert!(args.contains("Read(input.json),Read(schema.json),Edit(response.json)"));
-        for forbidden in [
-            "Bash",
-            "PowerShell",
-            "WebFetch",
-            "--add-dir",
-            "bypassPermissions",
-        ] {
+        assert!(args.contains("Read(input.json),Read(schema.json),Read(workflow.md),Write(response.json),Edit(response.json)"));
+        for forbidden in ["--safe-mode", "--restricted", "--strict-mcp-config", "--disable-slash-commands", "--permission-mode", "--tools", "bypassPermissions"] {
             assert!(!args.contains(forbidden));
         }
     }
@@ -2544,7 +2569,6 @@ mod tests {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        minimal_environment(&mut command);
         hide_window(&mut command);
         let mut child = command.spawn().unwrap();
         let job = ProcessJob::assign(&child).unwrap();
@@ -2662,6 +2686,7 @@ mod tests {
     async fn local_claude_question_smoke() {
         let dir = RunDir::create("question-smoke").unwrap();
         let db = Database::open(dir.path().to_path_buf()).unwrap();
+        db.set_setting("agent_timeout_seconds", "180").unwrap();
         let input = frozen();
         let fingerprint =
             freeze_snapshot(&db, &input.symbol, &input.quantitative_analysis).unwrap();
@@ -2672,6 +2697,10 @@ mod tests {
         )
         .await;
         assert_eq!(result.status, "ready", "{:?}", result.error);
+        let run = &db.agent_run_history(&fingerprint).unwrap()[0];
+        let session = run.session_id.as_ref().expect("CLI session id recorded");
+        assert!(uuid::Uuid::parse_str(session).is_ok());
+        println!("smoke_session_id={session}");
         let trace = db
             .agent_run_detail(db.agent_run_history(&fingerprint).unwrap()[0].id)
             .unwrap();
@@ -2729,6 +2758,14 @@ mod tests {
             result.roles
         );
         let runs = db.agent_run_history(&fingerprint).unwrap();
+        for round in [1, 2] {
+            let stage: Vec<_> = runs.iter().filter(|run| run.round == round).collect();
+            let starts: Vec<_> = stage.iter().map(|run| chrono::DateTime::parse_from_rfc3339(&run.started_at).unwrap()).collect();
+            let last_start = *starts.iter().max().unwrap();
+            assert!(stage.iter().zip(&starts).all(|(run, start)| {
+                *start + chrono::Duration::milliseconds(run.duration_ms.unwrap() as i64) > last_start
+            }), "round {round} did not overlap");
+        }
         let rebuttal = runs
             .iter()
             .find(|r| r.role == "bull" && r.round == 2)

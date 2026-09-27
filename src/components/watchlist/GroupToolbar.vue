@@ -74,7 +74,7 @@ async function includeStock() {
 
 <style scoped>
 .group-toolbar { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) 0; border-top: 1px solid var(--color-border-0); }
-:global([data-style="classic"]) .group-toolbar { gap: 8px; padding: 8px 0; border-top: 0; }
+html[data-style="classic"] .group-toolbar { gap: 8px; padding: 8px 0; border-top: 0; }
 .group-tabs { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 2px 0 5px; scrollbar-width: thin; }
 .group-tabs > * { flex-shrink: 0; }
 .group-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }

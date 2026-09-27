@@ -149,6 +149,7 @@ pub fn view_desktop_toast(app: tauri::AppHandle, id: String) -> Result<(), Strin
         inner.pending.clear();
     }
     crate::commands::window::show_main_window(app.clone())?;
+    app.emit("notification-open-history", &id).map_err(|error| error.to_string())?;
     if let Some(window) = app.get_webview_window("notification-toast") {
         let _ = window.hide();
     }

@@ -62,7 +62,8 @@ async function handleAdd(stock: StockBrief) {
   <NModal :show="props.show" @update:show="emit('update:show', $event)">
     <NCard
       title="添加自选"
-      style="width: 400px;"
+      class="add-stock-card"
+      style="width: min(400px, calc(100vw - 24px));"
       closable
       @close="emit('update:show', false)"
       :bordered="false"
@@ -120,10 +121,10 @@ async function handleAdd(stock: StockBrief) {
 
 <style scoped>
 .results-wrapper {
-  min-height: 260px;
+  min-height: 0;
 }
 .results-list {
-  max-height: 260px;
+  max-height: min(260px, calc(100dvh - 170px));
   overflow-y: auto;
   border: 1px solid var(--color-border-0);
   border-radius: var(--radius-md);
@@ -199,5 +200,12 @@ async function handleAdd(stock: StockBrief) {
 .search-error-icon {
   flex-shrink: 0;
   color: var(--color-warning);
+}
+</style>
+
+<style>
+.add-stock-card.n-card {
+  max-height: calc(100dvh - 20px);
+  overflow-y: auto;
 }
 </style>

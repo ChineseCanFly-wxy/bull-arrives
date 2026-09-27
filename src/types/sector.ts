@@ -106,5 +106,4 @@ export interface SectorRotation {
   items: SectorSummary[];
   statuses: RotationStatus[];
   source: string;
-  request_count: number;
 }

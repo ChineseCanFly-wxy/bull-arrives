@@ -6,6 +6,7 @@ pub mod backtest;
 pub mod causal;
 pub mod indicators;
 pub mod levels;
+pub mod modes;
 pub mod playbook;
 pub mod research;
 pub mod scorer;

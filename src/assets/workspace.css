@@ -12,9 +12,10 @@
   color: var(--color-text-primary);
 }
 
-:is([data-style="trading"], [data-style="modern"]) .n-modal.n-card .n-card__content,
+:is([data-style="trading"], [data-style="modern"]) .n-modal.n-card .n-card-content,
 :is([data-style="trading"], [data-style="modern"]) .n-modal.n-dialog .n-dialog__content {
   min-width: 0;
+  min-height: 0;
 }
 
 :is([data-style="trading"], [data-style="modern"]) .n-modal.n-card .n-card__footer {

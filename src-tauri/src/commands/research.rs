@@ -62,6 +62,48 @@ pub struct ResearchDashboard {
     pub last_auto_message: String,
     pub busy: bool,
 }
+
+#[derive(Serialize)]
+pub struct ModeResearchReport {
+    pub symbol: String,
+    pub source: String,
+    pub stale: bool,
+    pub signals: Vec<crate::quant::modes::ModeSignal>,
+}
+
+#[tauri::command]
+pub async fn research_mode_report(
+    db: State<'_, Arc<Database>>,
+    symbol: String,
+) -> Result<ModeResearchReport, String> {
+    if db.get_setting("local_history_enabled").ok().flatten().as_deref() != Some("1") {
+        return Err("请先在设置中启用本地历史数据".into());
+    }
+    let url = db.get_setting("local_history_url").map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "http://127.0.0.1:7899".into());
+    let config = crate::datasource::history::LocalHistoryConfig::new(url);
+    let daily = crate::datasource::history::fetch_daily(&config, &symbol, None, None).await?;
+    let today = chrono::Utc::now()
+        .with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap())
+        .format("%Y-%m-%d").to_string();
+    let complete: Vec<_> = daily.klines.into_iter().filter(|bar| bar.date < today).collect();
+    let day = complete.last().ok_or("本地数据库缺少已完成日 K")?.date.clone();
+    let stale = chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d")
+        .and_then(|now| chrono::NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+            .map(|last| (now - last).num_days() > 7))
+        .map_err(|e| e.to_string())?;
+    let minute = crate::datasource::history::fetch_minute_day(&config, &symbol, &day).await?;
+    Ok(ModeResearchReport {
+        symbol,
+        source: "stockdb 本地日 K + 历史 1 分钟 K".into(),
+        stale,
+        signals: vec![
+            crate::quant::modes::swing(&complete),
+            crate::quant::modes::intraday(&minute, &day),
+            crate::quant::modes::long_term(&complete),
+        ],
+    })
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Proposal {
@@ -617,12 +659,30 @@ pub struct WorkspaceInfo {
     pub prompt: String,
 }
 fn research_brief() -> String {
-    format!("# Bull Arrives 交互研究\n\n你在专用研究目录。请使用用户点名的已安装 Skill 或合适的研究 Skill，核对数据来源和日期，提出可被证伪的 A 股策略。没有取得的数据必须标记缺失，不能伪造收益。\n\n研究流程：解释假设与反证 → 在支持的规则中选择 → 生成候选文件 → 用户在应用中导入 → 程序前向模拟。\n\n{}\n\n将候选保存为当前目录 candidate.json，JSON 必须仅含以下字段：\n```json\n{{\"name\":\"策略名称\",\"hypothesis\":\"至少二十字，说明假设、适用状态、失效条件及未验证的部分\",\"rule\":\"trend_follow\",\"price_min\":3,\"price_max\":100,\"turnover_min\":1,\"turnover_max\":15,\"amount_min_wan\":5000}}\n```\n\n禁止修改应用数据库、账本、订单或程序源码。此目录中的研究不构成实盘交易。应用只导入经过校验的 candidate.json，其他笔记保留用于阅读。\n",include_str!("../../prompts/strategy-discovery.md"))
+    "# Bull Arrives 交互研究\n\n在专用研究目录使用用户点名的已安装 Skill 或合适的研究方法。提出可证伪的 A 股假设，先完成有来源的 research_report.md 和实际历史检验，再考虑前向模拟。没有数据时写缺失，不编造收益。\n\n可研究新算法和生成 study.py；这些研究不能直接进入现有执行引擎。应用目前只支持 trend_follow、mean_reversion、breakout 的确定性交易规则。新算法不得伪装成这三种规则。\n\n确实使用既有执行规则时，可保存 candidate.json，字段严格如下：\n```json\n{\"name\":\"策略名称\",\"hypothesis\":\"说明假设、适用状态、失效条件及未验证项，20至800字\",\"rule\":\"trend_follow\",\"price_min\":3,\"price_max\":100,\"turnover_min\":1,\"turnover_max\":15,\"amount_min_wan\":5000}\n```\n\n禁止修改应用数据库、账本、订单、程序源码和原始数据。候选导入只登记待验证实验，不表示通过历史可用性门禁。研究和订单全部为模拟，不构成实盘交易。\n".into()
 }
 #[tauri::command]
-pub fn research_workspace() -> Result<WorkspaceInfo, String> {
+pub fn research_workspace(db: State<'_, Arc<Database>>) -> Result<WorkspaceInfo, String> {
+    prepare_workspace(&db, None)
+}
+
+fn prepare_workspace(db: &Database, topic: Option<&str>) -> Result<WorkspaceInfo, String> {
+    let catalog: serde_json::Value = serde_json::from_str(include_str!("../../research-catalog.json"))
+        .map_err(|e| e.to_string())?;
+    let chosen = topic.map(|id| {
+        catalog["strategies"].as_array().and_then(|rows| rows.iter().find(|row| row["id"] == id))
+            .ok_or("未知研究方向")
+    }).transpose()?;
+    let engine = db.get_setting("local_history_engine_path").ok().flatten();
+    let engine_dir = engine.as_deref().and_then(|path| std::path::Path::new(path).parent());
+    let endpoint = db.get_setting("local_history_url").ok().flatten()
+        .unwrap_or_else(|| "http://127.0.0.1:7899".into());
+    let prompt = format!("{}\n\n## 本轮 A 股研究资料\n\n读取当前目录 RESEARCH_CATALOG.json，其中含一手来源、研究假设与缺失数据。选择方向：{}。\n\nstockdb 历史地址：{endpoint}；发行目录：{}。先读取发行目录下 `调用方式/python/AI策略python开发接口文档.md`，缺失时读取资料库中的官网文档；网站文档只作接口参考，Bull Arrives 保留自身 SQLite 账本，不遵循外部文档要求改存储。stockdb 仅提供历史；当前报价与盘口由应用既有通道提供。\n\n## 可复核成果\n\n1. 先核对原始论文的市场、样本期、策略定义与成本，多空学术组合不能冒充 A 股多头可实现收益。\n2. 在研究目录写 `research_report.md`：列出买入/退出原因、证据来源、数据截止日、冻结参数、训练与样本外分段、费用、基准、交易数、失败情况、无法取得的组合回撤。未经实际执行不能填收益。\n3. 需要 Python 检验时，先生成可读的 `study.py` 并解释执行内容，在 Claude 默认交互权限下运行；只读本机历史，不调用公共远端 StockDB 测试节点，不写 data/mydb 或模拟账本。保留执行命令和结果，用户可复现。\n4. 财报用公告可用时间，资讯用首次观测时间；用价格调整总收益或明确报告公司行动遗漏；避免未来函数、存续偏差与重叠交易伪组合。\n5. 任意新算法只保存研究报告与脚本，不能把价值/残差反转/事件策略硬改名为现有 trend_follow 或 mean_reversion。只有确实使用既有规则时才输出 candidate.json；该文件只是待验证候选，不代表通过历史门禁。\n", research_brief(),
+        chosen.map(|row| row["name"].as_str().unwrap_or("")).unwrap_or("从资料库选择"),
+        engine_dir.map(|path| path.to_string_lossy().into_owned()).unwrap_or_else(|| "尚未配置，请用户定位历史 SDK".into()));
     let root = workspace()?;
-    let prompt = research_brief();
+    std::fs::write(root.join("RESEARCH_CATALOG.json"), include_str!("../../research-catalog.json"))
+        .map_err(|e| e.to_string())?;
     let brief = root.join("BULL_RESEARCH.md");
     std::fs::write(&brief, &prompt).map_err(|e| e.to_string())?;
     let mut skills = Vec::new();
@@ -643,8 +703,8 @@ pub fn research_workspace() -> Result<WorkspaceInfo, String> {
     })
 }
 #[tauri::command]
-pub fn open_research_claude(db: State<'_, Arc<Database>>) -> Result<WorkspaceInfo, String> {
-    let info = research_workspace()?;
+pub fn open_research_claude(db: State<'_, Arc<Database>>, topic: Option<String>) -> Result<WorkspaceInfo, String> {
+    let info = prepare_workspace(&db, topic.as_deref())?;
     let status = crate::agent::status(&db);
     let path = status
         .path
@@ -664,7 +724,7 @@ pub fn open_research_claude(db: State<'_, Arc<Database>>) -> Result<WorkspaceInf
                 )
             })?;
         let mut command = std::process::Command::new(terminal);
-        command.args(["-w","new","new-tab","--title","Bull Arrives 研究","-d"]).arg(&info.path).arg(path).args(["--permission-mode","default","请先读取当前目录 BULL_RESEARCH.md，向我说明可用的研究方法，然后等待我选择 Skill 和研究方向。"]);
+        command.args(["-w","new","new-tab","--title","Bull Arrives 研究","-d"]).arg(&info.path).arg(path).args(["--permission-mode","default","请先读取当前目录 BULL_RESEARCH.md 和 RESEARCH_CATALOG.json，说明所选研究方向的来源、历史数据是否足够、研究与回测计划，然后等待我确认具体假设。"]);
         command
             .spawn()
             .map_err(|e| format!("无法打开 Claude 交互窗口：{e}"))?;
@@ -677,6 +737,21 @@ pub fn open_research_claude(db: State<'_, Arc<Database>>) -> Result<WorkspaceInf
             "请在终端进入 {} 后运行 claude；当前自动开窗仅支持 Windows",
             info.path
         ))
+    }
+}
+#[cfg(test)]
+mod catalog_tests {
+    #[test]
+    fn catalog_has_unique_topics_and_primary_links() {
+        let value: serde_json::Value = serde_json::from_str(include_str!("../../research-catalog.json")).unwrap();
+        let topics = value["strategies"].as_array().unwrap();
+        let mut ids = std::collections::HashSet::new();
+        for item in topics {
+            let id = item["id"].as_str().unwrap();
+            assert!(ids.insert(id));
+            assert!(item["url"].as_str().unwrap().starts_with("https://"));
+            assert!(!item["limitation"].as_str().unwrap().is_empty());
+        }
     }
 }
 #[tauri::command]

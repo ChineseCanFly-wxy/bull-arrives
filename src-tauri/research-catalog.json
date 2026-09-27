@@ -1,0 +1,92 @@
+{
+  "reviewed_at": "2026-09-26",
+  "scope": "有来源的研究方向，不是已证实在当前市场盈利的交易策略。论文样本期与当前行情不同，必须在本机重新检验。",
+  "strategies": [
+    {
+      "id": "value_low_risk",
+      "name": "价值 + 低风险组合",
+      "horizon": "中长期",
+      "evidence": "A 股实证研究支持优先复核",
+      "finding": "2000–2019 年 A 股异象研究对价值、风险类因子发现较强证据；普通动量与部分质量因子的证据较弱。",
+      "hypothesis": "用正盈利、合理估值与低波动筛选股票，控制行业集中，定期再平衡；估值排名恶化或财务条件失效时退出。",
+      "data": "历史估值、公告可用时间、复权行情、时点股票池与行业、分红账本。已有日线和当前估值不等于完整历史证据。",
+      "limitation": "论文多空因子收益不能直接当作普通账户的多头组合收益；低估值可能是经营恶化。",
+      "source_title": "Anomalies in the China A-share market（2021）",
+      "url": "https://doi.org/10.1016/j.pacfin.2021.101607"
+    },
+    {
+      "id": "dividend_low_vol",
+      "name": "持续分红 + 低波动",
+      "horizon": "中长期",
+      "evidence": "有现行指数方法，尚未在本机复现",
+      "finding": "官方指数产品采用高股息与低波动组合；上证红利方法包含持续现金分红、股利支付率与权重限制。",
+      "hypothesis": "按已公布的分红可持续性、股息率和历史波动率筛选，定期复核；分红中断或资格条件失效时退出。",
+      "data": "分红公告及实施日、股利支付率、收益率序列、行业暴露。需要现金分红进入模拟账本。",
+      "limitation": "指数存在不代表必然有超额收益；利率、行业集中与股息陷阱均会影响结果。",
+      "source_title": "标普中国 A 股低波红利指数（官方）",
+      "url": "https://www.spglobal.com/spdji/zh/indices/dividends-factors/sp-china-a-share-low-volatility-high-dividend-index/"
+    },
+    {
+      "id": "residual_reversal",
+      "name": "残差反转与流动性约束",
+      "horizon": "日线波段",
+      "evidence": "A 股研究有样本外证据，待本机复核",
+      "finding": "A 股异象研究报告了残差反转与残差动量效应；这与只看 RSI 超卖或普通均线金叉有不同定义。",
+      "hypothesis": "先扣除市场与行业共同涨跌，再研究个股异常下跌是否修复；恢复目标实现、残差继续恶化或超出期限时退出。",
+      "data": "对齐的市场/行业/个股历史收益、足够股票横截面、流动性、费用与停牌涨跌停状态。",
+      "limitation": "高换手可能吃掉优势，跌停股不能假定能买卖；不能把残差因子名称套到现有均值回归规则上。",
+      "source_title": "Anomalies in the China A-share Market（作者论文）",
+      "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3810114"
+    },
+    {
+      "id": "earnings_event",
+      "name": "业绩公告后的信息消化",
+      "horizon": "日线波段 / 中长期",
+      "evidence": "A 股近期工作论文，证据需进一步复核",
+      "finding": "2025 年工作论文研究了 2017–2024 年 A 股财报公布后的价格漂移，年度差异明显。2026 年研究也提示盈余管理问题。",
+      "hypothesis": "比较真实业绩与事前预期，按首次可用公告时间研究后续反应；预期落空、后续负面修正或观察期结束时退出。",
+      "data": "公告原文、首次发布时间/观测时间、预期基准、扣非利润与现金流、公司行动。",
+      "limitation": "标题正面或利润增长不等于超预期；没有事前预期和公告时间就无法做可靠事件回测。",
+      "source_title": "Stock Market Reactions to Financial Statement Announcement（2025）",
+      "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5235276"
+    },
+    {
+      "id": "execution_timing",
+      "name": "分钟择时与执行质量",
+      "horizon": "盘中择时",
+      "evidence": "先做执行研究；本轮 VWAP 突破原型未通过",
+      "finding": "本机原型的样本外平均每笔净收益为负。近期高频研究使用 Level-2 数据，无法用普通分钟 K 直接复现。",
+      "hypothesis": "对已经成立的日线交易意图比较次日开盘、分时均价和限价等待的实际成本，先检验是否改善执行。",
+      "data": "stockdb 历史分钟线用于研究；当前触发与模拟成交使用已有在线报价和盘口，遵守 T+1。",
+      "limitation": "分钟 K 看不到排队与真实深度；不能把 5 秒 Level-2 策略宣传收益移植到本项目。",
+      "source_title": "High-Frequency Trading in the Chinese Stock Market（2026 工作论文）",
+      "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6156666"
+    }
+  ],
+  "resources": [
+    {
+      "id": "stockdb_ai_python",
+      "name": "StockDB · AI 自动开发 Python",
+      "use": "让现有 Claude 读取接口文档，用本地 rd.get_data / rd.pipe 做批量历史查询、复权、分组检验和研究报告。",
+      "boundary": "这是开发文档，需要你已配置的 AI；不提供自动证实盈利的策略。网页在线 API 不替代 Bull Arrives 的实时通道。",
+      "url": "https://dns.novapi.cc/tabs/ai-py.html",
+      "documentation": "https://dns.novapi.cc/docs/AI策略python开发接口文档.md"
+    },
+    {
+      "id": "stockdb_ai_js",
+      "name": "StockDB · AI 全自动策略页面",
+      "use": "提供 gp/bk/zb/tu 接口与提示模板，可生成历史多周期看板、标记买卖理由和指标交叉。",
+      "boundary": "页面生成不等于发现有效策略。Bull Arrives 已有 Vue、K 线图与本地接口，优先复用现有组件。",
+      "url": "https://dns.novapi.cc/tabs/ai-js.html",
+      "documentation": "https://dns.novapi.cc/docs/AI策略界面开发接口文档.md"
+    },
+    {
+      "id": "stockdb_plugins",
+      "name": "StockDB · 策略插件示例",
+      "use": "可参考全市场情绪、板块轮动、股票全景、多周期看板的展示方式。",
+      "boundary": "插件页面是展示与计算示例，未看到策略样本外净收益报告；不把图表或热力图当作已验证买卖系统。",
+      "url": "https://dns.novapi.cc/tabs/plugins.html",
+      "documentation": "https://dns.novapi.cc/tabs/plugins.html"
+    }
+  ]
+}

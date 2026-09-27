@@ -131,6 +131,7 @@ pub struct SimOrder {
     pub gross: Option<String>,
     pub fee: Option<String>,
     pub reject_reason: Option<String>,
+    pub decision_reason: Option<String>,
     pub created_at: String,
     pub confirmed_at: Option<String>,
     pub filled_at: Option<String>,
@@ -255,6 +256,7 @@ impl Database {
                  status TEXT NOT NULL, price INTEGER, gross INTEGER, fee INTEGER,
                  cash_delta INTEGER, cost_basis INTEGER, reject_reason TEXT,
                  created_at TEXT NOT NULL, confirmed_at TEXT, filled_at TEXT, holding_days INTEGER,
+                 decision_reason TEXT,
                  UNIQUE(account_id, idempotency_key)
              );
              CREATE TABLE IF NOT EXISTS sim_lots (
@@ -284,6 +286,7 @@ impl Database {
         for (table, column, definition) in [
             ("sim_lots", "limit_bps", "INTEGER NOT NULL DEFAULT 1000"),
             ("sim_orders", "holding_days", "INTEGER"),
+            ("sim_orders", "decision_reason", "TEXT"),
             ("sim_equity_daily", "benchmark_close", "INTEGER"),
             ("sim_runs", "progress", "INTEGER NOT NULL DEFAULT 0"),
         ] {
@@ -397,6 +400,12 @@ impl Database {
         rows
     }
 
+    pub fn set_sim_order_reason(&self, order_id: i64, reason: &str) -> Result<(), String> {
+        self.conn.lock().unwrap_or_else(|e| e.into_inner())
+            .execute("UPDATE sim_orders SET decision_reason=?1 WHERE id=?2 AND decision_reason IS NULL", params![reason, order_id])
+            .map(|_| ()).map_err(|e| e.to_string())
+    }
+
     pub fn submit_sim_order(&self, input: &OrderInput) -> Result<SimOrder, String> {
         let side = Side::parse(&input.side)?;
         if input.idempotency_key.trim().is_empty()
@@ -458,7 +467,7 @@ impl Database {
             params![input.account_id,input.idempotency_key.trim(),input.symbol.trim(),input.name,side.as_str(),input.quantity,input.signal_date,input.source,input.rule,Option::<i64>::None,Option::<i64>::None,input.stop_bps,input.take_bps,limit_bps,input.max_hold_days,status,timestamp],
         ).map_err(|error| error.to_string())?;
         conn.query_row(
-            "SELECT id,account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,price,gross,fee,reject_reason,created_at,confirmed_at,filled_at,holding_days
+            "SELECT id,account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,price,gross,fee,reject_reason,created_at,confirmed_at,filled_at,holding_days,decision_reason
              FROM sim_orders WHERE account_id=?1 AND idempotency_key=?2",
             params![input.account_id,input.idempotency_key.trim()], order_from_row,
         ).map_err(|error| error.to_string())
@@ -471,7 +480,7 @@ impl Database {
             params![now(), order_id],
         ).map_err(|error| error.to_string())?;
         conn.query_row(
-            "SELECT id,account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,price,gross,fee,reject_reason,created_at,confirmed_at,filled_at,holding_days FROM sim_orders WHERE id=?1",
+            "SELECT id,account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,price,gross,fee,reject_reason,created_at,confirmed_at,filled_at,holding_days,decision_reason FROM sim_orders WHERE id=?1",
             [order_id], order_from_row,
         ).optional().map_err(|error| error.to_string())?.ok_or_else(|| invalid("模拟委托不存在"))
     }
@@ -708,7 +717,7 @@ impl Database {
             [account_id], account_from_row,
         ).optional().map_err(|error| error.to_string())?.ok_or_else(|| invalid("模拟账户不存在"))?;
         let targets = collect(&conn, "SELECT id,account_id,symbol,name,rule,limit_bps FROM sim_targets WHERE account_id=?1 ORDER BY id", account_id, target_from_row)?;
-        let orders = collect(&conn, "SELECT id,account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,price,gross,fee,reject_reason,created_at,confirmed_at,filled_at,holding_days FROM sim_orders WHERE account_id=?1 ORDER BY id DESC", account_id, order_from_row)?;
+        let orders = collect(&conn, "SELECT id,account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,price,gross,fee,reject_reason,created_at,confirmed_at,filled_at,holding_days,decision_reason FROM sim_orders WHERE account_id=?1 ORDER BY id DESC", account_id, order_from_row)?;
         let recent_runs = collect(&conn, "SELECT id,account_id,run_key,status,created_at,finished_at,message,progress FROM sim_runs WHERE account_id=?1 ORDER BY id DESC LIMIT 50", account_id, run_from_row)?;
         let mut source_statement = conn.prepare(
             "SELECT source,COUNT(*),SUM(CASE WHEN status='filled' THEN 1 ELSE 0 END),SUM(CASE WHEN status='rejected' THEN 1 ELSE 0 END),COALESCE(SUM(CASE WHEN side='sell' AND status='filled' THEN cash_delta-cost_basis ELSE 0 END),0) FROM sim_orders WHERE account_id=?1 GROUP BY source ORDER BY source",
@@ -938,7 +947,7 @@ impl Database {
 
     pub fn get_pending_sim_orders(&self, account_id: i64) -> Result<Vec<SimOrder>, String> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        collect(&conn,"SELECT id,account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,price,gross,fee,reject_reason,created_at,confirmed_at,filled_at,holding_days FROM sim_orders WHERE account_id=?1 AND status='pending' ORDER BY id",account_id,order_from_row)
+        collect(&conn,"SELECT id,account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,price,gross,fee,reject_reason,created_at,confirmed_at,filled_at,holding_days,decision_reason FROM sim_orders WHERE account_id=?1 AND status='pending' ORDER BY id",account_id,order_from_row)
     }
 
     pub fn get_sim_positions(&self, account_id: i64) -> Result<Vec<Position>, String> {
@@ -1085,6 +1094,7 @@ fn order_from_row(row: &Row<'_>) -> SqliteResult<SimOrder> {
         gross: row.get::<_, Option<i64>>(18)?.map(|v| v.to_string()),
         fee: row.get::<_, Option<i64>>(19)?.map(|v| v.to_string()),
         reject_reason: row.get(20)?,
+        decision_reason: row.get(25)?,
         created_at: row.get(21)?,
         confirmed_at: row.get(22)?,
         filled_at: row.get(23)?,
@@ -1105,7 +1115,7 @@ fn run_from_row(row: &Row<'_>) -> SqliteResult<SimRun> {
 }
 fn load_order(conn: &rusqlite::Connection, order_id: i64) -> SqliteResult<SimOrder> {
     conn.query_row(
-    "SELECT id,account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,price,gross,fee,reject_reason,created_at,confirmed_at,filled_at,holding_days FROM sim_orders WHERE id=?1",
+    "SELECT id,account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,price,gross,fee,reject_reason,created_at,confirmed_at,filled_at,holding_days,decision_reason FROM sim_orders WHERE id=?1",
     [order_id], order_from_row,
 )
 }
@@ -1200,6 +1210,9 @@ mod tests {
         let buy = db
             .submit_sim_order(&order(account.id, "buy-1", "buy", 100, "2026-01-02"))
             .unwrap();
+        db.set_sim_order_reason(buy.id, "测试入场依据").unwrap();
+        db.set_sim_order_reason(buy.id, "不应覆盖").unwrap();
+        assert_eq!(db.get_sim_detail(account.id).unwrap().orders[0].decision_reason.as_deref(), Some("测试入场依据"));
         assert_eq!(
             db.submit_sim_order(&order(account.id, "buy-1", "buy", 100, "2026-01-02"))
                 .unwrap()

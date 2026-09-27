@@ -429,6 +429,7 @@ function rowKey(row: Monitor): string {
     v-model:show="visible"
     preset="card"
     title="持仓监控 · 量化自动止损/止盈"
+    class="monitor-modal"
     :style="{ width: 'min(900px, calc(100vw - 24px))' }"
     :bordered="false"
     size="small"
@@ -545,10 +546,10 @@ function rowKey(row: Monitor): string {
   flex-direction: column;
   gap: var(--space-2);
 }
-:global([data-style="trading"]) .monitor,
-:global([data-style="modern"]) .monitor { gap: var(--space-3); }
-:global([data-style="trading"]) .monitor .form,
-:global([data-style="modern"]) .monitor .form { padding: var(--panel-padding); border: 1px solid var(--color-border-0); border-radius: var(--radius-md); background: var(--color-surface-1); }
+html[data-style="trading"] .monitor,
+html[data-style="modern"] .monitor { gap: var(--space-3); }
+html[data-style="trading"] .monitor .form,
+html[data-style="modern"] .monitor .form { padding: var(--panel-padding); border: 1px solid var(--color-border-0); border-radius: var(--radius-md); background: var(--color-surface-1); }
 .form {
   flex-shrink: 0;
   display: flex;
@@ -621,5 +622,12 @@ function rowKey(row: Monitor): string {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+</style>
+
+<style>
+.monitor-modal.n-card {
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
 }
 </style>

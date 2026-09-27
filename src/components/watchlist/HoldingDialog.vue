@@ -234,3 +234,10 @@ function cancel() {
   flex: 1;
 }
 </style>
+
+<style>
+.holding-dialog.n-card {
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+}
+</style>

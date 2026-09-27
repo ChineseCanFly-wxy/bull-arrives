@@ -210,24 +210,22 @@ fn record_history(app: &tauri::AppHandle, payload: &mut Value, pending: bool) ->
         inner.entries.truncate(HISTORY_LIMIT);
         inner.version
     };
+    archive_news_payload(app, payload);
     let _ = app.emit("price-alert-triggered", &payload);
     (id, version)
 }
 
-/// 只写入现有提醒记录，不弹系统/桌面通知。
 fn archive_news_payload(app: &tauri::AppHandle, payload: &Value) {
-    if matches!(payload["signal_kind"].as_str(), Some("news" | "timeline")) {
-        if let Some(db) = app.try_state::<std::sync::Arc<crate::db::Database>>() {
-            if let Err(error) = db.archive_news(payload) {
-                log::warn!("[news] archive: {error}");
-            }
+    if let Some(db) = app.try_state::<std::sync::Arc<crate::db::Database>>() {
+        let result = match payload["signal_kind"].as_str() {
+            Some("news") => db.archive_news(payload),
+            Some("price" | "risk") => db.archive_brief_alert(payload),
+            _ => Ok(()),
+        };
+        if let Err(error) = result {
+            log::warn!("[news] archive: {error}");
         }
     }
-}
-
-pub fn record_only(app: &tauri::AppHandle, mut payload: Value) {
-    record_history(app, &mut payload, false);
-    archive_news_payload(app, &payload);
 }
 
 pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
@@ -242,7 +240,6 @@ pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
         .unwrap_or("股票已达到提醒条件")
         .to_string();
     let (id, version) = record_history(app, &mut payload, true);
-    archive_news_payload(app, &payload);
     let job = DeliveryJob {
         id: id.clone(),
         title,
@@ -259,6 +256,42 @@ pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
         // The bounded worker cannot accept this item. Record the explicit failure;
         // never block the market scheduler or silently report success.
         update_delivery_status(app, &queue_failure(id, version, message));
+    }
+}
+
+/// Replace one archived news entry in the current session and optionally push its AI interpretation.
+pub fn news_analysis_updated(app: &tauri::AppHandle, payload: &Value, push: bool) {
+    let signal_id = payload["signal_id"].as_str();
+    let mut updated = payload.clone();
+    let mut delivery_target = None;
+    {
+        let history = app.state::<NotificationHistory>();
+        let mut inner = history.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = inner.entries.iter_mut().find(|entry| entry["signal_id"].as_str() == signal_id) {
+            for key in ["id", "received_at", "history_version", "delivery"] {
+                updated[key] = entry[key].clone();
+            }
+            if let (Some(id), Some(version)) = (updated["id"].as_str(), updated["history_version"].as_u64()) {
+                delivery_target = Some((id.to_owned(), version));
+            }
+            *entry = updated.clone();
+        }
+    }
+    let _ = app.emit("news-analysis-updated", &updated);
+    if push {
+        let (id, history_version) = delivery_target.unwrap_or_else(|| (
+            updated["signal_id"].as_str().unwrap_or("news-analysis").to_string(), u64::MAX,
+        ));
+        let job = DeliveryJob {
+            id, history_version,
+            title: format!("AI 解读 · {}", updated["title"].as_str().unwrap_or("资讯")),
+            body: updated["body"].as_str().unwrap_or_default().to_string(),
+            force_desktop: setting_enabled(app, "notification_desktop_always", false),
+            response: None,
+        };
+        if let Err(error) = app.state::<NotificationDelivery>().sender.try_send(job) {
+            log::warn!("[news] AI 解读通知排队失败：{error}");
+        }
     }
 }
 

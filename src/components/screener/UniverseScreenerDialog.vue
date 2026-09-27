@@ -29,7 +29,7 @@ import { useRankStore } from '@/stores/rank';
 import AnalysisDialog from '@/components/analysis/AnalysisDialog.vue';
 import type { StockStatusItem } from '@/types/analysis';
 import { TRADE_RULE_OPTIONS, tradeRuleLabel, type TradeRuleId } from '@/types/analysis';
-import type { SectorKind, SectorRotation, SectorSummary } from '@/types/sector';
+import type { SectorKind, SectorSummary } from '@/types/sector';
 import {
   BOARD_LABELS,
   SELECTABLE_BOARDS,
@@ -57,8 +57,8 @@ const rank = useRankStore();
 const addedSymbols = ref<Set<string>>(new Set());
 const addError = ref<string | null>(null);
 
-// 行业/概念目录。借用板块轮动的全量接口，打开筛选器时行业、概念各一次请求。
-const sectorCatalog = ref<SectorSummary[]>([]);
+// 行业/概念名称目录，打开筛选器时按需加载。
+const sectorCatalog = ref<Pick<SectorSummary, 'kind' | 'code' | 'name'>[]>([]);
 const sectorCatalogLoading = ref(false);
 const sectorCatalogError = ref<string | null>(null);
 
@@ -73,23 +73,11 @@ const industryOptions = computed(() => optionsFor('industry'));
 const conceptOptions = computed(() => optionsFor('concept'));
 
 async function loadSectorCatalog(force = false) {
-  if (sectorCatalogLoading.value || (!force && sectorCatalog.value.length)) return;
+  if (sectorCatalogLoading.value || (!force && (['industry', 'concept'] as const).every(kind => sectorCatalog.value.some(item => item.kind === kind)))) return;
   sectorCatalogLoading.value = true;
   sectorCatalogError.value = null;
   try {
-    const response = await invoke<SectorRotation>('get_sector_rotation');
-    const succeeded = new Set(response.statuses.filter(status => status.ok).map(status => status.kind));
-    // 某一类短暂失败时保留上次目录，只替换本次成功的类别。
-    sectorCatalog.value = [
-      ...sectorCatalog.value.filter(item => !succeeded.has(item.kind)),
-      ...response.items,
-    ];
-    const failed = response.statuses.filter(status => !status.ok);
-    if (failed.length) {
-      sectorCatalogError.value = failed
-        .map(status => `${status.kind === 'industry' ? '行业' : '概念'}目录加载失败：${status.error ?? '未知错误'}`)
-        .join('；');
-    }
+    sectorCatalog.value = await invoke<typeof sectorCatalog.value>('get_sector_catalog');
   } catch (error) {
     sectorCatalogError.value = `行业/概念目录加载失败：${error}`;
   } finally {
@@ -2027,8 +2015,8 @@ const scrollX = computed(() =>
   border-radius: var(--radius-md);
   background: var(--color-bg-card);
 }
-:global([data-style="trading"]) .filter-panel,
-:global([data-style="modern"]) .filter-panel { background: var(--color-surface-1); border-color: var(--color-border-1); }
+html[data-style="trading"] .filter-panel,
+html[data-style="modern"] .filter-panel { background: var(--color-surface-1); border-color: var(--color-border-1); }
 .field {
   display: flex;
   align-items: center;

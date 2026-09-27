@@ -16,6 +16,7 @@ export interface InteractiveTask {
   state: 'prepared' | 'opened' | 'validated';
   directory: string;
   live: boolean;
+  team: boolean;
 }
 
 export interface InteractiveTaskActivity {
@@ -23,6 +24,9 @@ export interface InteractiveTaskActivity {
   output_present: boolean;
   output_bytes: number | null;
   output_modified_at: string | null;
+  progress: string | null;
+  session_status: string | null;
+  team_status: string | null;
   last_checked_at: string;
 }
 
@@ -52,6 +56,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const error = ref<string | null>(null);
   const agentStatus = ref<AgentStatus | null>(null);
   const agentAnalysis = ref<AgentAnalysisResponse | null>(null);
+  const importedTeamTaskId = ref<string | null>(null);
   const agentLoading = ref(false);
   const interactiveTasks = ref<InteractiveTask[]>([]);
   const interactiveActivities = ref<Record<string, InteractiveTaskActivity>>({});
@@ -100,6 +105,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     error.value = null;
     analysis.value = null;
     agentAnalysis.value = null;
+    importedTeamTaskId.value = null;
     teamAnalysis.value = null;
     teamError.value = null;
     interactiveTasks.value = [];
@@ -149,7 +155,10 @@ export const useAnalysisStore = defineStore('analysis', () => {
       if (payload.fingerprint !== analysis.value?.agent_context_fingerprint) return;
       const last = current.events.at(-1)?.seq ?? 0;
       if (payload.seq <= last) return;
-      const events = [...current.events.slice(-239), payload];
+      const previous = current.events.at(-1);
+      const events = payload.kind === 'text_delta' && previous?.kind === 'text_delta'
+        ? [...current.events.slice(0, -1), { ...previous, seq: payload.seq, text: previous.text + payload.text }]
+        : [...current.events.slice(-239), payload];
       const ended = payload.kind === 'done' || payload.kind === 'error';
       liveStatus.value = { ...current, running: ended ? false : current.running, events };
       if (ended) {
@@ -243,17 +252,19 @@ export const useAnalysisStore = defineStore('analysis', () => {
     }
   }
 
-  async function startInteractiveAnalysis() {
+  async function startExternalAnalysis(team: boolean) {
     const fingerprint = analysis.value?.agent_context_fingerprint;
     if (!fingerprint || interactiveBusy.value) return;
     interactiveBusy.value = true;
     interactiveError.value = null;
     interactiveNotice.value = null;
     try {
-      const task = await invoke<InteractiveTask>('start_interactive_analysis', { contextFingerprint: fingerprint });
+      const task = await invoke<InteractiveTask>(team ? 'start_interactive_team' : 'start_interactive_analysis', { contextFingerprint: fingerprint });
       if (analysis.value?.agent_context_fingerprint === fingerprint) {
         interactiveTasks.value = [task, ...interactiveTasks.value];
-        interactiveNotice.value = '已请求打开 Claude Code 终端；请在终端交互，完成后手动导入结果。';
+        interactiveNotice.value = team
+          ? '协作终端启动脚本已运行；请在终端查看队友对话，完成后回到这里导入结果。'
+          : 'Claude Code 终端启动脚本已运行；请在终端交互，完成后手动导入结果。';
       }
     } catch (e) {
       if (analysis.value?.agent_context_fingerprint === fingerprint) {
@@ -265,13 +276,16 @@ export const useAnalysisStore = defineStore('analysis', () => {
     }
   }
 
+  function startInteractiveAnalysis() { return startExternalAnalysis(false); }
+  function startInteractiveTeam() { return startExternalAnalysis(true); }
+
   async function resumeInteractiveAnalysis(taskId: string) {
     if (interactiveBusy.value) return;
     interactiveBusy.value = true;
     interactiveError.value = null;
     try {
       await invoke('resume_interactive_analysis', { taskId });
-      interactiveNotice.value = '已请求打开恢复会话的终端；若 Claude Code 提示会话不存在，请新建分析任务。';
+      interactiveNotice.value = '恢复会话的终端启动脚本已运行；若 Claude Code 提示会话不存在，请新建分析任务。';
     } catch (e) {
       interactiveError.value = String(e);
     } finally {
@@ -288,6 +302,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
       await invoke('delete_interactive_analysis', { taskId, closedSession });
       if (fingerprint && analysis.value?.agent_context_fingerprint === fingerprint) {
         interactiveTasks.value = interactiveTasks.value.filter(task => task.id !== taskId);
+        if (importedTeamTaskId.value === taskId) importedTeamTaskId.value = null;
         if (liveStatus.value?.task_id === taskId) liveStatus.value = null;
         interactiveNotice.value = '已清理该交互任务的本地文件。';
       }
@@ -321,13 +336,17 @@ export const useAnalysisStore = defineStore('analysis', () => {
       if (task.context_fingerprint === fingerprint) {
         ++agentRequest;
         agentAnalysis.value = response;
+        importedTeamTaskId.value = task.team ? taskId : null;
         historicalInteractiveResult.value = null;
-        interactiveNotice.value = '当前快照的结构化分析结果已通过校验。';
+        interactiveNotice.value = task.team
+          ? 'Team 最终结论已通过校验；团队讨论记录显示在下方，供对照各方意见。'
+          : '当前快照的结构化分析结果已通过校验。';
       } else {
         historicalInteractiveResult.value = response;
         interactiveNotice.value = '历史快照结果已校验，仅供回顾，不作为当前行情的分析结论。';
       }
       await loadInteractiveTasks(fingerprint);
+      if (task.team && importedTeamTaskId.value === taskId) await inspectInteractiveTask(taskId);
     } catch (e) {
       if (analysis.value?.agent_context_fingerprint === fingerprint) interactiveError.value = `导入失败：${e}`;
     } finally {
@@ -341,6 +360,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     const request = ++agentRequest;
     agentLoading.value = true;
     agentAnalysis.value = null;
+    importedTeamTaskId.value = null;
     try {
       const result = await invoke<AgentAnalysisResponse>('analyze_stock_agent', {
         contextFingerprint,
@@ -417,6 +437,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     error.value = null;
     ruleOverride.value = null;
     agentAnalysis.value = null;
+    importedTeamTaskId.value = null;
     agentLoading.value = false;
     interactiveTasks.value = [];
     interactiveActivities.value = {};
@@ -434,10 +455,10 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   return {
     analysis, symbol, loading, error, ruleUsed, ruleOverride,
-    agentStatus, agentAnalysis, agentLoading, interactiveTasks, interactiveActivities, interactiveBusy, interactiveError, interactiveNotice, historicalInteractiveResult,
+    agentStatus, agentAnalysis, agentLoading, importedTeamTaskId, interactiveTasks, interactiveActivities, interactiveBusy, interactiveError, interactiveNotice, historicalInteractiveResult,
     liveStatus, liveBusy, liveError, startLiveAnalysis, askLiveAnalysis, cancelLiveAnalysis, restoreLiveAnalysis,
     teamAnalysis, teamLoading, teamError, research, researchLoading, researchError,
     analyze, loadAgentStatus, analyzeWithAgent, analyzeWithTeam, runResearch, cancelAgentAnalysis, reset,
-    loadInteractiveTasks, inspectInteractiveTask, startInteractiveAnalysis, resumeInteractiveAnalysis, importInteractiveAnalysis, deleteInteractiveAnalysis,
+    loadInteractiveTasks, inspectInteractiveTask, startInteractiveAnalysis, startInteractiveTeam, resumeInteractiveAnalysis, importInteractiveAnalysis, deleteInteractiveAnalysis,
   };
 });

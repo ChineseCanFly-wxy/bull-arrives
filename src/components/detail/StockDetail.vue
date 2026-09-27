@@ -88,13 +88,14 @@ useMinuteKUnavailable(activePeriod);
   flex-direction: column;
   box-sizing: border-box;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid var(--color-border-0);
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   background: var(--color-surface-1);
   padding: var(--panel-padding);
 }
-:global([data-style="classic"]) .stock-detail { border: 0; border-top: 1px solid var(--color-border); border-radius: 0; padding: 12px 16px; }
+html[data-style="classic"] .stock-detail { border: 0; border-top: 1px solid var(--color-border); border-radius: 0; padding: 12px 16px; }
 .detail-header {
   display: flex;
   justify-content: space-between;
@@ -126,12 +127,12 @@ useMinuteKUnavailable(activePeriod);
   line-height: 1;
 }
 .detail-close:hover { color: var(--color-text-primary); }
-:global([data-style="trading"]) .detail-close:hover,
-:global([data-style="modern"]) .detail-close:hover { background: var(--color-surface-hover); }
+html[data-style="trading"] .detail-close:hover,
+html[data-style="modern"] .detail-close:hover { background: var(--color-surface-hover); }
 .detail-content {
   display: flex;
   flex: 1;
-  min-height: 0;
+  min-height: 290px;
   gap: var(--space-4);
 }
 .detail-left {
@@ -170,25 +171,25 @@ useMinuteKUnavailable(activePeriod);
 }
 
 @media (max-width: 780px) {
-  .detail-content { flex-direction: column; overflow: auto; }
+  .detail-content { flex: 0 0 auto; flex-direction: column; min-height: 0; }
   .detail-left { flex-shrink: 1; overflow: visible; }
   .detail-right { min-height: 180px; }
-  :global([data-style="trading"]) .stock-detail,
-  :global([data-style="modern"]) .stock-detail { flex-basis: 62%; min-height: 180px; }
-  :global([data-style="trading"]) .detail-left,
-  :global([data-style="modern"]) .detail-left { flex-shrink: 0; }
-  :global([data-style="trading"]) .detail-right,
-  :global([data-style="modern"]) .detail-right { flex: 0 0 auto; min-height: 200px; }
-  :global([data-style="trading"]) .detail-right :deep(.chart-container),
-  :global([data-style="modern"]) .detail-right :deep(.chart-container) { min-height: 200px; height: 240px; }
-  :global([data-style="trading"]) .chart-toolbar,
-  :global([data-style="modern"]) .chart-toolbar { align-items: flex-start; flex-wrap: wrap; }
+  html[data-style="trading"] .stock-detail,
+  html[data-style="modern"] .stock-detail { flex-basis: 62%; min-height: 180px; }
+  html[data-style="trading"] .detail-left,
+  html[data-style="modern"] .detail-left { flex-shrink: 0; }
+  html[data-style="trading"] .detail-right,
+  html[data-style="modern"] .detail-right { flex: 0 0 auto; min-height: 200px; }
+  html[data-style="trading"] .detail-right :deep(.chart-container),
+  html[data-style="modern"] .detail-right :deep(.chart-container) { min-height: 200px; height: 240px; }
+  html[data-style="trading"] .chart-toolbar,
+  html[data-style="modern"] .chart-toolbar { align-items: flex-start; flex-wrap: wrap; }
 }
 
 @media (max-height: 620px) {
-  :global([data-style="trading"]) .stock-detail,
-  :global([data-style="modern"]) .stock-detail { padding-block: 8px; }
-  :global([data-style="trading"]) .detail-header,
-  :global([data-style="modern"]) .detail-header { margin-bottom: 8px; }
+  html[data-style="trading"] .stock-detail,
+  html[data-style="modern"] .stock-detail { padding-block: 8px; }
+  html[data-style="trading"] .detail-header,
+  html[data-style="modern"] .detail-header { margin-bottom: 8px; }
 }
 </style>

@@ -82,7 +82,7 @@ defineExpose({
   overflow-x: auto;
 }
 
-:global([data-style="classic"]) .index-bar { justify-content: center; padding-inline: var(--space-4); }
+html[data-style="classic"] .index-bar { justify-content: center; padding-inline: var(--space-4); }
 .index-placeholder {
   display: flex;
   align-items: center;

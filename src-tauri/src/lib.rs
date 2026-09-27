@@ -11,6 +11,7 @@ pub mod group_hotkeys;
 pub mod market_rules;
 pub mod monitor;
 pub mod news;
+pub mod daily_brief;
 pub mod notification_identity;
 pub mod notifications;
 pub mod quant;
@@ -993,6 +994,7 @@ pub fn run() {
             commands::analysis::batch_stock_status,
             commands::agent::get_agent_status,
             commands::research::research_dashboard,
+            commands::research::research_mode_report,
             commands::research::save_research_config,
             commands::research::research_discover,
             commands::research::research_start,
@@ -1002,13 +1004,16 @@ pub fn run() {
             commands::research::open_research_claude,
             commands::research::import_research_candidate,
             news::get_news_archive,
+            daily_brief::get_daily_briefs,
             commands::agent::inspect_agent_task,
             commands::agent::get_agent_activity,
             commands::agent::get_agent_run_detail,
+            commands::agent::open_agent_run_terminal,
             commands::agent::test_agent_connection,
             commands::agent::analyze_stock_agent,
             commands::agent::analyze_stock_team,
             commands::agent::start_interactive_analysis,
+            commands::agent::start_interactive_team,
             commands::agent::start_live_analysis,
             commands::agent::ask_live_analysis,
             commands::agent::get_live_analysis,
@@ -1026,6 +1031,7 @@ pub fn run() {
             commands::sector::get_sector_limit_up_stats,
             commands::sector::get_sector_history,
             commands::sector::get_sector_rotation,
+            commands::sector::get_sector_catalog,
             commands::monitor::get_monitors,
             commands::monitor::save_monitor,
             commands::monitor::set_monitor_enabled,
@@ -1041,6 +1047,8 @@ pub fn run() {
             notifications::get_notification_history,
             notifications::clear_notification_history,
             notifications::test_notification,
+            news::analyze_archived_news,
+            news::get_news_ai_usage,
             notification_identity::get_notification_identity_status,
             notification_identity::register_notification_identity,
             desktop_toast::desktop_toast_ready,

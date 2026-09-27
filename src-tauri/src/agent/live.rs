@@ -1,5 +1,5 @@
 use super::interactive::{self, InteractiveTask};
-use super::{app_launcher_path, hide_window, minimal_environment, status, ProcessJob, START_FILE};
+use super::{app_launcher_path, hide_window, status, ProcessJob, START_FILE};
 use crate::db::Database;
 use serde::Serialize;
 use serde_json::Value;
@@ -76,12 +76,21 @@ fn publish(app: &tauri::AppHandle, id: Uuid, session: &Session, kind: &str, text
             kind: kind.into(),
             text: text.chars().take(MAX_TEXT).collect(),
         };
-        if state.events.len() == MAX_EVENTS { state.events.pop_front(); }
-        state.events.push_back(event.clone());
+        retain_event(&mut state, &event);
         event
     };
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.emit(EVENT_NAME, event);
+    }
+}
+
+fn retain_event(state: &mut SessionState, event: &LiveEvent) {
+    if let Some(last) = state.events.back_mut().filter(|last| event.kind == "text_delta" && last.kind == event.kind && last.text.chars().count() + event.text.chars().count() <= MAX_TEXT) {
+        last.text.push_str(&event.text);
+        last.seq = event.seq;
+    } else {
+        if state.events.len() == MAX_EVENTS { state.events.pop_front(); }
+        state.events.push_back(event.clone());
     }
 }
 
@@ -131,13 +140,7 @@ pub fn start(db: &Database, root: &Path, app: tauri::AppHandle, fingerprint: Str
     Ok(snapshot(task.id).expect("刚创建的会话必须存在"))
 }
 
-fn turn_budget(db: &Database) -> String {
-    db.get_setting("agent_budget_usd").ok().flatten()
-        .and_then(|v| v.parse::<f64>().ok())
-        .filter(|v| v.is_finite() && *v >= 0.05)
-        .map(|v| format!("{:.2}", v.min(0.20)))
-        .unwrap_or_else(|| "0.20".into())
-}
+fn turn_budget(db: &Database) -> String { super::agent_budget(db) }
 
 pub fn ask(db: &Database, root: &Path, app: tauri::AppHandle, id: Uuid, question: String) -> Result<LiveStatus, String> {
     let question = question.trim();
@@ -315,8 +318,12 @@ fn map_event(value: &Value, streamed_text: &mut bool, streamed_tools: &mut bool)
     mapped
 }
 
-fn safe_tool(name: &str) -> &str {
-    match name { "Read" => "Read", "Write" => "Write", "Edit" => "Edit", _ => "其他工具" }
+fn safe_tool(name: &str) -> String {
+    if name.len() <= 80 && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-')) {
+        name.to_string()
+    } else {
+        "其他工具".into()
+    }
 }
 
 fn execute(app: &tauri::AppHandle, path: &Path, dir: &Path, id: Uuid, current: &Arc<Session>, prompt: &str, budget: &str, resume: bool) -> Result<(), String> {
@@ -345,15 +352,12 @@ fn execute(app: &tauri::AppHandle, path: &Path, dir: &Path, id: Uuid, current: &
         command.arg(super::LAUNCHER_ARG).arg(path).arg(budget).arg("--live").arg(id.to_string());
         if resume { command.arg("--resume"); }
     } else {
-        command.args(["--restricted", "--strict-mcp-config", "--mcp-config", "empty-mcp.json", "--disable-slash-commands", "--no-chrome",
-            "--permission-mode", "dontAsk", "--permission-prompts", "none", "--tools", "Read,Write,Edit",
-            "--allowedTools", "Read(input.json),Read(schema.json),Read(workflow.md),Write(response.json),Edit(response.json)",
+        command.args(["--allowedTools", "Read(input.json),Read(schema.json),Read(workflow.md),Write(response.json),Edit(response.json)",
             "--output-format", "stream-json", "--include-partial-messages", "--verbose", "--max-budget-usd", budget]);
         if resume { command.arg("--resume").arg(id.to_string()); }
         else { command.arg("--session-id").arg(id.to_string()); }
         command.arg("-p").arg(prompt);
     }
-    minimal_environment(&mut command);
     hide_window(&mut command);
     let mut child = command.spawn().map_err(|e| format!("无法启动 Claude Code：{e}"))?;
     let job = match ProcessJob::assign(&child) {
@@ -413,7 +417,8 @@ mod tests {
         let full = serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"你好"}]}});
         assert!(map_event(&full, &mut streamed_text, &mut streamed_tools).is_empty());
         let tool = serde_json::json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"secret":"do not expose"}}]}});
-        assert_eq!(map_event(&tool, &mut streamed_text, &mut streamed_tools)[0].1, "调用工具：其他工具（参数已隐藏）");
+        assert_eq!(map_event(&tool, &mut streamed_text, &mut streamed_tools)[0].1, "调用工具：Bash（参数已隐藏）");
+        assert_eq!(safe_tool("Bash; secret"), "其他工具");
     }
     #[test]
     fn chunked_stream_and_tool_output_are_bounded() {
@@ -432,12 +437,27 @@ mod tests {
     }
 
     #[test]
-    fn budget_is_capped() {
+    fn live_budget_follows_setting() {
         let dir = std::env::temp_dir().join(format!("bull-live-test-{}", Uuid::new_v4()));
         let db = Database::open(dir.clone()).unwrap();
-        db.set_setting("agent_budget_usd", "9.99").unwrap();
-        assert_eq!(turn_budget(&db), "0.20");
+        assert_eq!(turn_budget(&db), "10.00");
+        db.set_setting("agent_budget_usd", "50.00").unwrap();
+        assert_eq!(turn_budget(&db), "50.00");
         drop(db);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn streamed_reply_keeps_its_start_after_many_deltas() {
+        let id = Uuid::new_v4();
+        let mut state = SessionState { running: false, can_resume: true, seq: 0, events: VecDeque::new() };
+        for seq in 1..=5000 {
+            let event = LiveEvent { seq, task_id: id, fingerprint: "test".into(), kind: "text_delta".into(), text: "字".into() };
+            retain_event(&mut state, &event);
+        }
+        assert_eq!(state.events.len(), 2);
+        assert_eq!(state.events[0].text.chars().count(), MAX_TEXT);
+        assert_eq!(state.events[1].seq, 5000);
+        assert_eq!(state.events.iter().map(|event| event.text.chars().count()).sum::<usize>(), 5000);
     }
 }

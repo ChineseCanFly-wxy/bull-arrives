@@ -1,5 +1,5 @@
 use crate::datasource::sector::{
-    self, SectorHistory, SectorKind, SectorLimitUpStats, SectorMemberPage, SectorRotation,
+    self, SectorCatalogItem, SectorHistory, SectorKind, SectorLimitUpStats, SectorMemberPage, SectorRotation,
     SectorSummaryPage,
 };
 
@@ -70,4 +70,9 @@ pub async fn get_sector_history(
 #[tauri::command]
 pub async fn get_sector_rotation() -> Result<SectorRotation, String> {
     Ok(sector::fetch_rotation().await)
+}
+
+#[tauri::command]
+pub async fn get_sector_catalog() -> Result<Vec<SectorCatalogItem>, String> {
+    sector::fetch_filter_catalog().await
 }

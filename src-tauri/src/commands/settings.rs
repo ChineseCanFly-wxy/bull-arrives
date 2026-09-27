@@ -86,8 +86,8 @@ async fn check_local_history(url: &str, candidates: Vec<String>) -> LocalHistory
     match history::fetch_daily(
         &LocalHistoryConfig::new(url),
         "600519",
-        Some("20260101"),
-        Some("20261231"),
+        None,
+        None,
     )
     .await
     {
@@ -204,6 +204,18 @@ pub fn set_setting(
     {
         return Err("开关值只能为 0 或 1".into());
     }
+    if key == "news_notification_mode" && !matches!(value.as_str(), "direct" | "hybrid") {
+        return Err("资讯通知方式只能为 direct 或 hybrid".into());
+    }
+    if key == "news_ai_daily_limit" && !value.parse::<u32>().is_ok_and(|limit| limit <= 20) {
+        return Err("自动 AI 解读每日上限须为 0–20 条".into());
+    }
+    if key == "news_ai_keywords" {
+        let words = value.split([',', '，']).map(str::trim).filter(|word| !word.is_empty()).collect::<Vec<_>>();
+        if words.len() > 10 || words.iter().any(|word| !(2..=20).contains(&word.chars().count()) || word.chars().any(char::is_control)) {
+            return Err("关注词最多 10 个，每个 2–20 字，使用逗号分隔".into());
+        }
+    }
     let value = if key == "local_history_url" {
         validate_local_history_url(&value)?
     } else if key == "local_history_engine_dir" && !value.trim().is_empty() {
@@ -257,8 +269,8 @@ pub fn set_setting(
     }
     let value = if key == "agent_budget_usd" {
         let budget = value.parse::<f64>().map_err(|_| "Agent 单次预算必须为有效金额")?;
-        if !budget.is_finite() || !(0.05..=10.0).contains(&budget) {
-            return Err("Agent 单次预算必须在 0.05–10 美元之间".into());
+        if !budget.is_finite() || !(10.0..=50.0).contains(&budget) {
+            return Err("Agent 单次预算必须在 10–50 美元之间".into());
         }
         format!("{budget:.2}")
     } else if key == "agent_claude_path" && !value.trim().is_empty() {

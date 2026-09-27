@@ -219,17 +219,17 @@ function openSimulation() {
   -webkit-app-region: drag;
 }
 .classic-slogan { display: none; }
-:global([data-style="classic"]) .top-bar { gap: 0; padding: 0 var(--space-4); }
-:global([data-style="classic"]) .brand-block { gap: 0; }
-:global([data-style="classic"]) .classic-slogan { display: inline; font-size: var(--text-xs); color: var(--color-text-tertiary); letter-spacing: .02em; }
-:global([data-style="classic"]) .brand-mark,
-:global([data-style="classic"]) .brand-name,
-:global([data-style="classic"]) .brand-slogan { display: none; }
-:global([data-style="classic"]) .top-bar-right { overflow: visible; }
-:global([data-style="classic"]) .nav-primary { height: 22px; padding: 0 10px; border-color: transparent; background: transparent; color: var(--color-text-tertiary); font: 400 12px var(--font-sans); }
-:global([data-style="classic"]) .nav-primary:hover { color: var(--color-accent); background: var(--color-accent-dim); }
-:global([data-style="classic"]) .cog-btn { width: 22px; height: 22px; }
-:global([data-style="classic"]) .ds-tag { height: 20px; border-color: transparent; }
+html[data-style="classic"] .top-bar { gap: 0; padding: 0 var(--space-4); }
+html[data-style="classic"] .brand-block { gap: 0; }
+html[data-style="classic"] .classic-slogan { display: inline; font-size: var(--text-xs); color: var(--color-text-tertiary); letter-spacing: .02em; }
+html[data-style="classic"] .brand-mark { display: none; }
+html[data-style="classic"] .brand-name { display: none; }
+html[data-style="classic"] .brand-slogan { display: none; }
+html[data-style="classic"] .top-bar-right { overflow: visible; }
+html[data-style="classic"] .nav-primary { height: 22px; padding: 0 10px; border-color: transparent; background: transparent; color: var(--color-text-tertiary); font: 400 12px var(--font-sans); }
+html[data-style="classic"] .nav-primary:hover { color: var(--color-accent); background: var(--color-accent-dim); }
+html[data-style="classic"] .cog-btn { width: 22px; height: 22px; }
+html[data-style="classic"] .ds-tag { height: 20px; border-color: transparent; }
 .brand-block {
   display: flex;
   align-items: center;
@@ -287,7 +287,7 @@ function openSimulation() {
 @media (max-width: 780px) {
   .brand-slogan { display: none; }
   .top-bar { gap: var(--space-2); }
-  :global([data-style="classic"]) .top-bar-right { overflow-x: auto; overflow-y: hidden; }
+  html[data-style="classic"] .top-bar-right { overflow-x: auto; overflow-y: hidden; }
 }
 @media (max-width: 580px) {
   .brand-name { display: none; }

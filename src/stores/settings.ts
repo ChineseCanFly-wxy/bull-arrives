@@ -67,6 +67,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const quoteScheduleEnabled = ref(false);
   const alertsEnabled = ref(true);
   const newsNotificationsEnabled = ref(false);
+  const newsNotificationMode = ref<'direct' | 'hybrid'>('direct');
   const notificationDesktopAlways = ref(false);
   /// AI / 量化智能总开关。关闭后所有「自动运行」的智能功能一并停止，
   /// 手动点击触发的分析/推荐榜不受它约束。
@@ -151,6 +152,9 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'news_notifications_enabled':
         newsNotificationsEnabled.value = value === '1';
         break;
+      case 'news_notification_mode':
+        newsNotificationMode.value = value === 'hybrid' || value === 'ai' ? 'hybrid' : 'direct';
+        break;
       case 'notification_desktop_always':
         notificationDesktopAlways.value = value === '1';
         break;
@@ -223,6 +227,7 @@ export const useSettingsStore = defineStore('settings', () => {
       applySettingLocally('quote_schedule_enabled', settings.value['quote_schedule_enabled'] ?? '0');
       applySettingLocally('alerts_enabled', settings.value['alerts_enabled'] ?? '1');
       applySettingLocally('news_notifications_enabled', settings.value['news_notifications_enabled'] ?? '0');
+      applySettingLocally('news_notification_mode', settings.value['news_notification_mode'] ?? 'direct');
       applySettingLocally('notification_desktop_always', settings.value['notification_desktop_always'] ?? '0');
       applySettingLocally('ai_enabled', settings.value['ai_enabled'] ?? '1');
       applySettingLocally('ai_monitor_enabled', settings.value['ai_monitor_enabled'] ?? '1');
@@ -493,7 +498,7 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     settings, datasources, activeDatasource, theme, visualStyle, autoLaunch, isPortable,
     tickerHotkey, tickerOpacity, tickerSingleColor, tickerTextColor, tickerDisplayMode, tickerPageSize,
-    quoteScheduleEnabled, alertsEnabled, newsNotificationsEnabled, notificationDesktopAlways,
+    quoteScheduleEnabled, alertsEnabled, newsNotificationsEnabled, newsNotificationMode, notificationDesktopAlways,
     aiEnabled, aiMonitorEnabled, localHistoryEnabled, localHistoryUrl, localHistoryEngineDir,
     localHistoryEnginePath, localHistoryUpdaterPath, stockDbStatus,
     refreshInterval, marketSession, error,

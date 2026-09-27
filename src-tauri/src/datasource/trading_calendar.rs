@@ -254,8 +254,9 @@ pub async fn sync_from_market(
     manager: &crate::datasource::DataSourceManager,
 ) -> Result<usize, String> {
     LAST_ATTEMPT.store(Utc::now().timestamp(), Ordering::Release);
+    // 指数只用于取交易日期，腾讯指数返回 day 而非个股的 qfqday。
     let kline_result =
-        crate::datasource::kline::fetch_qfq_daily_kline_with_source(CALENDAR_SYMBOL, CALENDAR_BARS)
+        crate::datasource::kline::fetch_daily_kline_with_source(CALENDAR_SYMBOL, CALENDAR_BARS)
             .await;
     let mut count = 0;
     let mut failure = None;
@@ -347,6 +348,16 @@ async fn probe_today(manager: &crate::datasource::DataSourceManager) {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[tokio::test]
+    #[ignore = "requires live index daily bars"]
+    async fn live_market_sync_accepts_index_day_rows() {
+        let count = sync_from_market(&crate::datasource::DataSourceManager::new())
+            .await
+            .unwrap();
+        assert!(count >= MIN_TRUSTED_DATES);
+        assert!(coverage().is_some());
+    }
 
     fn date(text: &str) -> NaiveDate {
         NaiveDate::parse_from_str(text, "%Y-%m-%d").unwrap()

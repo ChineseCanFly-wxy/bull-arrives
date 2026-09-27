@@ -13,6 +13,7 @@ pub struct AgentRunRecord {
     pub duration_ms: Option<u64>,
     pub prompt_hash: String,
     pub error: Option<String>,
+    pub session_id: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -44,6 +45,7 @@ mod tests {
                     "实际提示词",
                     &format!("{{\"question\":\"问题{index}\"}}"),
                     "{}",
+                    Some("00000000-0000-4000-8000-000000000001"),
                 )
                 .unwrap();
             db.finish_agent_run(last, 25, None).unwrap();
@@ -53,6 +55,8 @@ mod tests {
         assert_eq!(rows.len(), 20);
         assert_eq!(rows[0].id, last);
         assert_eq!(rows[0].status, "received");
+        assert_eq!(rows[0].session_id.as_deref(), Some("00000000-0000-4000-8000-000000000001"));
+        assert_eq!(db.agent_run_session(last).unwrap(), "00000000-0000-4000-8000-000000000001");
         assert_eq!(db.agent_run_detail(last).unwrap().prompt, "实际提示词");
         assert!(db
             .agent_run_detail(last)
@@ -66,6 +70,18 @@ mod tests {
                 .unwrap(),
             100
         );
+    }
+
+    #[test]
+    fn existing_run_table_gains_session_column() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE agent_runs(id INTEGER PRIMARY KEY AUTOINCREMENT,fingerprint TEXT NOT NULL,task TEXT NOT NULL,role TEXT NOT NULL,round INTEGER NOT NULL,status TEXT NOT NULL,started_at TEXT NOT NULL,duration_ms INTEGER,prompt_hash TEXT NOT NULL,prompt TEXT NOT NULL,input_json TEXT NOT NULL,schema_json TEXT NOT NULL,error TEXT);").unwrap();
+        let db = Database { conn: std::sync::Mutex::new(conn) };
+        db.migrate_agent().unwrap();
+        db.migrate_agent().unwrap();
+        let id = db.start_agent_run("snapshot", "connection_test", "", 0, "hash", "prompt", "{}", "{}", Some("00000000-0000-4000-8000-000000000001")).unwrap();
+        db.finish_agent_run(id, 1, None).unwrap();
+        assert!(db.agent_run_session(id).is_ok());
     }
 }
 
@@ -88,7 +104,13 @@ impl Database {
                schema_json TEXT NOT NULL,error TEXT
              );
              CREATE INDEX IF NOT EXISTS idx_agent_runs_fingerprint ON agent_runs(fingerprint,id);",
-        )
+        )?;
+        let has_session = conn.prepare("PRAGMA table_info(agent_runs)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .iter().any(|name| name == "session_id");
+        if !has_session { conn.execute("ALTER TABLE agent_runs ADD COLUMN session_id TEXT", [])?; }
+        Ok(())
     }
 
     pub fn start_agent_run(
@@ -101,10 +123,11 @@ impl Database {
         prompt: &str,
         input_json: &str,
         schema: &str,
+        session_id: Option<&str>,
     ) -> Result<i64, String> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        conn.execute("INSERT INTO agent_runs(fingerprint,task,role,round,status,started_at,prompt_hash,prompt,input_json,schema_json) VALUES(?1,?2,?3,?4,'running',?5,?6,?7,?8,?9)",
-            params![fingerprint,task,role,round,chrono::Utc::now().to_rfc3339(),prompt_hash,prompt,input_json,schema]).map_err(|e| e.to_string())?;
+        conn.execute("INSERT INTO agent_runs(fingerprint,task,role,round,status,started_at,prompt_hash,prompt,input_json,schema_json,session_id) VALUES(?1,?2,?3,?4,'running',?5,?6,?7,?8,?9,?10)",
+            params![fingerprint,task,role,round,chrono::Utc::now().to_rfc3339(),prompt_hash,prompt,input_json,schema,session_id]).map_err(|e| e.to_string())?;
         let id = conn.last_insert_rowid();
         // Retain only the latest 100 diagnostic calls, never an unbounded input archive.
         conn.execute("DELETE FROM agent_runs WHERE id NOT IN (SELECT id FROM agent_runs ORDER BY id DESC LIMIT 100)", []).map_err(|e| e.to_string())?;
@@ -133,7 +156,7 @@ impl Database {
 
     pub fn agent_run_history(&self, fingerprint: &str) -> Result<Vec<AgentRunRecord>, String> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare("SELECT id,fingerprint,task,role,round,status,started_at,duration_ms,prompt_hash,error FROM agent_runs WHERE fingerprint=?1 ORDER BY id DESC LIMIT 20").map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare("SELECT id,fingerprint,task,role,round,status,started_at,duration_ms,prompt_hash,error,session_id FROM agent_runs WHERE fingerprint=?1 ORDER BY id DESC LIMIT 20").map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([fingerprint], |r| {
                 Ok(AgentRunRecord {
@@ -147,12 +170,22 @@ impl Database {
                     duration_ms: r.get(7)?,
                     prompt_hash: r.get(8)?,
                     error: r.get(9)?,
+                    session_id: r.get(10)?,
                 })
             })
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
         Ok(rows)
+    }
+
+    pub fn agent_run_session(&self, id: i64) -> Result<String, String> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let (status, session): (String, Option<String>) = conn.query_row(
+            "SELECT status,session_id FROM agent_runs WHERE id=?1", [id], |row| Ok((row.get(0)?, row.get(1)?))
+        ).map_err(|_| "调用记录不存在".to_string())?;
+        if status == "running" { return Err("后台调用仍在运行，结束后再打开终端".into()); }
+        session.ok_or_else(|| "这条旧调用没有可恢复的 Claude 会话".into())
     }
 
     pub fn agent_run_detail(&self, id: i64) -> Result<AgentRunDetail, String> {

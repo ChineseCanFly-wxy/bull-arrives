@@ -863,12 +863,12 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
 }
 .section-heading { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
 .section-kicker { font: 600 10px var(--font-mono); letter-spacing: .08em; color: var(--color-accent); }
-:global([data-style="classic"]) .section-kicker,
-:global([data-style="classic"]) .watch-count { display: none; }
-:global([data-style="classic"]) .watchlist-container { padding-inline: var(--space-4); }
-:global([data-style="classic"]) .watchlist-header { gap: 0; padding: var(--space-3) 0; }
-:global([data-style="classic"]) .watchlist-actions { flex-wrap: nowrap; }
-:global([data-style="classic"]) .add-btn { height: 28px; color: #fff; }
+html[data-style="classic"] .section-kicker { display: none; }
+html[data-style="classic"] .watch-count { display: none; }
+html[data-style="classic"] .watchlist-container { padding-inline: var(--space-4); }
+html[data-style="classic"] .watchlist-header { gap: 0; padding: var(--space-3) 0; }
+html[data-style="classic"] .watchlist-actions { flex-wrap: nowrap; }
+html[data-style="classic"] .add-btn { height: 28px; color: #fff; }
 .section-title small { color: var(--color-text-tertiary); font-size: var(--text-xs); font-weight: 400; }
 .watchlist-actions {
   display: flex;
@@ -939,11 +939,11 @@ defineExpose({ clearSelection: () => { cancelPendingRowClick(); selectedRow.valu
   flex: 1 1 44%;
   min-height: 160px;
 }
-:global([data-style="trading"]) .watchlist-container :deep(.watchlist-table .n-data-table-th),
-:global([data-style="modern"]) .watchlist-container :deep(.watchlist-table .n-data-table-th) { background: var(--color-surface-2); color: var(--color-text-secondary); }
-:global([data-style="trading"]) .watchlist-container :deep(.watchlist-table .n-data-table-td),
-:global([data-style="modern"]) .watchlist-container :deep(.watchlist-table .n-data-table-td) { border-color: var(--color-border-0); }
-:global([data-style="modern"]) .watchlist-container :deep(.watchlist-table) { border: 1px solid var(--color-border-0); border-radius: var(--radius-md); overflow: hidden; }
+html[data-style="trading"] .watchlist-container :deep(.watchlist-table .n-data-table-th),
+html[data-style="modern"] .watchlist-container :deep(.watchlist-table .n-data-table-th) { background: var(--color-surface-2); color: var(--color-text-secondary); }
+html[data-style="trading"] .watchlist-container :deep(.watchlist-table .n-data-table-td),
+html[data-style="modern"] .watchlist-container :deep(.watchlist-table .n-data-table-td) { border-color: var(--color-border-0); }
+html[data-style="modern"] .watchlist-container :deep(.watchlist-table) { border: 1px solid var(--color-border-0); border-radius: var(--radius-md); overflow: hidden; }
 /* P&L color classes (used via render functions) */
 :deep(.pct-col) { font-weight: 500; }
 :deep(.pct-col.up) { color: var(--color-up); }

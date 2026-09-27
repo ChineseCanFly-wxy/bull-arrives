@@ -93,8 +93,8 @@ async function handleAdd(row: RankItem) {
   }
 }
 
-// 弹窗内容区高 84vh − 96px；扣掉工具条 / 提示行后，表格高度随窗口自适应（vh 随窗口实时变化）
-const tableMaxHeight = 'calc(84vh - 220px)';
+// 表格内部滚动，低窗口时由卡片内容区提供外层滚动兜底。
+const tableMaxHeight = 'max(80px, calc(84dvh - 220px))';
 
 const columns = computed<DataTableColumns<RankItem>>(() => [
   {
@@ -191,6 +191,7 @@ const columns = computed<DataTableColumns<RankItem>>(() => [
     preset="card"
     title="今日推荐榜"
     :style="{ width: '92vw' }"
+    :content-style="{ maxHeight: 'calc(100dvh - 120px)', overflowY: 'auto' }"
     :mask-closable="false"
     :bordered="false"
     size="small"
@@ -251,7 +252,8 @@ const columns = computed<DataTableColumns<RankItem>>(() => [
 .rank {
   display: flex;
   flex-direction: column;
-  height: calc(84vh - 96px);
+  height: max(120px, calc(84dvh - 96px));
+  max-height: calc(100dvh - 120px);
   gap: var(--space-2);
 }
 .toolbar {

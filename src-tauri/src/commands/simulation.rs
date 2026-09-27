@@ -476,7 +476,7 @@ pub async fn run_account(db: &Database, account_id: i64) -> Result<SimDetail, St
                     } else {
                         "time"
                     };
-                    db.submit_sim_order(&OrderInput {
+                    let order = db.submit_sim_order(&OrderInput {
                         account_id,
                         idempotency_key: format!(
                             "rule:{}:{}:sell:{}:{reason}",
@@ -495,6 +495,10 @@ pub async fn run_account(db: &Database, account_id: i64) -> Result<SimDetail, St
                         max_hold_days: 0,
                         ai_generated: false,
                     })?;
+                    let explanation = if stop { "风险退出：收盘触及预设止损".to_string() }
+                        else if take { "风险退出：收盘触及预设止盈".to_string() }
+                        else { format!("时间退出：已持有 {held_days} 个交易日") };
+                    db.set_sim_order_reason(order.id, &explanation)?;
                 }
             }
 
@@ -535,7 +539,7 @@ pub async fn run_account(db: &Database, account_id: i64) -> Result<SimDetail, St
             let take_bps = ((plan.take_profit - plan.reference_price) / plan.reference_price
                 * 10_000.0)
                 .round() as i64;
-            db.submit_sim_order(&OrderInput {
+            let order = db.submit_sim_order(&OrderInput {
                 account_id,
                 idempotency_key: format!("rule:{}:{}:buy", target.symbol, signal_bar.date),
                 symbol: target.symbol.clone(),
@@ -551,6 +555,10 @@ pub async fn run_account(db: &Database, account_id: i64) -> Result<SimDetail, St
                 max_hold_days: rule.max_hold_days() as i64,
                 ai_generated: false,
             })?;
+            db.set_sim_order_reason(order.id, &format!(
+                "{}入场：{}；信号依据为 {} 收盘，下一交易日未复权开盘撮合",
+                rule.label(), plan.notes.get(1).map(String::as_str).unwrap_or("规则条件满足"), signal_bar.date
+            ))?;
             detail = db.get_sim_detail(account_id)?;
         }
         db.get_sim_detail(account_id)

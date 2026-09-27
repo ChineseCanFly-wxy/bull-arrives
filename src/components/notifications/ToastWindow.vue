@@ -66,8 +66,11 @@ html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; backg
 .toast { position: absolute; inset: 6px; display: grid; grid-template-columns: 38px 1fr 24px; gap: 12px; padding: 16px; border: 1px solid rgba(120, 170, 255, .42); border-radius: 14px; background: rgba(17, 24, 33, .97); color: #eef5ff; box-shadow: 0 12px 30px rgba(0, 0, 0, .36); }
 .mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; background: #1677ff; font-weight: 800; }
 strong { display: block; padding-right: 4px; font-size: 14px; }
-p { margin: 7px 0 10px; color: #b9c5d2; font-size: 12px; line-height: 1.45; }
+section { min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: start; }
+strong, p { overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; }
+strong { -webkit-line-clamp: 2; flex-shrink: 0; }
+p { margin: 5px 0; color: #b9c5d2; font-size: 12px; line-height: 1.45; -webkit-line-clamp: 2; }
 button { border: 0; cursor: pointer; }
-section button { padding: 4px 12px; border-radius: 6px; background: #1677ff; color: white; }
+section button { margin-top: auto; flex-shrink: 0; padding: 4px 12px; border-radius: 6px; background: #1677ff; color: white; }
 .close { align-self: start; background: transparent; color: #92a0af; font-size: 22px; line-height: 18px; }
 </style>

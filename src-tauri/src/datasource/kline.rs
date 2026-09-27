@@ -448,7 +448,8 @@ async fn latest_closed_trading_date() -> Result<String, String> {
             return Ok(date.clone());
         }
     }
-    let (rows, source) = fetch_qfq_daily_kline_with_source("sh000001", 120).await?;
+    // 指数日线只用于判断交易日，不参与前复权价格计算；腾讯指数只提供 day。
+    let (rows, source) = fetch_daily_kline_with_source("sh000001", 120).await?;
     let date = latest_closed_date_at(&rows, chrono::Utc::now())
         .ok_or_else(|| "交易日历没有已收盘日期".to_string())?;
     log::info!("交易日历更新至 {date}（{}）", source.label());
@@ -587,6 +588,14 @@ pub async fn fetch_history(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires live index daily bars"]
+    async fn live_calendar_uses_index_day_rows() {
+        let latest = latest_closed_trading_date().await.unwrap();
+        assert!(chrono::NaiveDate::parse_from_str(&latest, "%Y-%m-%d").is_ok());
+        println!("calendar={latest}");
+    }
     use crate::datasource::eastmoney_universe::Board;
     use chrono::TimeZone;
 

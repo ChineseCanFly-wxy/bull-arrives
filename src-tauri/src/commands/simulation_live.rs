@@ -279,6 +279,8 @@ pub async fn run(
                     ((price as i128 * (10000 - detail.account.slippage_bps) as i128 / 10000) / 100
                         * 100) as i64
                 };
+                let reason = if price >= plan.take { "风险退出：触及止盈价".to_string() }
+                    else { "风险退出：触及止损价".to_string() };
                 let order = db.submit_sim_order(&OrderInput {
                     account_id: account,
                     idempotency_key: format!("live:{}:{}:sell", plan.symbol, date),
@@ -295,6 +297,7 @@ pub async fn run(
                     max_hold_days: 0,
                     ai_generated: false,
                 })?;
+                db.set_sim_order_reason(order.id, &reason)?;
                 db.live_order(order.id, limit, chrono::Utc::now().timestamp())?;
                 messages.push(format!("{} 卖出触发，等待新盘口验证限价", plan.symbol));
             }
@@ -333,6 +336,10 @@ pub async fn run(
                 max_hold_days: 0,
                 ai_generated: false,
             })?;
+            db.set_sim_order_reason(order.id, &format!(
+                "区间入场：在线报价进入 {:.2}–{:.2}；计划基于 {} 历史日线，等待委托后的新盘口成交。未重新验证策略有效性",
+                plan.buy_low as f64 / 10000.0, plan.buy_high as f64 / 10000.0, plan.basis_date
+            ))?;
             db.live_order(order.id, plan.buy_high, chrono::Utc::now().timestamp())?;
             messages.push(format!("{} 进入买入区间，等待新盘口验证限价", plan.symbol));
         }

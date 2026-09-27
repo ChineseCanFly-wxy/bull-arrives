@@ -444,3 +444,10 @@ function close() {
   .footer-actions { align-self: stretch; justify-content: flex-end; }
 }
 </style>
+
+<style>
+.price-alert-modal.n-card {
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+}
+</style>

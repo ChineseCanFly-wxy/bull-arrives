@@ -17,7 +17,7 @@ interface Account {
   targets?: Target[];
 }
 interface Position { symbol: string; name?: string; quantity: number; available_quantity?: number; cost_price?: string }
-interface Order { id: number; symbol: string; name?: string; side: Side; quantity: number; status: string; source?: string; signal_date: string; target_date?: string; price?: string; fee?: string; reject_reason?: string }
+interface Order { id: number; symbol: string; name?: string; side: Side; quantity: number; status: string; source?: string; signal_date: string; target_date?: string; price?: string; fee?: string; reject_reason?: string; decision_reason?: string }
 interface Run { id: number; run_key?: string; trade_date?: string; phase?: string; status: string; progress?: number; message?: string; created_at?: string }
 interface Metrics { win_rate_bps?: number; profit_loss_ratio_bps?: number; expectancy?: string; max_drawdown_bps?: number; total_return_bps?: number; annualized_return_bps?: number; average_holding_days_x100?: number; sample_count?: number; benchmark_return_bps?: number | null }
 interface SourceStats { source: string; orders: number; filled: number; rejected: number; realized_profit: string }
@@ -228,7 +228,7 @@ watch(selectedId, id => { if (id) void act(() => loadDetail()); });
           </tbody></table></div>
           <h4>最近订单</h4>
           <div class="table-wrap"><table><thead><tr><th>信号日</th><th>标的</th><th>方向/数量</th><th>状态</th><th>成交价/费用</th><th>说明</th></tr></thead><tbody>
-            <tr v-for="row in detail?.orders ?? []" :key="row.id"><td>{{ row.signal_date }}</td><td>{{ row.name || row.symbol }}<small>{{ row.symbol }} · {{ row.source }}</small></td><td>{{ row.side === 'buy' ? '买' : '卖' }} {{ row.quantity }}</td><td><NTag size="small" :type="statusType(row.status)">{{ row.status }}</NTag><NButton v-if="row.status === 'awaiting_confirmation'" text type="primary" @click="confirmOrder(row.id)">确认</NButton></td><td>{{ scaledToDecimal(row.price) }} / {{ scaledToDecimal(row.fee) }}</td><td>{{ row.reject_reason || '-' }}</td></tr>
+            <tr v-for="row in detail?.orders ?? []" :key="row.id"><td>{{ row.signal_date }}</td><td>{{ row.name || row.symbol }}<small>{{ row.symbol }} · {{ row.source }}</small></td><td>{{ row.side === 'buy' ? '买' : '卖' }} {{ row.quantity }}</td><td><NTag size="small" :type="statusType(row.status)">{{ row.status }}</NTag><NButton v-if="row.status === 'awaiting_confirmation'" text type="primary" @click="confirmOrder(row.id)">确认</NButton></td><td>{{ scaledToDecimal(row.price) }} / {{ scaledToDecimal(row.fee) }}</td><td>{{ row.decision_reason || '-' }}<small v-if="row.reject_reason">{{ row.reject_reason }}</small></td></tr>
             <tr v-if="!detail?.orders.length"><td colspan="6" class="empty">暂无订单</td></tr>
           </tbody></table></div>
           <h4>最近运行</h4>

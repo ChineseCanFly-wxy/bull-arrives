@@ -168,6 +168,8 @@ export function useMinuteChart(options: {
 
   function initChart() {
     initChartCore('minute');
+    chart.value?.setScrollEnabled(false);
+    chart.value?.setZoomEnabled(false);
   }
 
   function disposeChart() {

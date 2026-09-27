@@ -358,7 +358,7 @@ function openAnalysis(row: SectorMember) {
     preset="card"
     title="市场板块"
     :style="{ width: 'min(980px, calc(100vw - 24px))' }"
-    :content-style="{ height: 'calc(100vh - 150px)', maxHeight: 'calc(100vh - 150px)', overflow: 'auto' }"
+    :content-style="{ height: 'max(0px, calc(100dvh - 150px))', maxHeight: 'max(0px, calc(100dvh - 110px))', overflow: 'auto' }"
     :bordered="false"
     size="small"
   >
@@ -484,7 +484,7 @@ function openAnalysis(row: SectorMember) {
           </div>
           <div class="meta-line">
             <NTag v-for="status in sector.rotationStatuses" :key="status.kind" size="small" :type="status.ok ? 'success' : 'warning'" :bordered="false">{{ status.kind === 'industry' ? '行业' : '概念' }}{{ status.ok ? '已返回' : '失败·保留旧值' }}</NTag>
-            <span class="muted">{{ sector.rotationSource || '按需加载，行业/概念各一次请求' }}</span>
+            <span class="muted">{{ sector.rotationSource || '按需加载行业/概念板块' }}</span>
           </div>
           <div v-if="sector.rotationError" class="error-line" role="alert"><span>{{ sector.rotationError }}</span><NButton size="tiny" @click="sector.fetchRotation">重试</NButton></div>
           <p class="calculation-note">横轴口径为近 {{ rotationDays }} 个交易日累计涨跌幅，纵轴为当日主力净流入；零轴划分强弱与流入/流出。热度颜色深浅按累计涨跌幅绝对值缩放。</p>

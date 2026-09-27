@@ -62,7 +62,7 @@ const isUp = computed(() => props.index.change_pct >= 0);
      are handled separately to avoid visual pulse when up/down state flips */
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
-:global([data-style="classic"]) .index-card { flex: 1 0 0; min-width: 0; max-width: none; padding: var(--space-3); }
+html[data-style="classic"] .index-card { flex: 1 0 0; min-width: 0; max-width: none; padding: var(--space-3); }
 .index-card:hover {
   background: var(--color-bg-elevated, rgba(255,255,255,0.04));
   border-color: var(--color-border, rgba(255,255,255,0.12));

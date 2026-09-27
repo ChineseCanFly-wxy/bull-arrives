@@ -44,6 +44,69 @@ pub struct LocalHistoryResult {
     pub sample_count: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalMinuteBar {
+    pub timestamp: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,
+    pub amount: f64,
+}
+
+/// Read one historical session. The caller must label the session date; it is
+/// never an executable quote for the live simulator.
+pub async fn fetch_minute_day(
+    config: &LocalHistoryConfig,
+    symbol: &str,
+    day: &str,
+) -> Result<Vec<LocalMinuteBar>, String> {
+    let code = normalize_symbol(symbol)?;
+    let day = normalize_date(day)?;
+    let url = query_url(config, "vals", "分钟k", &code, &format!("fwd:{day}000000,{day}235959"))?;
+    let (value, _) = request_value(&client(config)?, url).await?;
+    let rows = value.as_array().ok_or("本地分钟 K 响应不是数组")?;
+    if rows.len() > 600 {
+        return Err("单日分钟 K 超过 600 根，拒绝异常数据".into());
+    }
+    parse_minute_rows(rows, &day)
+}
+
+fn parse_minute_rows(rows: &[Value], day: &str) -> Result<Vec<LocalMinuteBar>, String> {
+    let mut bars = Vec::with_capacity(rows.len());
+    for item in rows {
+        let row = item.as_object().ok_or("本地分钟 K 包含无效记录")?;
+        let timestamp = string_value(row.get("date"), "date")?;
+        if timestamp.len() != 14 || !timestamp.starts_with(day)
+            || chrono::NaiveDateTime::parse_from_str(&timestamp, "%Y%m%d%H%M%S").is_err()
+        {
+            return Err("分钟 K 时间戳与请求日期不符".into());
+        }
+        let bar = LocalMinuteBar {
+            timestamp,
+            open: number(row.get("open"), "open")?,
+            high: number(row.get("high"), "high")?,
+            low: number(row.get("low"), "low")?,
+            close: number(row.get("close"), "close")?,
+            volume: number(row.get("volume"), "volume")?,
+            amount: number(row.get("amount"), "amount")?,
+        };
+        if [bar.open, bar.high, bar.low, bar.close].iter().any(|v| !v.is_finite() || *v <= 0.0)
+            || bar.low > bar.open.min(bar.close) || bar.high < bar.open.max(bar.close)
+            || bar.low > bar.high || bar.volume < 0.0 || bar.amount < 0.0
+        {
+            return Err(format!("分钟 K OHLC 或成交量无效：{}", bar.timestamp));
+        }
+        bars.push(bar);
+    }
+    bars.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    if bars.windows(2).any(|w| w[0].timestamp == w[1].timestamp) {
+        return Err("分钟 K 包含重复时间戳".into());
+    }
+    Ok(bars)
+}
+
 /// Verify that the configured loopback stockdb HTTP endpoint responds with a
 /// supported payload. The deliberately empty date keeps the probe response small.
 pub async fn probe(config: &LocalHistoryConfig) -> Result<LocalHistoryProtocol, String> {
@@ -376,6 +439,15 @@ fn round(value: f64, decimals: i32) -> f64 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn minute_rows_require_matching_timestamp_and_valid_prices() {
+        let good = json!([{"date":20260918093000i64,"open":10.0,"high":10.2,"low":9.9,"close":10.1,"volume":100,"amount":1010}]);
+        assert_eq!(parse_minute_rows(good.as_array().unwrap(), "20260918").unwrap().len(), 1);
+        assert!(parse_minute_rows(good.as_array().unwrap(), "20260919").is_err());
+        let bad = json!([{"date":20260918093000i64,"open":10.0,"high":9.0,"low":9.9,"close":10.1,"volume":100,"amount":1010}]);
+        assert!(parse_minute_rows(bad.as_array().unwrap(), "20260918").is_err());
+    }
 
     fn rows() -> Value {
         json!([

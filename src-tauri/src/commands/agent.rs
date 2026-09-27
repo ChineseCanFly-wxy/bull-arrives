@@ -51,12 +51,29 @@ pub fn get_agent_run_detail(
 }
 
 #[tauri::command]
+pub fn open_agent_run_terminal(
+    db: State<'_, Arc<Database>>,
+    run_id: i64,
+) -> Result<(), String> {
+    crate::agent::interactive::open_run_session(&db, run_id)
+}
+
+#[tauri::command]
 pub fn start_interactive_analysis(
     db: State<'_, Arc<Database>>,
     root: State<'_, InteractiveRoot>,
     context_fingerprint: String,
 ) -> Result<InteractiveTask, String> {
     crate::agent::interactive::start(&db, &root.0, &context_fingerprint)
+}
+
+#[tauri::command]
+pub fn start_interactive_team(
+    db: State<'_, Arc<Database>>,
+    root: State<'_, InteractiveRoot>,
+    context_fingerprint: String,
+) -> Result<InteractiveTask, String> {
+    crate::agent::interactive::start_team(&db, &root.0, &context_fingerprint)
 }
 
 #[tauri::command]

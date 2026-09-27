@@ -69,8 +69,10 @@ const localHistoryUrlDraft = ref('http://127.0.0.1:7899');
 const agentStatus = ref<AgentStatus | null>(null);
 const agentPathDraft = ref('');
 const agentRunRootDraft = ref('');
-const agentTimeoutDraft = ref(90);
-const agentBudgetDraft = ref(0.2);
+const agentTimeoutDraft = ref(180);
+const agentBudgetDraft = ref(10);
+const newsKeywordsDraft = ref('');
+const newsDailyLimitDraft = ref(3);
 
 const capturing = ref(false);
 const capturedCombo = ref<string | null>(null);
@@ -90,8 +92,10 @@ watch(() => props.show, (open) => {
     localHistoryUrlDraft.value = settings.localHistoryUrl;
     agentPathDraft.value = settings.settings['agent_claude_path'] || '';
     agentRunRootDraft.value = settings.settings['agent_run_root'] || '';
-    agentTimeoutDraft.value = Number(settings.settings['agent_timeout_seconds'] || 90);
-    agentBudgetDraft.value = Number(settings.settings['agent_budget_usd'] || 0.2);
+    agentTimeoutDraft.value = Number(settings.settings['agent_timeout_seconds'] || 180);
+    agentBudgetDraft.value = Number(settings.settings['agent_budget_usd'] || 10);
+    newsKeywordsDraft.value = settings.settings['news_ai_keywords'] || '';
+    newsDailyLimitDraft.value = Number(settings.settings['news_ai_daily_limit'] ?? 3);
     sectionLoaded.clear();
     void loadActiveSection();
   } else {
@@ -340,10 +344,17 @@ async function saveAgentTimeout() {
   return settings.setSetting('agent_timeout_seconds', String(agentTimeoutDraft.value));
 }
 async function saveAgentBudget() {
-  if (!Number.isFinite(agentBudgetDraft.value) || agentBudgetDraft.value < 0.05 || agentBudgetDraft.value > 10) {
-    throw new Error('单次预算必须在 0.05–10 美元之间');
+  if (!Number.isFinite(agentBudgetDraft.value) || agentBudgetDraft.value < 10 || agentBudgetDraft.value > 50) {
+    throw new Error('单次预算必须在 10–50 美元之间');
   }
   return settings.setSetting('agent_budget_usd', agentBudgetDraft.value.toFixed(2));
+}
+async function saveNewsAiPreferences() {
+  if (!Number.isInteger(newsDailyLimitDraft.value) || newsDailyLimitDraft.value < 0 || newsDailyLimitDraft.value > 20) {
+    throw new Error('每日自动 AI 解读上限须为 0–20 条');
+  }
+  if (!await settings.setSetting('news_ai_keywords', newsKeywordsDraft.value.trim())) return false;
+  return settings.setSetting('news_ai_daily_limit', String(newsDailyLimitDraft.value));
 }
 function close() {
   if (savingKeys.value.size) {
@@ -352,8 +363,10 @@ function close() {
   }
   const unsavedAgent = agentPathDraft.value.trim() !== (settings.settings['agent_claude_path'] || '')
     || agentRunRootDraft.value.trim() !== (settings.settings['agent_run_root'] || '')
-    || agentTimeoutDraft.value !== Number(settings.settings['agent_timeout_seconds'] || 90)
-    || agentBudgetDraft.value.toFixed(2) !== Number(settings.settings['agent_budget_usd'] || 0.2).toFixed(2);
+    || agentTimeoutDraft.value !== Number(settings.settings['agent_timeout_seconds'] || 180)
+    || Number(agentBudgetDraft.value).toFixed(2) !== Number(settings.settings['agent_budget_usd'] || 10).toFixed(2)
+    || newsKeywordsDraft.value.trim() !== (settings.settings['news_ai_keywords'] || '')
+    || newsDailyLimitDraft.value !== Number(settings.settings['news_ai_daily_limit'] ?? 3);
   const unsavedUrl = localHistoryUrlDraft.value.trim() !== settings.localHistoryUrl;
   if ((unsavedAgent || unsavedUrl) && !window.confirm('有尚未保存的设置，确定放弃这些修改吗？')) return;
   stopCapture();
@@ -484,10 +497,12 @@ onBeforeUnmount(stopCapture);
           </article>
           <article class="setting-card">
             <div class="card-title-row">
-              <div><h3>资讯摘要与时序盯盘</h3><p>默认关闭。交易日按规则检查关注池资讯；命中后尝试 Agent 摘要，失败回退原文。盘前、盘后和夜间卡片统一进入提醒记录，额外休市日不触发。</p></div>
-              <button class="switch" :class="{ on: settings.newsNotificationsEnabled }" role="switch" aria-label="资讯摘要与时序盯盘" :aria-checked="settings.newsNotificationsEnabled" :disabled="isSaving('news-notifications')" @click="safelyRun('news-notifications', () => settings.setSetting('news_notifications_enabled', settings.newsNotificationsEnabled ? '0' : '1'))"><span /></button>
+              <div><h3>全市场重要资讯</h3><p>默认关闭。全天筛选重要快讯和公司公告，自选股重点标记；每日简报汇总本机已保存的资讯与提醒。</p></div>
+              <button class="switch" :class="{ on: settings.newsNotificationsEnabled }" role="switch" aria-label="全市场重要资讯" :aria-checked="settings.newsNotificationsEnabled" :disabled="isSaving('news-notifications')" @click="safelyRun('news-notifications', () => settings.setSetting('news_notifications_enabled', settings.newsNotificationsEnabled ? '0' : '1'))"><span /></button>
             </div>
-            <p class="card-desc">来源：东方财富上市公司快讯与公司公告。首次开启只建立当前水位，不推送历史内容。</p>
+            <div class="inline-setting"><div><h3>资讯通知方式</h3><p>直接通知不调用 AI。混合模式先播报原文，仅重大事件、自选股或关注词命中时调用本机 Claude Code 解读，并更新同一条资讯。</p></div><div class="news-mode-options"><button type="button" class="minor-btn" :aria-pressed="settings.newsNotificationMode === 'direct'" :disabled="isSaving('news-mode')" @click="safelyRun('news-mode', () => settings.setSetting('news_notification_mode', 'direct'))">全部直接通知</button><button type="button" class="minor-btn" :aria-pressed="settings.newsNotificationMode === 'hybrid'" :disabled="isSaving('news-mode')" @click="safelyRun('news-mode', () => settings.setSetting('news_notification_mode', 'hybrid'))">混合模式</button></div></div>
+            <div class="news-ai-preferences"><label>关注词（逗号分隔，最多 10 个）<input v-model="newsKeywordsDraft" maxlength="220" placeholder="例如：半导体，机器人" /></label><label>每日自动 AI 解读上限（0–20 条）<input v-model.number="newsDailyLimitDraft" type="number" min="0" max="20" step="1" /></label><button class="minor-btn" :disabled="isSaving('news-ai-preferences')" @click="safelyRun('news-ai-preferences', saveNewsAiPreferences)">保存自动解读条件</button><small>默认每天最多 3 条；0 表示仅手动解读。每次 Claude 调用受「智能」页的单次预算上限控制，该上限不是每日总费用。</small></div>
+            <p class="card-desc">来源：东方财富上市公司快讯与全市场公司公告。仅命中重要事件规则才通知；首次开启只建立当前水位，不推送历史内容。</p>
           </article>
           <article class="setting-card compact-card">
             <h3>Windows 通知身份</h3>
@@ -547,15 +562,15 @@ onBeforeUnmount(stopCapture);
             <label class="history-field"><span>可执行文件</span><input v-model="agentPathDraft" type="text" placeholder="留空自动检测 claude.exe / claude.cmd" /><span class="field-btns"><button class="minor-btn" :disabled="isSaving('agent-browse')" @click="safelyRun('agent-browse', browseAgentPath)">浏览…</button><button class="minor-btn" :disabled="isSaving('agent-path')" @click="safelyRun('agent-path', saveAgentPath)">保存并检测</button></span></label>
             <label class="history-field"><span>工作目录</span><input v-model="agentRunRootDraft" type="text" placeholder="留空自动选择（推荐）" /><span class="field-btns"><button class="minor-btn" :disabled="isSaving('agent-root-browse')" @click="safelyRun('agent-root-browse', browseAgentRunRoot)">浏览…</button><button class="minor-btn" :disabled="isSaving('agent-root')" @click="safelyRun('agent-root', saveAgentRunRoot)">保存</button><button class="minor-btn" :disabled="isSaving('agent-root')" @click="safelyRun('agent-root', resetAgentRunRoot)">用自动</button></span></label>
             <label class="history-field"><span>单次超时（秒）</span><input v-model.number="agentTimeoutDraft" type="number" min="15" max="300" step="1" /><button class="minor-btn" :disabled="isSaving('agent-timeout')" @click="safelyRun('agent-timeout', saveAgentTimeout)">保存超时</button></label>
-            <label class="history-field"><span>后台单次预算（美元）</span><input v-model.number="agentBudgetDraft" type="number" min="0.05" max="10" step="0.05" /><button class="minor-btn" :disabled="isSaving('agent-budget')" @click="safelyRun('agent-budget', saveAgentBudget)">保存预算</button></label>
-            <p class="card-desc">此预算仅限制应用发起的每次后台 Claude Code 调用，不是账户余额；交互终端由你直接操作，不套用后台 90 秒超时或这项预算。</p>
+            <label class="history-field"><span>后台单次预算（美元）</span><input v-model.number="agentBudgetDraft" type="number" min="10" max="50" step="0.05" /><button class="minor-btn" :disabled="isSaving('agent-budget')" @click="safelyRun('agent-budget', saveAgentBudget)">保存预算</button></label>
+            <p class="card-desc">此预算仅限制应用发起的每次后台 Claude Code 调用，不是账户余额；交互终端由你直接操作，不套用后台超时或这项预算。</p>
             <p class="card-desc run-dir-line">任务文件实际写入：<code>{{ agentStatus?.run_dir || '待确定' }}</code>。留空即自动选择，应用会自动避开 Windows 的 8.3 短名目录（形如 <code>WEIXY4~1</code>）—— 那些目录下 Claude Code 会拒绝读写。</p>
             <div class="history-actions">
               <button class="minor-btn" :disabled="isSaving('agent-scan') || isSaving('agent-test')" @click="safelyRun('agent-scan', loadAgentStatus)">重新检测</button>
               <button class="minor-btn" :disabled="!agentStatus?.installed || isSaving('agent-test')" @click="safelyRun('agent-test', testAgentConnection)">{{ isSaving('agent-test') ? '测试连接中…' : '测试连接' }}</button>
               <button v-if="isSaving('agent-test')" class="minor-btn" @click="safelyRun('agent-cancel', () => invoke('cancel_agent_analysis'))">中止</button>
             </div>
-            <p class="card-desc">{{ agentStatus?.guidance }}。测试连接会进行一次简短模型调用，可能产生服务商费用。后台任务单并发，默认超时 90 秒（15–300 秒可调），部分自动任务另有 30 秒上限；多角色研判分次执行，可中断。失败保留纯量化结果。</p>
+            <p class="card-desc">{{ agentStatus?.guidance }}。测试连接会进行一次简短模型调用，可能产生服务商费用。后台任务单并发，默认超时 180 秒（15–300 秒可调），部分自动任务另有 30 秒上限；多角色研判分次执行，可中断。失败保留纯量化结果。</p>
           </article>
           <article class="setting-card compact-card">
             <h3>手动触发，无需开关</h3>
@@ -648,9 +663,7 @@ onBeforeUnmount(stopCapture);
 </template>
 
 <style scoped>
-.settings-shell { display: grid; grid-template-columns: 154px minmax(0, 1fr); height: min(480px, calc(100vh - 170px)); min-height: 240px; gap: 18px; }
-:global([data-style="trading"]) .settings-shell,
-:global([data-style="modern"]) .settings-shell { height: min(600px, calc(100dvh - 170px)); }
+.settings-shell { display: grid; grid-template-columns: 154px minmax(0, 1fr); min-height: 0; gap: 18px; }
 .section-nav { display: flex; flex-direction: column; gap: 5px; padding: 4px; border-right: 1px solid var(--color-border-0); }
 .nav-item { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 10px 12px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--color-text-secondary); text-align: left; cursor: pointer; transition: background var(--transition-fast), color var(--transition-fast); }
 .nav-item small { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; }
@@ -666,10 +679,10 @@ onBeforeUnmount(stopCapture);
 .panel-heading h2 { margin: 0; color: var(--color-text-primary); font-size: 18px; letter-spacing: -.02em; }
 .panel-heading p, .card-desc { margin: 3px 0 0; color: var(--color-text-tertiary); font-size: var(--text-xs); }
 .setting-card { padding: 16px; border: 1px solid var(--color-border-0); border-radius: var(--radius-md); background: var(--color-surface-0); box-shadow: var(--shadow-sm); }
-:global([data-style="trading"]) .setting-card,
-:global([data-style="modern"]) .setting-card { padding: var(--panel-padding); background: var(--color-surface-1); }
-:global([data-style="trading"]) .settings-shell,
-:global([data-style="modern"]) .settings-shell { gap: var(--space-4); }
+html[data-style="trading"] .setting-card,
+html[data-style="modern"] .setting-card { padding: var(--panel-padding); background: var(--color-surface-1); }
+html[data-style="trading"] .settings-shell,
+html[data-style="modern"] .settings-shell { gap: var(--space-4); }
 .hero-card { background: linear-gradient(145deg, color-mix(in srgb, var(--color-accent) 6%, var(--color-surface-0)), var(--color-surface-0) 58%); }
 .accent-card { border-top: 2px solid var(--color-accent); }
 .compact-card { padding: 14px 16px; }
@@ -712,6 +725,12 @@ onBeforeUnmount(stopCapture);
 .hotkey-box small { color: var(--color-text-tertiary); font-family: var(--font-sans); font-size: 9px; }
 .minor-btn { min-height: 32px; padding: 0 12px; border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-secondary); font-family: var(--font-sans); cursor: pointer; }
 .notification-action { margin-top: 10px; }
+.news-mode-options { display: flex; gap: 6px; flex-wrap: wrap; }
+.news-mode-options button[aria-pressed="true"] { color: var(--color-accent); border-color: var(--color-accent); }
+.news-ai-preferences { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-top: 12px; }
+.news-ai-preferences label { display: flex; flex-direction: column; gap: 5px; min-width: 150px; color: var(--color-text-secondary); font-size: 12px; }
+.news-ai-preferences input { min-height: 32px; padding: 5px 8px; border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-primary); }
+.news-ai-preferences small { flex-basis: 100%; color: var(--color-text-tertiary); }
 .inline-setting { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--color-border-0); }
 .ticker-preview { width: 100%; margin: 12px 0; color: var(--color-text-tertiary); font-size: var(--text-xs); }
 .ticker-preview > div { display: flex; justify-content: space-between; gap: 12px; margin-top: 7px; padding: 12px; border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); }
@@ -800,5 +819,29 @@ onBeforeUnmount(stopCapture);
   .card-title-row { align-items: flex-start; }
   .settings-footer > span { display: none; }
   .settings-footer { justify-content: flex-end; }
+}
+</style>
+
+<style>
+/* NModal 将 class 透传给卡片根节点，根节点没有本组件的 scoped 属性。 */
+.settings-modal.n-card {
+  height: min(662px, calc(100dvh - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow: hidden;
+}
+html[data-style="trading"] .settings-modal.n-card,
+html[data-style="modern"] .settings-modal.n-card {
+  height: min(782px, calc(100dvh - 16px));
+}
+.settings-modal.n-card > .n-card-content {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+.settings-modal.n-card .settings-shell {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  min-width: 0;
 }
 </style>

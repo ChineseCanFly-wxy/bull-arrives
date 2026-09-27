@@ -21,6 +21,19 @@ const emit = defineEmits<{ 'update:show': [value: boolean] }>();
 
 const store = useAnalysisStore();
 const settings = useSettingsStore();
+const importedTeamTask = computed(() => store.interactiveTasks.find(task =>
+  task.id === store.importedTeamTaskId && task.team
+  && task.context_fingerprint === store.analysis?.agent_context_fingerprint
+  && task.context_fingerprint === store.agentAnalysis?.context_fingerprint,
+));
+const importedTeamActivity = computed(() => importedTeamTask.value
+  ? store.interactiveActivities[importedTeamTask.value.id] : undefined);
+const liveMessages = computed(() => store.liveStatus?.events.reduce<{ seq: number; kind: string; text: string }[]>((messages, event) => {
+  const last = messages.at(-1);
+  if (event.kind === 'text_delta' && last?.kind === 'text_delta') last.text += event.text;
+  else messages.push({ seq: event.seq, kind: event.kind, text: event.text });
+  return messages;
+}, []) ?? []);
 const storeStyleWidth = computed(() => settings.visualStyle === 'classic' ? 760 : 900);
 const storeStyleHeight = computed(() => settings.visualStyle === 'classic' ? 120 : 110);
 const selectedTaskId = ref<string | null>(null);
@@ -206,15 +219,16 @@ function rate(v: number): string {
             <span class="muted">解释量化结果、回答快照问题、多空讨论</span>
           </div>
           <div class="agent-card">
+            <p class="muted">使用顺序：快照问答或生成解读会自动运行，进度和实际输入在下方“调用记录”；想边看边聊就打开 Claude 终端；需要队友互通消息则打开原生 Agent Team 终端。终端完成后点击对应任务的“导入结果”。</p>
             <AgentWorkbench v-if="store.analysis.agent_context_fingerprint" :fingerprint="store.analysis.agent_context_fingerprint" :busy="store.agentLoading || store.teamLoading" :installed="!!store.agentStatus?.installed" :visible="props.show" @ask="store.analyzeWithAgent($event)" />
             <section class="live-agent" aria-label="应用内 Claude Code 会话">
-              <div class="interactive-intro"><b>应用内实时会话</b><span>这里显示 Claude Code 实际返回的文本与工具调用摘要；不会显示内部思维或工具内容。每轮预算最多 $0.20，账户额度另计。权限未获放行时请改用下方外部终端；文本回复不等于已校验的结构化分析。</span></div>
+              <div class="interactive-intro"><b>应用内连续对话</b><span>发送后下方会持续显示 Claude Code 回复与工具名称，状态会提示本轮是否结束；这里不显示工具内容。每轮使用设置中的单次预算（默认 $10，最高 $50），账户额度另计。普通 Claude Code 设置会加载，需人工批准的工具请用可见终端。文本回复不会自动变成已校验的结构化分析。</span></div>
               <button class="agent-btn" :disabled="!store.agentStatus?.installed || store.liveBusy || store.liveStatus?.running" @click="store.startLiveAnalysis">新建应用内会话</button>
               <p v-if="store.liveError" class="error-line" role="alert">{{ store.liveError }}</p>
               <template v-if="store.liveStatus">
                 <p class="muted">{{ store.liveStatus.running ? 'Claude Code 本轮正在运行' : '本轮未运行' }} · {{ store.liveStatus.can_resume ? '会话已由 CLI 确认' : '会话尚未确认' }}</p>
                 <div class="live-feed" role="log" aria-live="polite" aria-relevant="additions">
-                  <div v-for="event in store.liveStatus.events" :key="event.seq" :class="['live-line', event.kind]">{{ event.text }}</div>
+                  <div v-for="event in liveMessages" :key="event.seq" :class="['live-line', event.kind]">{{ event.text }}</div>
                 </div>
                 <textarea v-model="liveQuestion" aria-label="向应用内 Claude Code 追问" placeholder="输入要追问的快照问题（最多 1000 字）" maxlength="1000" :disabled="store.liveStatus.running || store.liveBusy || !store.liveStatus.can_resume" />
                 <div class="live-actions">
@@ -224,10 +238,11 @@ function rate(v: number): string {
               </template>
             </section>
             <div class="interactive-agent">
-              <div class="interactive-intro"><b>独立终端交互（兼容入口）</b><span>在独立终端查看过程、补充问题，完成后手动导入经校验的结果。此模式会保留本地分析快照供会话恢复；终端工具权限由 Claude Code 及你本人确认，不是独立沙箱。账户额度和模型配置仍由 Claude Code 管理。</span></div>
+              <div class="interactive-intro"><b>可见 Claude Code 终端</b><span>“Claude 个股对话”终端用于围绕当前快照追问；“Agent Team 风控负责人”终端负责召集技术、多方、空方队友并汇总结论。展开 Team 任务的“查看状态”可核对原生队友是否真的加入。每个终端都有股票和用途提示；首次打开时 Claude Code 可能要求信任应用任务根目录，请核对路径后确认。完成后回到对应任务点击“导入结果”；终端使用 Claude Code 自身的模型、权限和账户额度。</span></div>
               <button class="agent-btn" :disabled="!store.agentStatus?.installed || !store.analysis.agent_context_fingerprint || store.interactiveBusy" :title="store.agentStatus?.installed ? '启动可见的 Claude Code 交互会话' : store.agentStatus?.guidance" @click="store.startInteractiveAnalysis">
                 {{ store.interactiveBusy ? '处理中…' : '打开 Claude Code 终端' }}
               </button>
+              <button class="agent-btn" :disabled="!store.agentStatus?.installed || !store.analysis.agent_context_fingerprint || store.interactiveBusy" title="打开风控负责人终端；技术、多方、空方队友在该会话中协作" @click="store.startInteractiveTeam">打开原生 Agent Team 终端</button>
               <p v-if="store.interactiveNotice" class="muted" role="status">{{ store.interactiveNotice }}</p>
               <p v-if="store.interactiveError" class="error-line" role="alert">{{ store.interactiveError }}</p>
               <div v-if="store.historicalInteractiveResult" class="historical-result">
@@ -236,7 +251,7 @@ function rate(v: number): string {
                 <small>仅用于回顾，不代表当前行情；请使用当前快照重新分析。</small>
               </div>
               <div v-for="task in store.interactiveTasks" :key="task.id" class="interactive-task">
-                <span><b>{{ task.symbol }}</b> · 数据 {{ task.as_of }} · {{ task.context_fingerprint === store.analysis?.agent_context_fingerprint ? '当前快照' : '历史快照' }} · {{ task.state === 'validated' ? '结果已校验' : task.live ? '应用内会话' : task.state === 'opened' ? '终端已请求打开，运行状态未知' : '任务文件已准备' }}</span>
+                <span><b>{{ task.team ? 'Agent Team' : task.live ? '应用内对话' : 'Claude 终端' }}</b> · {{ task.symbol }} · 数据 {{ task.as_of }} · {{ task.context_fingerprint === store.analysis?.agent_context_fingerprint ? '当前快照' : '历史快照' }} · {{ task.state === 'validated' ? '结果已校验' : task.live ? '应用内会话' : task.state === 'opened' ? '终端脚本已启动' : '任务文件已准备' }}</span>
                 <button class="link-btn" :aria-expanded="selectedTaskId === task.id" @click="selectedTaskId = selectedTaskId === task.id ? null : task.id">{{ selectedTaskId === task.id ? '收起状态' : '查看状态' }}</button>
                 <button v-if="task.live && task.context_fingerprint === store.analysis?.agent_context_fingerprint" class="link-btn" :disabled="store.liveBusy" @click="store.restoreLiveAnalysis(task.id)">查看应用内会话</button>
                 <button v-if="task.state !== 'prepared' && !task.live" class="link-btn" :disabled="store.interactiveBusy" @click="store.resumeInteractiveAnalysis(task.id)">终端继续</button>
@@ -244,9 +259,12 @@ function rate(v: number): string {
                 <button class="link-btn" :disabled="store.interactiveBusy" @click="confirmDeleteInteractiveTask(task.id)">清理任务文件</button>
                 <div v-if="selectedTaskId === task.id" class="task-activity" role="status">
                   <template v-if="store.interactiveActivities[task.id]">
+                    <b>{{ store.interactiveActivities[task.id].session_status || (task.live ? '应用内会话状态见上方' : '尚未确认终端进程已启动') }}</b>
+                    <span v-if="store.interactiveActivities[task.id].team_status">{{ store.interactiveActivities[task.id].team_status }}</span>
                     <span>{{ store.interactiveActivities[task.id].output_present ? '已检测到待导入文件（内容尚未校验）' : '尚未检测到可导入文件' }}</span>
                     <span v-if="store.interactiveActivities[task.id].output_bytes !== null">{{ store.interactiveActivities[task.id].output_bytes }} 字节 · 修改于 {{ store.interactiveActivities[task.id].output_modified_at || '未知时间' }}</span>
-                    <span>上次检查：{{ store.interactiveActivities[task.id].last_checked_at }} · 无法从此处判断 Claude Code 是否仍在运行；完整对话请看终端。</span>
+                    <pre v-if="store.interactiveActivities[task.id].progress" class="team-progress">{{ store.interactiveActivities[task.id].progress }}</pre>
+                    <span>上次检查：{{ store.interactiveActivities[task.id].last_checked_at }} · 实时运行和队友消息以终端为准。</span>
                   </template>
                   <span v-else>正在读取任务文件状态…</span>
                 </div>
@@ -263,7 +281,7 @@ function rate(v: number): string {
                 {{ store.agentLoading ? '分析中…' : '生成 Agent 解读' }}
               </button>
               <button class="agent-btn" :disabled="!store.agentStatus?.installed || !store.analysis.agent_context_fingerprint || store.agentLoading || store.teamLoading" @click="store.analyzeWithTeam">
-                {{ store.teamLoading ? '多角色研判中…' : '多角色研判' }}
+                {{ store.teamLoading ? '多角色研判中…' : '自动多角色研判（分阶段）' }}
               </button>
               <button v-if="store.agentLoading || store.teamLoading" class="link-btn" @click="store.cancelAgentAnalysis">中止</button>
               <span v-if="store.agentAnalysis?.cached" class="muted">同一数据时点已复用</span>
@@ -273,6 +291,14 @@ function rate(v: number): string {
               <span>{{ store.agentStatus.guidance }}</span>
             </div>
             <template v-if="store.agentAnalysis?.status === 'ready'">
+              <details v-if="importedTeamTask" :key="importedTeamTask.id" class="team-discussion" open>
+                <summary>Team 团队讨论记录 · {{ importedTeamTask.symbol }}</summary>
+                <p class="muted">负责人整理的过程摘要，可查看角色分工、交叉质疑、分歧与风控收口；原始对话可在对应终端复核。下方最终结论使用同一行情快照，可能与单个 Agent 一致。</p>
+                <pre v-if="importedTeamActivity?.progress" class="team-progress">{{ importedTeamActivity.progress }}</pre>
+                <p v-else class="muted">暂未读到讨论记录，可点击刷新；如果仍为空，请让负责人将各方观点、相互质疑和最终取舍写入本次任务的 progress.md。</p>
+                <button class="link-btn" @click="store.inspectInteractiveTask(importedTeamTask.id)">刷新讨论记录</button>
+              </details>
+              <p v-if="importedTeamTask" class="muted">Team 最终结论（已通过结构与证据字段校验）</p>
               <p class="agent-conclusion"><b>{{ store.agentAnalysis.conclusion }}</b></p>
               <p v-if="store.agentAnalysis.summary" class="agent-summary">{{ store.agentAnalysis.summary }}</p>
               <div class="agent-confidence">模型主观确定性 {{ store.agentAnalysis.confidence }}%（非上涨概率） · {{ store.agentAnalysis.generated_at }}</div>
@@ -847,9 +873,9 @@ function rate(v: number): string {
 .live-line.error { color: var(--color-error); }
 .live-agent textarea { width: 100%; min-height: 64px; padding: var(--space-2); border: 1px solid var(--color-border-1); border-radius: var(--radius-sm); background: var(--color-surface-0); color: var(--color-text-primary); resize: vertical; }
 .live-actions { display: flex; gap: var(--space-2); align-items: center; }
-:global([data-style="classic"]) .score-hero { border: 0; padding: var(--space-3); }
-:global([data-style="classic"]) .agent-card { display: block; border-radius: var(--radius-sm); padding: 10px; background: transparent; }
-:global([data-style="classic"]) .interactive-agent { gap: 8px; margin: 10px 0; padding: 12px; border-radius: var(--radius-sm); background: var(--color-bg-2); }
+html[data-style="classic"] .score-hero { border: 0; padding: var(--space-3); }
+html[data-style="classic"] .agent-card { display: block; border-radius: var(--radius-sm); padding: 10px; background: transparent; }
+html[data-style="classic"] .interactive-agent { gap: 8px; margin: 10px 0; padding: 12px; border-radius: var(--radius-sm); background: var(--color-bg-2); }
 .interactive-intro { display: flex; flex-direction: column; gap: 4px; color: var(--color-text-secondary); font-size: var(--text-xs); line-height: 1.6; }
 .interactive-intro b { color: var(--color-text-primary); font-size: var(--text-sm); }
 .historical-result { padding: 10px; border-left: 2px solid var(--color-warning); background: var(--color-bg-card); color: var(--color-text-secondary); font-size: var(--text-xs); }
@@ -859,10 +885,14 @@ function rate(v: number): string {
 .interactive-task span { flex: 1; min-width: 160px; }
 .task-activity { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 8px; border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text-secondary); }
 .task-activity span { min-width: 0; overflow-wrap: anywhere; }
+.team-progress { width: 100%; max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; font: inherit; }
+.team-discussion { margin-top: 12px; padding: 10px; border: 1px solid var(--color-border-0); border-radius: var(--radius-sm); }
+.team-discussion summary { cursor: pointer; font-weight: 600; }
+.team-discussion .team-progress { max-height: 420px; line-height: 1.75; }
 .interactive-task small { width: 100%; overflow-wrap: anywhere; color: var(--color-text-tertiary); }
 .agent-actions { display: flex; align-items: center; gap: var(--space-2); }
-:global([data-style="trading"]) .agent-actions,
-:global([data-style="modern"]) .agent-actions { flex-wrap: wrap; }
+html[data-style="trading"] .agent-actions,
+html[data-style="modern"] .agent-actions { flex-wrap: wrap; }
 @media (max-width: 620px) {
   .score-num { font-size: 36px; }
   .interactive-task span { min-width: 100%; }
