@@ -350,7 +350,7 @@ dependencies = [
 
 [[package]]
 name = "bull-arrives"
-version = "2.2.5"
+version = "2.2.6"
 dependencies = [
  "async-trait",
  "chrono",

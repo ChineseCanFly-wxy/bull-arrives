@@ -13,7 +13,7 @@ const profile = mkdtempSync(path.join(target, 'news-ui-check-'));
 const edge = process.env.NEWS_TEST_BROWSER || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 const body = '事实：利润预亏\n观点：盈利压力偏利空，实际影响仍需核实\n方向：利空，影响：中\n行业：制造业（推测）；股票：600001\n依据：利润预亏';
 const entry = { id: 'news-check', signal_id: 'news-check', signal_kind: 'news', title: '★自选 测试自选', body, received_at: Date.now(), history_version: 0, agent_summary: true, news_mode: 'ai', news_source: '测试', original_title: '<img src=x onerror=alert(1)>利润预亏' };
-const directEntry = { ...entry, id: 'news-manual', signal_id: 'news:manual', agent_summary: false, news_mode: 'direct', body: '原文', original_title: '公司利润预亏' };
+const directEntry = { ...entry, id: 'news-manual', signal_id: 'news:manual', agent_summary: false, news_mode: 'hybrid', body: '原文', original_title: '公司利润预亏' };
 const mock = `
 const handlers = new Map();
 const rows = ${JSON.stringify([entry, directEntry])};
@@ -87,6 +87,20 @@ try {
   assert.ok(await evaluate(`document.querySelector('.brief-card').innerText.includes('价格提醒')`));
   assert.ok(await evaluate(`!!document.querySelector('.brief-card .manual-ai-btn')`));
   await evaluate(`Array.from(document.querySelectorAll('.news-tabs button')).find(button=>button.innerText==='市场资讯').click()`);
+  await evaluate(`document.querySelector('.ai-filter input').click()`);
+  await waitFor(`document.querySelectorAll('.notice-list li').length===1`);
+  assert.equal(await evaluate(`document.querySelector('.notice-list li').dataset.noticeId`),'news-check','Pending hybrid news must not count as a completed AI interpretation');
+  await evaluate(`(()=>{const search=document.querySelector('.news-tabs input[placeholder]');search.value='不存在的关键词';search.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await waitFor(`document.querySelector('.empty')?.innerText.includes('没有匹配的 AI 解读')`);
+  await evaluate(`(()=>{const search=document.querySelector('.news-tabs input[placeholder]');search.value='制造业';search.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await waitFor(`document.querySelectorAll('.notice-list li').length===1`);
+  await evaluate(`Array.from(document.querySelectorAll('.news-tabs button')).find(button=>button.innerText==='本次提醒').click()`);
+  await waitFor(`document.querySelectorAll('.notice-list li').length===1`);
+  await evaluate(`window.__newsMock.emit('notification-open-history','news-manual')`);
+  await waitFor(`document.querySelector('.notice-list li.selected')?.dataset.noticeId==='news-manual'`);
+  assert.equal(await evaluate(`document.querySelector('.ai-filter input').checked`),false,'Notification navigation must clear the AI filter');
+  assert.equal(await evaluate(`document.querySelectorAll('.notice-list li').length`),2);
+  await evaluate(`Array.from(document.querySelectorAll('.news-tabs button')).find(button=>button.innerText==='市场资讯').click()`);
   assert.match(await evaluate(`document.querySelector('.notice-list').innerText`), /观点：.*[\s\S]*利空.*[\s\S]*制造业（推测）.*600001/);
   assert.equal(await evaluate(`document.querySelector('.news-mode button').getAttribute('aria-pressed')`),'true');
   await evaluate(`document.querySelectorAll('.news-mode button')[1].click()`);
@@ -109,7 +123,7 @@ try {
   assert.ok(layout.x>=0&&layout.y>=0&&layout.right<=layout.width&&layout.bottom<=layout.height,`View button cropped: ${JSON.stringify(layout)}`);
   await evaluate(`document.querySelector('.toast section button').click()`);
   await waitFor(`window.__newsMock.calls.some(c=>c.command==='view_desktop_toast'&&c.args.id==='long-toast')`);
-  console.log('News UI check passed: mode persistence, complete AI text, history navigation, escaped source, long-toast view button. IPC mocked; native Windows notification not tested.');
+  console.log('News UI check passed: completed AI filter, search combination, empty state, notification filter reset, mode persistence, daily brief, manual interpretation, escaped source, long-toast view button. IPC mocked; native Windows notification not tested.');
 } finally {
   ws?.close();
   if(browser?.exitCode===null) { const exited=new Promise(resolve=>browser.once('exit',resolve)); browser.kill(); await Promise.race([exited,new Promise(resolve=>setTimeout(resolve,2000))]); }
