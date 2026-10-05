@@ -1256,7 +1256,7 @@ mod local_service {
             let parent_created = processes[index].created;
             for (&pid, &parent) in &parents {
                 if parent != parent_pid || processes.iter().any(|p| p.pid == pid) { continue; }
-                let child = VerifiedProcess::open(pid, true)?;
+                let child = VerifiedProcess::open(pid, false)?;
                 if child.created < parent_created { continue; } // Reused parent PID.
                 if file_id(&child.image)? != selected {
                     // Windows attaches its console host even to hidden console
@@ -1265,7 +1265,11 @@ mod local_service {
                     if system_console_host(&child.image)? { continue; }
                     return Err(format!("StockDB 进程树的子进程 PID {pid}（{}）与所选引擎不匹配，未停止任何进程", child.image.display()));
                 }
-                processes.push(child);
+                let managed = VerifiedProcess::open(pid, true)?;
+                if managed.created != child.created || file_id(&managed.image)? != selected {
+                    return Err("StockDB 子进程身份在核对期间发生变化，未停止任何进程".into());
+                }
+                processes.push(managed);
                 if processes.len() > 64 { return Err("StockDB 进程树超出安全管理范围".into()); }
             }
             index += 1;
