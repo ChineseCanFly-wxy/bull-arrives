@@ -65,6 +65,11 @@ export function checkRelease(base = root, { version, tracked = false } = {}) {
     for (const file of [...includes, ...versionFiles, 'CHANGELOG.md']) {
       if (!cached.has(file)) throw new Error('编译/发版必需文件未纳入Git：' + file);
     }
+    for (const file of includes) {
+      const input = execFileSync('git', ['-C', base, 'show', ':' + file], { maxBuffer: 20 * 1024 * 1024 });
+      if (!input.equals(readFileSync(resolve(base, file))))
+        throw new Error('内嵌文件与Git暂存字节不同，换行转换会破坏冻结指纹：' + file);
+    }
   }
   for (const file of new Set([...paths, ...gitFiles(base, ['diff', '--cached', '--name-only', '--diff-filter=ACMR'])])) {
     // A local source cleanup may still be an unstaged deletion. CI/tracked

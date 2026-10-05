@@ -120,7 +120,7 @@ jobs:
           npm ci
           npm run release:check -- "$RELEASE_TAG" --tracked
           npm run build
-          cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
+          npm run test:rust -- --lib --locked
       - name: Extract exact updater notes
         id: changelog
         shell: bash

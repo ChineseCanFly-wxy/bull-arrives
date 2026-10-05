@@ -31,6 +31,14 @@ try {
   assert.throws(() => checkRelease(work, { tracked: true }), /未纳入Git/);
   git('add', '--', ...versionFiles, 'CHANGELOG.md', 'src-tauri/src/lib.rs', 'research/fixture.json');
   assert.equal(checkRelease(work, { tracked: true }).embeddedFiles.length, 1);
+  put('research/fixture.json', '{}\r\n');
+  git('-c', 'core.autocrlf=true', 'add', '--', 'research/fixture.json');
+  assert.throws(() => checkRelease(work, { tracked: true }), /换行转换会破坏冻结指纹/);
+  put('.gitattributes', 'research/** -text\n');
+  git('add', '--', '.gitattributes');
+  git('add', '--renormalize', '--', 'research/fixture.json');
+  assert.doesNotThrow(() => checkRelease(work, { tracked: true }));
+  put('research/fixture.json', '{}'); git('add', '--', 'research/fixture.json');
   put('obsolete.ts', '// retired source'); git('add', '--', 'obsolete.ts');
   rmSync(resolve(work, 'obsolete.ts'));
   assert.doesNotThrow(() => checkRelease(work));

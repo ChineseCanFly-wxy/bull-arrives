@@ -2692,6 +2692,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn short_name_paths_are_detected() {
         for risky in [

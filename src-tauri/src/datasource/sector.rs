@@ -1146,11 +1146,7 @@ mod tests {
         let rows = vec![json!({"f124": 1790235570_i64})];
         assert_eq!(
             quote_time(&rows),
-            chrono::DateTime::from_timestamp(1790235570, 0)
-                .unwrap()
-                .with_timezone(&chrono::Local)
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string()
+            "2026-09-24 15:39:30"
         );
         assert_eq!(quote_time(&[json!({"f124": "-"})]), "行情时间未返回");
     }

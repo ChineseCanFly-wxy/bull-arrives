@@ -832,7 +832,7 @@ mod tests {
 
     #[test]
     fn team_task_preserves_snapshot_and_exposes_progress() {
-        let root = std::env::temp_dir().join(format!("bull-team-test-{}", Uuid::new_v4()));
+        let root = super::super::run_root(None).unwrap().join(format!("bull-team-test-{}", Uuid::new_v4()));
         let (fingerprint, raw) = sample_input();
         let mut task = prepare_task(&root, &fingerprint, &raw).unwrap();
         let dir = task_path(&root, task.id);
@@ -866,7 +866,7 @@ mod tests {
 
     #[test]
     fn prepared_task_survives_reopening_and_does_not_import_unverified_output() {
-        let root = std::env::temp_dir().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
+        let root = super::super::run_root(None).unwrap().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
         let db = Database::open(root.join("database")).unwrap();
         let (fingerprint, raw) = sample_input();
         db.save_agent_snapshot(&fingerprint, &raw).unwrap();
@@ -886,7 +886,7 @@ mod tests {
 
     #[test]
     fn validated_result_imports_only_for_its_snapshot() {
-        let root = std::env::temp_dir().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
+        let root = super::super::run_root(None).unwrap().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
         let db = Database::open(root.join("database")).unwrap();
         let (fingerprint, raw) = sample_input();
         db.save_agent_snapshot(&fingerprint, &raw).unwrap();
@@ -904,7 +904,7 @@ mod tests {
 
     #[test]
     fn resumed_task_rejects_altered_input() {
-        let root = std::env::temp_dir().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
+        let root = super::super::run_root(None).unwrap().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
         let db = Database::open(root.join("database")).unwrap();
         let (fingerprint, raw) = sample_input();
         db.save_agent_snapshot(&fingerprint, &raw).unwrap();
@@ -919,7 +919,7 @@ mod tests {
 
     #[test]
     fn activity_reports_file_without_claiming_it_was_validated() {
-        let root = std::env::temp_dir().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
+        let root = super::super::run_root(None).unwrap().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
         let (fingerprint, raw) = sample_input();
         let task = prepare_task(&root, &fingerprint, &raw).unwrap();
         let missing = inspect_activity(&root, task.id).unwrap();
@@ -941,7 +941,7 @@ mod tests {
 
     #[test]
     fn activity_rejects_oversized_output() {
-        let root = std::env::temp_dir().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
+        let root = super::super::run_root(None).unwrap().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
         let (fingerprint, raw) = sample_input();
         let task = prepare_task(&root, &fingerprint, &raw).unwrap();
         std::fs::write(
@@ -961,7 +961,7 @@ mod tests {
 
     #[test]
     fn task_cleanup_refuses_unrecognized_user_files() {
-        let root = std::env::temp_dir().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
+        let root = super::super::run_root(None).unwrap().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
         let (fingerprint, raw) = sample_input();
         let task = prepare_task(&root, &fingerprint, &raw).unwrap();
         let note = task_path(&root, task.id).join("user-note.txt");
@@ -976,7 +976,7 @@ mod tests {
 
     #[test]
     fn opened_task_requires_explicit_closed_session_confirmation() {
-        let root = std::env::temp_dir().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
+        let root = super::super::run_root(None).unwrap().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
         let (fingerprint, raw) = sample_input();
         let mut task = prepare_task(&root, &fingerprint, &raw).unwrap();
         task.state = "opened".into();
@@ -989,7 +989,7 @@ mod tests {
 
     #[test]
     fn validated_task_still_requires_closed_session_confirmation() {
-        let root = std::env::temp_dir().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
+        let root = super::super::run_root(None).unwrap().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
         let (fingerprint, raw) = sample_input();
         let mut task = prepare_task(&root, &fingerprint, &raw).unwrap();
         task.state = "validated".into();
@@ -1002,7 +1002,7 @@ mod tests {
 
     #[test]
     fn forged_task_id_is_rejected() {
-        let root = std::env::temp_dir().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
+        let root = super::super::run_root(None).unwrap().join(format!("bull-interactive-test-{}", Uuid::new_v4()));
         let (fingerprint, raw) = sample_input();
         let task = prepare_task(&root, &fingerprint, &raw).unwrap();
         let mut manifest = task.clone();

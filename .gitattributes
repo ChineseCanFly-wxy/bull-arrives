@@ -1,0 +1,4 @@
+# 冻结研究程序和证据按原始字节校验 SHA256，Git 不得转换换行符。
+research/** -text
+src-tauri/*.json -text
+src-tauri/prompts/** -text
