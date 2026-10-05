@@ -10,6 +10,11 @@ on:
         description: '已推送且尚未正式发布的稳定版标签，例如 v2.2.7'
         required: true
         type: string
+      verify_run:
+        description: '已有三平台构建成功的运行编号，仅重试验包发布；留空正常构建'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -42,6 +47,19 @@ jobs:
           node scripts/test-release.mjs
           python3 scripts/check-portable.py --self-test
           test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$(git rev-parse HEAD)"
+      - name: Verify source builds before publish-only retry
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_run != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERIFY_RUN_ID: ${{ inputs.verify_run }}
+        run: |
+          [[ "$VERIFY_RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFY_RUN_ID" > "$RUNNER_TEMP/source-run.json"
+          test "$(jq -r .head_sha "$RUNNER_TEMP/source-run.json")" = "$(git rev-parse HEAD)"
+          test "$(jq -r .path "$RUNNER_TEMP/source-run.json")" = '.github/workflows/release.yml'
+          test "$(jq -r .status "$RUNNER_TEMP/source-run.json")" = completed
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFY_RUN_ID/jobs?per_page=100" > "$RUNNER_TEMP/source-jobs.json"
+          test "$(jq '[.jobs[] | select(.name | startswith("build (")) | select(.conclusion == "success")] | length' "$RUNNER_TEMP/source-jobs.json")" = 3
       - name: Check updater signing configuration
         env:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -65,9 +83,10 @@ jobs:
           else
             gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/changelog.md"
           fi
-          echo "id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.id')" >> "$GITHUB_OUTPUT"
+          echo "id=$(gh release view "$RELEASE_TAG" --json databaseId --jq '.databaseId')" >> "$GITHUB_OUTPUT"
 
   build:
+    if: github.event_name != 'workflow_dispatch' || inputs.verify_run == ''
     needs: prepare
     permissions:
       contents: write
@@ -161,12 +180,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw '便携包上传失败' }
 
   publish:
+    if: ${{ always() && needs.prepare.result == 'success' && (needs.build.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.verify_run != '' && needs.build.result == 'skipped')) }}
     needs: [prepare, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -180,7 +201,7 @@ jobs:
           sudo apt-get install -y minisign
       - name: Download and verify complete draft assets
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$RUNNER_TEMP/release.json"
           gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/release-assets"
           python3 scripts/check-portable.py "$RUNNER_TEMP/release-assets/BullArrives_${RELEASE_TAG#v}_x64-portable.zip"
           node scripts/verify-release.mjs "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/release-assets"
@@ -188,7 +209,7 @@ jobs:
       - name: Publish only after all checks pass
         run: |
           gh release edit "$RELEASE_TAG" --draft=false --latest
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/published.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$RUNNER_TEMP/published.json"
           gh release download "$RELEASE_TAG" --pattern SHA256SUMS.txt --dir "$RUNNER_TEMP/release-assets" --clobber
           node scripts/verify-release.mjs "$RUNNER_TEMP/published.json" "$RUNNER_TEMP/release-assets" --published
           echo "Release完成：https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
