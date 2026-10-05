@@ -61,8 +61,8 @@ export function verifyUpdaterSignatures(folder, encodedPublicKey) {
       if (verified.has(name)) continue;
       const signatureFile = resolve(work, 'artifact.minisig');
       writeFileSync(signatureFile, Buffer.from(item.signature, 'base64'));
-      // -L允许旧版Tauri非预哈希签名，仍校验Ed25519与可信注释；新格式同时支持。
-      execFileSync('minisign', ['-Vm', resolve(folder, name), '-p', publicFile, '-x', signatureFile, '-L', '-q'], { stdio: 'pipe', windowsHide: true });
+      // minisign 默认兼容 Tauri 非预哈希签名，同时校验 Ed25519 与可信注释。
+      execFileSync('minisign', ['-Vm', resolve(folder, name), '-p', publicFile, '-x', signatureFile, '-q'], { stdio: 'pipe', windowsHide: true });
       verified.add(name);
     }
     return verified.size;
