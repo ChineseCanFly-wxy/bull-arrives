@@ -162,7 +162,6 @@ function dismissStockDetailOnBlank(event: MouseEvent) {
   background: var(--color-warning-bg);
   border-bottom: 1px solid var(--color-warning-border);
   flex-shrink: 0;
-  opacity: 0.7;
 }
 .warning-banner-content {
   display: flex;
@@ -175,7 +174,7 @@ function dismissStockDetailOnBlank(event: MouseEvent) {
   flex-shrink: 0;
 }
 .warning-text {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--color-warning);
 }
 .error-dismiss-btn {

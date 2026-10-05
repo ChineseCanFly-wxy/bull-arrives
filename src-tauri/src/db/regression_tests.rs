@@ -115,6 +115,54 @@ fn ordered_cache_writes_keep_latest_quote_and_restore_does_not_observe_alerts() 
 }
 
 #[test]
+fn optional_simulation_cost_migration_preserves_research_and_filled_history() {
+    let dir=std::env::temp_dir().join(format!("bull-arrives-cost-migration-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    let db=Database::open(dir.clone()).unwrap();
+    let input: crate::db::simulation::AccountInput=serde_json::from_value(serde_json::json!({
+        "name":"ordinary","initial_cash":"1000000000","mode":"record","commission_bps":3,"min_commission":"50000","stamp_tax_bps":5,"transfer_fee_bps":1,"slippage_bps":10,"targets":[]
+    })).unwrap();
+    let ordinary=db.save_sim_account(&input).unwrap();
+    let mut research_input=input.clone();research_input.name="frozen".into();let research=db.save_sim_account(&research_input).unwrap();
+    let mut comparison_input=input.clone();comparison_input.name="frozen comparison".into();let comparison=db.save_sim_account(&comparison_input).unwrap();
+    {
+        let conn=db.conn.lock().unwrap();
+        conn.execute("INSERT INTO strategy_cards(id,name,source,created_at,updated_at) VALUES('cost-test','cost-test','test','now','now')",[]).unwrap();
+        conn.execute("INSERT INTO strategy_versions(id,card_id,version,definition_json,engine_revision,status,created_at,updated_at) VALUES(900001,'cost-test',1,'{}','test','candidate','now','now')",[]).unwrap();
+        conn.execute("INSERT INTO research_experiments(id,version_id,name,hypothesis,rule,filter_json,config_json,account_id,created_at,source) VALUES(900001,900001,'frozen','test','test','{}','{}',?1,'now','test')",[research.id]).unwrap();
+        conn.execute("INSERT INTO research_daily_comparison(experiment_id,account_id) VALUES(900001,?1)",[comparison.id]).unwrap();
+        conn.execute("INSERT INTO sim_orders(account_id,idempotency_key,symbol,side,quantity,signal_date,source,limit_bps,status,price,gross,fee,cash_delta,created_at,filled_at) VALUES(?1,'historic','sh600001','buy',100,'20260918','manual',1000,'filled',100100,10010000,50101,-10060101,'now','now')",[ordinary.id]).unwrap();
+        conn.execute("DELETE FROM settings WHERE key='simulation_zero_optional_costs_v1'",[]).unwrap();
+    }
+    let before=db.get_sim_detail(ordinary.id).unwrap();
+    db.migrate_simulation_optional_costs().unwrap();
+    let after=db.get_sim_detail(ordinary.id).unwrap();
+    assert_eq!((after.account.transfer_fee_bps,after.account.slippage_bps),(0,0));
+    assert_eq!(after.account.current_cash,before.account.current_cash);
+    assert_eq!(serde_json::to_value(&after.orders).unwrap(),serde_json::to_value(&before.orders).unwrap(),"Never rewrite filled price, cash delta or historical fees");
+    for id in [research.id,comparison.id] {let account=db.get_sim_detail(id).unwrap().account;assert_eq!((account.transfer_fee_bps,account.slippage_bps),(1,10),"Frozen research retains its original cost basis");}
+    db.migrate_simulation_optional_costs().unwrap();assert_eq!(db.get_sim_detail(ordinary.id).unwrap().orders[0].fee.as_deref(),Some("50101"));
+    drop(db);assert!(dir.file_name().unwrap().to_string_lossy().starts_with("bull-arrives-cost-migration-"));std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn research_notification_migration_preserves_mute_and_then_is_independent() {
+    let db = database();
+    db.init_defaults().unwrap();
+    db.set_setting("alerts_enabled", "0").unwrap();
+    db.conn.lock().unwrap().execute("DELETE FROM settings WHERE key='research_notifications_enabled'", []).unwrap();
+    assert!(!db.research_notifications_enabled().unwrap(), "Missing new setting respects old mute");
+    db.init_defaults().unwrap();
+    assert_eq!(db.get_setting("research_notifications_enabled").unwrap().as_deref(), Some("0"));
+    db.set_setting("research_notifications_enabled", "1").unwrap();
+    assert!(db.research_notifications_enabled().unwrap(), "Research can notify while market alerts are off");
+    db.init_defaults().unwrap();
+    assert!(db.research_notifications_enabled().unwrap(), "Subsequent startup preserves independent choice");
+    db.set_setting("alerts_enabled", "1").unwrap();
+    db.set_setting("research_notifications_enabled", "0").unwrap();
+    assert!(!db.research_notifications_enabled().unwrap(), "Market alerts cannot unmute research");
+}
+
+#[test]
 fn settings_survive_reopening_and_defaults() {
     let dir = std::env::temp_dir().join(format!(
         "bull-arrives-settings-{}-{}",
@@ -129,7 +177,7 @@ fn settings_survive_reopening_and_defaults() {
         ("ticker_single_color", "1"),
         ("ticker_text_color", "#336699"),
         ("theme", "dark"),
-        ("visual_style", "modern"),
+        ("visual_style", "elegant"),
         ("ticker_display_mode", "fixed"),
         ("ticker_page_size", "8"),
         ("refresh_interval", "12"),
@@ -209,4 +257,39 @@ fn changed_rule_cannot_receive_old_evaluation_and_global_delete_cleans_alerts() 
         .is_none());
     db.remove_watch(&rule.code, &rule.market).unwrap();
     assert!(db.get_all_price_alerts().unwrap().is_empty());
+}
+
+
+#[test]
+fn removed_quote_schedule_cannot_survive_default_migration() {
+    let db = database();
+    db.set_setting("quote_schedule_enabled", "1").unwrap();
+    db.set_setting("quote_schedule", "invalid legacy JSON").unwrap();
+    db.set_setting("refresh_interval", "12").unwrap();
+    db.init_defaults().unwrap();
+    assert!(db.get_setting("quote_schedule_enabled").unwrap().is_none());
+    assert!(db.get_setting("quote_schedule").unwrap().is_none());
+    assert_eq!(db.get_setting("refresh_interval").unwrap().as_deref(), Some("12"));
+    db.init_defaults().unwrap();
+    assert!(db.get_setting("quote_schedule_enabled").unwrap().is_none());
+}
+
+
+#[test]
+fn retired_trading_theme_migrates_without_changing_saved_model_history() {
+    let db = database();
+    db.migrate_model_research().unwrap();
+    let raw = include_str!("../../../research/research-center-runner/checks/verified-rank-forward-c0ae27eb-45f7-4dd6-b678-1fe478201281.json");
+    let id = db.save_model_run(raw, None).unwrap();
+    db.set_setting("visual_style", "trading").unwrap();
+    db.set_setting("theme", "dark").unwrap();
+    db.init_defaults().unwrap();
+    assert_eq!(db.get_setting("visual_style").unwrap().as_deref(), Some("modern"));
+    assert_eq!(db.get_setting("theme").unwrap().as_deref(), Some("dark"));
+    assert_eq!(db.model_run_bundle(id).unwrap(), raw);
+    db.init_defaults().unwrap();
+    assert_eq!(db.model_run_bundle(id).unwrap(), raw);
+    db.set_setting("visual_style", "classic").unwrap();
+    db.init_defaults().unwrap();
+    assert_eq!(db.get_setting("visual_style").unwrap().as_deref(), Some("classic"));
 }

@@ -8,11 +8,11 @@
 // 所以这里增删完之后两边都会自动刷新，不需要额外通知。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 import { useWatchlistStore } from '@/stores/watchlist';
-import { useSettingsStore } from '@/stores/settings';
+import { useSettingsStore, SETTING_CHANGED_EVENT, type SettingChangedPayload } from '@/stores/settings';
 import type { StockBrief } from '@/types';
 
 const win = getCurrentWindow();
@@ -37,6 +37,7 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let searchGeneration = 0;
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 let unlistenFocus: UnlistenFn | null = null;
+let unlistenSettings: UnlistenFn | null = null;
 /// 只有「先拿到过焦点」才把失焦当成关闭信号，否则窗口刚 show 时可能
 /// 立刻收到一次失焦事件，面板会自己关掉。
 let everFocused = false;
@@ -51,6 +52,9 @@ function keyOf(code: string, market: string) {
 
 onMounted(async () => {
   try {
+    unlistenSettings = await listen<SettingChangedPayload>(SETTING_CHANGED_EVENT, ({ payload }) => {
+      settings.applyRemoteSetting(payload.key, payload.value);
+    });
     await settings.fetchSettings();
     settings.applyTheme(settings.theme);
     await watchlist.fetchWatchlist();
@@ -79,6 +83,7 @@ onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer);
   if (noticeTimer) clearTimeout(noticeTimer);
   if (unlistenFocus) unlistenFocus();
+  unlistenSettings?.();
 });
 
 function flashNotice(text: string) {
@@ -359,7 +364,6 @@ async function removeStock(item: { code: string; market: string; name: string })
   background: var(--color-surface-2);
 }
 .quick-result:disabled {
-  opacity: 0.5;
   cursor: default;
 }
 .quick-add-mark {

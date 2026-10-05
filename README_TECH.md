@@ -2,7 +2,7 @@
 
 桌面级 A 股行情监控工具，基于 Tauri 2 + Vue 3 + Rust 构建。
 
-当前版本：**v1.4.5**
+当前正式版本：**v3.0.0**（2026-10-05）。版本说明见 [README](README.md#当前版本) 与 [CHANGELOG](CHANGELOG.md)；版本号以 `package.json` 为准。
 
 ## 功能
 
@@ -12,7 +12,7 @@
 - **K 线图表** — 日 K / 周 K / 月 K / 1 分钟 / 5 分钟，副图支持成交量 / MACD 一键切换，成交量含 MA5/MA10/MA20 均量线，tooltip 显示涨跌幅，蜡烛影线颜色与实体一致，涨跌颜色遵循 A 股习惯（与前收对比）
 - **指数详情** — 点击指数卡片展开指数详情面板，含分时图、K线图、成交量/成交额概要
 - **自动刷新** — 详情面板打开时，五档盘口 3 秒刷新，分时图 5 秒刷新，日 K 30 秒刷新，周/月 K 60 秒刷新
-- **浮动行情条** — 桌面置顶迷你行情条，2 只股票 3 秒自动轮播，鼠标悬停暂停，点击恢复主窗口
+- **浮动行情条** — 桌面置顶迷你行情条，支持自适应全显或每页1—20只轮播，鼠标悬停暂停，右键快速自选与展示设置，点击恢复主窗口
 - **系统托盘** — 关闭窗口最小化至托盘，左键单击切换显示/隐藏，右键菜单操作
 - **自选管理** — 添加、删除、排序（置顶 / 上移 / 下移 / 右键菜单），搜索支持跨数据源回退
 - **列排序** — 自选表格支持按涨跌幅、价格、成交量、代码等列排序
@@ -22,6 +22,21 @@
 - **自适应轮询** — 交易时段进入时快速探测（3 次 ×2s），确认开市后正常轮询（2s），连续 10 次无价格变化自动降频（30s），节假日智能休眠
 - **自动更新** — 启动时自动检测新版本，交易时段智能抑制弹窗，CHANGELOG 展示，一键下载安装
 - **开机自启** — 状态栏开关，一键启用/禁用
+- **模型研究与资讯** — 资讯仅手动调用 AI；个股分析展示模型证据与近期原文，研究中心提供历史回放、前向纸上账户、分钟及主线观察。当前模型没有实盘准入，B 表策略已弃用
+
+## 研究运行环境
+
+研究功能是可选的外部计算能力。安装包不包含 Python 或完整研究行情、模型缓存；普通看盘不要求它们。启用前，在研究中心配置 Python、`research_root` 项目目录、日线快照和指数文件。目录内的 runner / registry 必须与应用源码版本相符；应用按指纹核对，不能拿任意脚本替代。Python 依赖以所用研究脚本为准，包含 NumPy / pandas；数据需自行获得合法使用授权。
+
+GitHub 构建机器的路径对用户电脑无效，首次启动需配置真实本地路径；仅克隆源码不能生成完整历史研究数据。研究源文件与少量编译所需证据随代码提交，行情矩阵、原始采集、模型缓存与回放账本留在本地。
+
+## StockDB 开发参考
+
+研究中心已移除外部开发资料展示卡片；这些链接仅作为开发接口参考保留，不是用户运行模型的步骤。交互研究的接口资料仍由后端任务书提供，删除卡片不改变历史读取和模型计算。
+
+- Python 接口文档：<https://dns.novapi.cc/docs/AI策略python开发接口文档.md>
+- 页面开发接口文档：<https://dns.novapi.cc/docs/AI策略界面开发接口文档.md>
+- 插件展示示例：<https://dns.novapi.cc/tabs/plugins.html>
 
 ## 技术栈
 
@@ -40,7 +55,7 @@
 
 ### 前置要求
 
-- [Node.js](https://nodejs.org/) >= 18
+- [Node.js](https://nodejs.org/) 22（与 CI 一致）
 - [Rust](https://www.rust-lang.org/tools/install) 工具链
 - Windows 平台需安装 [Microsoft Visual C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 
@@ -48,7 +63,7 @@
 
 ```bash
 # 安装依赖
-npm install
+npm ci
 
 # 启动开发模式（同时启动 Vite 和 Tauri）
 npm run tauri dev
@@ -57,8 +72,21 @@ npm run tauri dev
 npx vue-tsc --noEmit
 
 # 仅编译 Rust 后端
-cargo build --manifest-path src-tauri/Cargo.toml
+node scripts/build-env.mjs cargo build --manifest-path src-tauri/Cargo.toml
 ```
+
+### 发版
+
+维护者执行规范见 [发布流程](docs/发布流程.md)。用户说「发版」时，默认递增补丁版本，先整理 `Unreleased`，再运行：
+
+```bash
+npm run release:prepare -- 2.2.7  # 示例，按当前版本选择下一个版本
+npm run release:check
+npm run build
+npm run test:rust -- --lib --locked
+```
+
+`release:prepare` 只同步五处版本及转换更新说明，不提交、不推送。`release:check` 只做静态发版检查，不代替构建、测试和远端产物验证。审核后按路径提交、推送 main 及 `vX.Y.Z` 标签；GitHub 为三平台打包，草稿通过产物验证后正式发布。
 
 ### 构建
 
@@ -80,11 +108,11 @@ node scripts/build.mjs
 | macOS | `.dmg` + `.app` |
 | Linux | `.deb` + `.AppImage` |
 
-> 产物输出在 `src-tauri/target/release/bundle/`。
+> 构建与测试产物统一位于 `src-tauri/target/`：安装包在 `release/bundle/`，前端在 `frontend/`，Vite 缓存在 `vite-cache/`，临时文件在 `tmp/`。共用 Cargo 缓存，不为各项任务新建完整编译目录。`npm run test:build-paths` 可检查目录配置。
 
 ### 绿色版（Portable Zip）
 
-绿色版是一个免安装的 `.zip` 包，解压后直接运行 `Bull Arrives.exe` 即可使用，**所有数据（数据库、日志）存储在 exe 同级 `data/` 目录下**，不写入系统 `%APPDATA%`，适合 U 盘携带或多版本并存。
+绿色版是一个免安装的 `.zip` 包，解压后直接运行 `bull-arrives.exe` 即可使用，**所有数据（数据库、日志）存储在 exe 同级 `data/` 目录下**，不写入系统 `%APPDATA%`，适合 U 盘携带或多版本并存。
 
 #### 工作原理
 
@@ -105,18 +133,19 @@ npm run tauri build
 
 # 2. 手动创建绿色版 zip
 $src = "src-tauri\target\release"
+$version = (Get-Content package.json -Raw | ConvertFrom-Json).version
 $staging = "portable\bull-arrives"
 mkdir $staging -Force > $null
-Copy-Item "$src\Bull Arrives.exe" -Destination "$staging\"
+Copy-Item "$src\bull-arrives.exe" -Destination "$staging\"
 New-Item -ItemType File -Path "$staging\portable.dat" > $null
-Compress-Archive -Path "$staging\*" -DestinationPath "$src\bundle\bull-arrives_1.0.0_x64-portable.zip"
+Compress-Archive -Path "$staging\*" -DestinationPath "$src\bundle\BullArrives_${version}_x64-portable.zip"
 ```
 
-> 产物：`src-tauri\target\release\bundle\bull-arrives_<version>_x64-portable.zip`
+> 产物：`src-tauri\target\release\bundle\BullArrives_<version>_x64-portable.zip`
 
 #### CI 自动打包
 
-CI（`.github/workflows/release.yml`）在 Windows 构建后自动执行上述打包步骤，并上传到 GitHub Release。推 tag 即可触发，无需手动操作。
+CI（`.github/workflows/release.yml`）在 Windows 构建后自动生成便携包，并与三平台安装包及更新产物一起上传草稿 Release。推版本标签触发构建；只有全部目标和产物验证通过才正式发布，不能将「已推标签」当作发版完成。
 
 #### 绿色版 vs 安装版
 

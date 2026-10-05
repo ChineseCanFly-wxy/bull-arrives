@@ -11,7 +11,7 @@ pub enum MarketSession {
     LunchBreak,
     /// 13:00–15:00 — afternoon trading
     AfternoonTrade,
-    /// After 15:00 or weekend/configured holiday — closed
+    /// After 15:00 or non-trading day — closed
     Closed,
 }
 
@@ -22,9 +22,8 @@ impl MarketSession {
     }
 
     /// Testable session calculation for an explicit UTC instant.
-    /// This clock handles weekdays only; the trading date itself comes from
-    /// [`super::trading_calendar`] (inferred from index quotes / daily bars) and
-    /// user-configured closure dates are enforced by `MarketRequestPolicy`.
+    /// Trading dates come from [`super::trading_calendar`] (index quotes / daily
+    /// bars with an offline exchange-calendar fallback).
     pub fn at_utc(now: DateTime<Utc>) -> Self {
         let cst_offset = FixedOffset::east_opt(8 * 3600).expect("UTC+8 is a valid offset");
         let now = now.with_timezone(&cst_offset);

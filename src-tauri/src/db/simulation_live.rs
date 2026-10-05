@@ -264,15 +264,9 @@ mod tests {
     use crate::db::simulation::{AccountInput, OrderInput};
     use chrono::TimeZone;
     #[test]
-    fn live_ledger_does_not_sell_today_then_sells_next_day_and_persists_evidence() {
-        let db = Database {
-            conn: std::sync::Mutex::new(rusqlite::Connection::open_in_memory().unwrap()),
-        };
-        db.migrate().unwrap();
-        db.migrate_simulation().unwrap();
-        db.migrate_simulation_live().unwrap();
-        db.migrate_strategies().unwrap();
-        db.migrate_research_loop().unwrap();
+    fn live_ledger_serializes_depth_across_instances_and_keeps_t1_evidence() {
+        let root=std::env::temp_dir().join(format!("bull-depth-race-{}",uuid::Uuid::new_v4()));
+        let db=Database::open(root.clone()).unwrap();
         let account = db
             .save_sim_account(&AccountInput {
                 id: None,
@@ -347,18 +341,20 @@ mod tests {
             .unwrap();
         db.live_order(buy.id, 340000, day.timestamp() - 1).unwrap();
         let buytick = tick(34.0, day);
-        assert_eq!(
-            db.match_sim_order_live_at(buy.id, &buytick, day)
-                .unwrap()
-                .status,
-            "filled"
-        );
-        assert_eq!(
-            db.match_sim_order_live_at(buy.id, &buytick, day)
-                .unwrap()
-                .status,
-            "filled"
-        );
+        let competing=db.submit_sim_order(&input("competing-buy","buy","2026-09-21")).unwrap();
+        db.live_order(competing.id,340000,day.timestamp()-1).unwrap();
+        let one=Database::open(root.clone()).unwrap();let two=Database::open(root.clone()).unwrap();
+        let barrier=std::sync::Arc::new(std::sync::Barrier::new(2));
+        let outcomes=std::thread::scope(|scope|{
+            let first=barrier.clone();let second=barrier.clone();let one_tick=&buytick;let two_tick=&buytick;
+            let a=scope.spawn(move||{first.wait();one.match_sim_order_live_at(buy.id,one_tick,day)});
+            let b=scope.spawn(move||{second.wait();two.match_sim_order_live_at(competing.id,two_tick,day)});
+            [a.join().unwrap(),b.join().unwrap()]
+        });
+        let fills:Vec<_>=outcomes.iter().filter_map(|row|row.as_ref().ok()).filter(|row|row.status=="filled").collect();
+        assert_eq!(fills.len(),1,"Different orders cannot consume the same visible depth in two app instances");
+        assert_eq!(db.get_sim_detail(account.id).unwrap().positions[0].quantity,100);
+        assert_eq!(db.match_sim_order_live_at(fills[0].id,&buytick,day).unwrap().status,"filled");
         let sell = db
             .submit_sim_order(&input("sell", "sell", "2026-09-21"))
             .unwrap();
@@ -390,5 +386,6 @@ mod tests {
         assert_eq!(d.metrics.realized_profit, "1000000");
         assert_eq!(db.live_status(account.id).unwrap().executions.len(), 2);
         assert!(d.positions.is_empty());
+        drop(db);std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "BullArrives",
-  "version": "2.2.6",
+  "version": "3.0.0",
   "identifier": "com.chinesecanfly-wxy.bull-arrives",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:3000",
     "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist"
+    "frontendDist": "target/frontend"
   },
   "app": {
     "windows": [
@@ -61,7 +61,10 @@
     "targets": "all",
     "windows": {
       "nsis": {
-        "languages": ["SimpChinese", "English"],
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
         "installMode": "currentUser"
       },
       "wix": {

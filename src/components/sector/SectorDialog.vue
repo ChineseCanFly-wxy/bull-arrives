@@ -378,7 +378,7 @@ function openAnalysis(row: SectorMember) {
       <template v-else-if="sector.selected">
         <div class="detail-toolbar">
           <NButton text size="small" @click="sector.clearSector">‹ 返回板块列表</NButton>
-          <NButton v-if="detailView === 'members'" size="small" :loading="sector.memberLoading" @click="sector.fetchMembers(true)">刷新成分股</NButton>
+          <NButton class="refresh-button" v-if="detailView === 'members' && !sector.selected.code.startsWith('SW')" size="small" :loading="sector.memberLoading" @click="sector.fetchMembers(true)">刷新成分股</NButton>
         </div>
 
         <div class="detail-heading">
@@ -398,11 +398,10 @@ function openAnalysis(row: SectorMember) {
         </div>
 
         <NTabs type="segment" :value="detailView" @update:value="selectDetailView">
-          <NTabPane name="members" tab="成分股" />
-          <NTabPane name="kline" tab="日/周/月 K" />
-          <NTabPane name="fund" tab="资金流详情" />
+          <NTabPane v-if="!sector.selected.code.startsWith('SW')" name="members" tab="成分股" />
+          <NTabPane v-if="!sector.selected.code.startsWith('SW')" name="kline" tab="日/周/月 K" />
+          <NTabPane v-if="!sector.selected.code.startsWith('SW')" name="fund" tab="资金流详情" />
         </NTabs>
-
         <template v-if="detailView === 'members'">
           <div class="meta-line">
             <span>共 {{ sector.memberTotal }} 只成分股</span>
@@ -458,7 +457,7 @@ function openAnalysis(row: SectorMember) {
               <NTabPane name="concept" tab="概念板块" />
             </NTabs>
             <NInput v-model:value="sector.keyword" clearable placeholder="搜索板块名称或代码" class="search" />
-            <NButton size="small" :loading="sector.loading" @click="refresh">刷新</NButton>
+            <NButton class="refresh-button" size="small" :loading="sector.loading" @click="refresh">刷新</NButton>
           </div>
           <div class="meta-line">
             <span>共 {{ sector.total }} 个板块</span>
@@ -473,14 +472,14 @@ function openAnalysis(row: SectorMember) {
           <div v-if="sector.pageCount > 1" class="pagination"><NPagination :page="sector.page" :page-count="sector.pageCount" @update:page="sector.selectPage" /></div>
         </template>
 
-        <template v-else>
+        <template v-else-if="rootView === 'rotation'">
           <div class="rotation-toolbar">
             <NTabs type="segment" :value="rotationKind" @update:value="selectRotationKind">
               <NTabPane name="industry" tab="行业" />
               <NTabPane name="concept" tab="概念" />
             </NTabs>
             <div class="days-switch"><NButton v-for="days in rotationDayOptions" :key="days" size="tiny" :type="rotationDays === days ? 'primary' : 'default'" @click="rotationDays = days">近 {{ days }} 日</NButton></div>
-            <NButton size="small" :loading="sector.rotationLoading" @click="sector.fetchRotation">刷新</NButton>
+            <NButton class="refresh-button" size="small" :loading="sector.rotationLoading" @click="sector.fetchRotation">刷新</NButton>
           </div>
           <div class="meta-line">
             <NTag v-for="status in sector.rotationStatuses" :key="status.kind" size="small" :type="status.ok ? 'success' : 'warning'" :bordered="false">{{ status.kind === 'industry' ? '行业' : '概念' }}{{ status.ok ? '已返回' : '失败·保留旧值' }}</NTag>

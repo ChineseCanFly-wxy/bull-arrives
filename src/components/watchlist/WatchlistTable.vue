@@ -939,9 +939,7 @@ html[data-style="classic"] .add-btn { height: 28px; color: #fff; }
   flex: 1 1 44%;
   min-height: 160px;
 }
-html[data-style="trading"] .watchlist-container :deep(.watchlist-table .n-data-table-th),
 html[data-style="modern"] .watchlist-container :deep(.watchlist-table .n-data-table-th) { background: var(--color-surface-2); color: var(--color-text-secondary); }
-html[data-style="trading"] .watchlist-container :deep(.watchlist-table .n-data-table-td),
 html[data-style="modern"] .watchlist-container :deep(.watchlist-table .n-data-table-td) { border-color: var(--color-border-0); }
 html[data-style="modern"] .watchlist-container :deep(.watchlist-table) { border: 1px solid var(--color-border-0); border-radius: var(--radius-md); overflow: hidden; }
 /* P&L color classes (used via render functions) */

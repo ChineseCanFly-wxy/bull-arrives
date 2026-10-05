@@ -8,9 +8,13 @@ pub mod desktop_toast;
 pub mod domain;
 pub mod dynamic_filter;
 pub mod group_hotkeys;
+pub mod model_conditions;
+mod model_data_health;
+mod condition_logic;
 pub mod market_rules;
 pub mod monitor;
 pub mod news;
+pub mod navigation;
 pub mod daily_brief;
 pub mod notification_identity;
 pub mod notifications;
@@ -18,6 +22,7 @@ pub mod quant;
 pub mod simulation;
 pub mod simulation_live;
 pub mod stockdb;
+mod stockdb_schedule;
 
 use cache::QuoteCache;
 use datasource::DataSourceManager;
@@ -282,6 +287,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(group_hotkeys::GroupHotkeys::default())
         .manage(notifications::NotificationHistory::default())
+        .manage(navigation::PendingNavigation::default())
         .manage(desktop_toast::DesktopToastState::default())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -383,34 +389,6 @@ pub fn run() {
                 }
             }
 
-            let quote_schedule_enabled = db
-                .get_setting("quote_schedule_enabled")
-                .ok()
-                .flatten()
-                .as_deref()
-                == Some("1");
-            match db.get_setting("quote_schedule") {
-                Ok(value) => {
-                    if let Err(error) = ds_manager.set_request_policy_json(value.as_deref()) {
-                        if quote_schedule_enabled {
-                            log::error!("行情时段配置损坏，暂停请求：{}", error);
-                            ds_manager.set_request_policy(
-                                datasource::market_policy::MarketRequestPolicy::paused(),
-                            );
-                        } else {
-                            log::warn!("行情时段配置损坏，但时间限制未启用：{}", error);
-                        }
-                    }
-                }
-                Err(error) if quote_schedule_enabled => {
-                    log::error!("行情时段配置读取失败，暂停请求：{}", error);
-                    ds_manager.set_request_policy(
-                        datasource::market_policy::MarketRequestPolicy::paused(),
-                    );
-                }
-                Err(error) => log::warn!("行情时段配置读取失败，但时间限制未启用：{}", error),
-            }
-            ds_manager.set_request_policy_enabled(quote_schedule_enabled);
             let ds_manager = Arc::new(ds_manager);
 
             // Initialize cache and restore from SQLite
@@ -432,6 +410,8 @@ pub fn run() {
             app.manage(stockdb_manager.clone());
             tauri::async_runtime::spawn(async move {
                 stockdb_manager.initialize().await;
+                let mut startup=true;
+                loop{if let Err(error)=stockdb_manager.scheduled_update(chrono::Utc::now(),startup).await{log::warn!("[stockdb scheduled update] {}",error);}startup=false;tokio::time::sleep(std::time::Duration::from_secs(15)).await;}
             });
             app.manage(HotkeyState(Mutex::new(None)));
             app.manage(notifications::NotificationDelivery::new(
@@ -462,15 +442,59 @@ pub fn run() {
 
             // 资讯轮询完全独立于行情调度；默认关闭，关闭时不会发起任何资讯请求。
             news::spawn(db.clone(), app.handle().clone());
+            if let Err(error)=db.recover_research_jobs(){log::warn!("[research jobs] recovery: {error}");}
+            // Mainline scans can take minutes; stock conditions have their own non-overlapping clock.
+            let mainline_db=db.clone();let mainline_app=app.handle().clone();
+            tauri::async_runtime::spawn(async move {loop {
+                commands::mainline::scheduled_tick(&mainline_db,&mainline_app).await;
+                commands::mainline::wait_for_discovery_tick(&mainline_db).await;
+            }});
+            let condition_db=db.clone();let condition_app=app.handle().clone();let condition_manager=ds_manager.clone();
+            tauri::async_runtime::spawn(async move {let mut timer=tokio::time::interval(std::time::Duration::from_secs(30));timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);loop {
+                timer.tick().await;
+                match model_conditions::tick(&condition_db,&condition_manager,chrono::Utc::now()).await {
+                    Ok(notices)=>for notice in notices{notifications::publish(&condition_app,notice);},
+                    Err(error)=>log::warn!("[model condition] {error}"),
+                }
+            }});
 
+            // Model preparation owns a separate clock; live holdings continue while it researches.
+            let automatic_db=db.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut timer=tokio::time::interval(std::time::Duration::from_secs(60));
+                timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop { timer.tick().await; commands::model_follow::automatic_tick(automatic_db.clone()).await; }
+            });
             // 模拟账户独立调度；默认无启用账户，因此不会联网或改变账本。
             let simulation_db = db.clone();
+            let simulation_app = app.handle().clone();
+            // Slow ordinary accounts must not delay the next model-follow fill pass.
+            let follow_db=db.clone();let follow_manager=ds_manager.clone();let follow_app=app.handle().clone();
+            tauri::async_runtime::spawn(async move{loop{commands::model_follow::tick_all(&follow_db,&follow_manager,&follow_app).await;tokio::time::sleep(std::time::Duration::from_secs(3)).await;}});
             let live_db=db.clone();let live_manager=ds_manager.clone();
             tauri::async_runtime::spawn(async move{loop{commands::simulation_live::tick_all(&live_db,&live_manager).await;tokio::time::sleep(std::time::Duration::from_secs(3)).await;}});
             tauri::async_runtime::spawn(async move {
                 loop {
                     if let Ok(ids)=simulation_db.list_auto_sim_account_ids(){ for id in ids { if !simulation_db.live_account(id).unwrap_or(true){ if let Err(error)=commands::simulation::run_account(&simulation_db,id).await{commands::research::account_failed(&simulation_db,id,&error);} } } }
                     commands::research::scheduled_tick(&simulation_db).await;
+                    for observation in commands::research::scheduled_model_tick(&simulation_db).await {
+                        // Automatic accounts report their own filled ledger separately.
+                        if simulation_db.follow_bindings().unwrap_or_default().iter().any(|binding|binding.enabled&&Some(binding.source_run_id)==observation["run_id"].as_i64()){continue;}
+                        let count=observation["signals"].as_array().map_or(0,Vec::len);
+                        let as_of=observation["as_of"].as_str().unwrap_or("日期未核实");
+                        let model_name=observation["model_name"].as_str().unwrap_or("模型");
+                        let symbols=observation["signals"].as_array().map(|rows|rows.iter().take(5)
+                            .filter_map(|row|row["symbol"].as_str()).collect::<Vec<_>>().join("、"))
+                            .unwrap_or_default();
+                        let shortlist=if symbols.is_empty(){"无符合条件的候选".to_string()}
+                            else{format!("候选 {symbols}{}",if count>5{" 等"}else{""})};
+                        notifications::publish(&simulation_app,serde_json::json!({
+                            "signal_kind":"research","signal_tag":"原模型研究记录",
+                            "title":format!("{model_name} · 原模型日线更新 · {as_of}"),
+                            "body":format!("{} {as_of}：{shortlist}，共 {count} 只。这是模型研究记录更新；自动跟随账户的实际模拟成交会单独通知。",if observation["historical_catchup"]==true{"历史行情补齐"}else{"已完成行情日"}),
+                            "model_snapshot":observation,
+                        }));
+                    }
                     tokio::time::sleep(std::time::Duration::from_secs(300)).await;
                 }
             });
@@ -507,24 +531,20 @@ pub fn run() {
 
             // Portable mode: skip the "check update" tray item — updates
             // are managed by the user (download & replace the zip).
-            let menu = if is_portable {
-                MenuBuilder::new(app)
-                    .item(&show_item)
-                    .item(&toggle_ticker)
-                    .separator()
-                    .item(&quit_item)
-                    .build()?
-            } else {
-                let check_update_item =
-                    MenuItemBuilder::with_id("check_update", "检查更新").build(app)?;
-                MenuBuilder::new(app)
-                    .item(&show_item)
-                    .item(&toggle_ticker)
-                    .separator()
-                    .item(&check_update_item)
-                    .item(&quit_item)
-                    .build()?
-            };
+            let mut menu_builder = MenuBuilder::new(app)
+                .item(&show_item)
+                .item(&toggle_ticker)
+                .separator();
+            for (destination, label) in navigation::QUICK_DESTINATIONS {
+                let item = MenuItemBuilder::with_id(format!("open:{destination}"), *label).build(app)?;
+                menu_builder = menu_builder.item(&item);
+            }
+            menu_builder = menu_builder.separator();
+            if !is_portable {
+                let check_update_item = MenuItemBuilder::with_id("check_update", "检查更新").build(app)?;
+                menu_builder = menu_builder.item(&check_update_item);
+            }
+            let menu = menu_builder.item(&quit_item).build()?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().cloned().expect(
@@ -535,6 +555,12 @@ pub fn run() {
                 .on_menu_event({
                     let db = db.clone();
                     move |app, event| {
+                        if let Some(destination) = navigation::destination(event.id().as_ref()) {
+                            if let Err(error) = navigation::open_navigation(app.clone(), destination.into()) {
+                                log::warn!("打开快捷入口失败: {error}");
+                            }
+                            return;
+                        }
                         match event.id().as_ref() {
                             "show" => {
                                 if app.get_webview_window("main").is_some() {
@@ -977,6 +1003,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            navigation::take_pending_navigation,
+            navigation::open_navigation,
             commands::quote::get_quotes,
             commands::quote::get_indices,
             commands::quote::get_depth,
@@ -994,12 +1022,51 @@ pub fn run() {
             commands::analysis::batch_stock_status,
             commands::agent::get_agent_status,
             commands::research::research_dashboard,
+            commands::research_evidence::get_research_evidence,
+            commands::research_evidence::get_research_model_screen,
+            commands::research_jobs::research_job_start,
+            commands::research_jobs::research_job_resume,
+            commands::research_jobs::research_job_cancel,
+            commands::research_jobs::research_job_list,
+            commands::research_jobs::research_job_get,
+            commands::research_jobs::get_model_candidates,
+            commands::research_jobs::get_model_candidate_labels,
+            model_conditions::model_condition_watch,
+            model_conditions::model_condition_auto_update,
+            model_conditions::model_condition_watches,
+            model_conditions::model_condition_enable,
+            model_conditions::model_condition_delete,
+            model_conditions::get_model_condition_event,
+            commands::research_evidence::import_research_evidence,
+            commands::mainline::get_sector_mainline,
+            commands::mainline::get_mainline_alert_history,
+            commands::mainline::get_mainline_watchlist,
+            commands::mainline::set_mainline_watch,
+            commands::mainline::analyze_mainline,
+            commands::mainline::get_mainline_discovery_status,
+            commands::mainline::set_mainline_discovery_enabled,
+            commands::mainline::run_mainline_discovery,
             commands::research::research_mode_report,
             commands::research::save_research_config,
             commands::research::research_discover,
+            commands::research::research_model_config,
+            commands::research::research_model_run,
+            commands::research::research_model_runs,
+            commands::research::research_market_data_status,
+            commands::research::research_import_model_run,
+            commands::research::research_model_observe,
+            commands::research_extensions::research_extension_report,
             commands::research::research_start,
             commands::research::research_action,
             commands::simulation_live::simulation_live_status,
+            commands::model_follow::research_auto_status,
+            commands::model_follow::research_follow_accounts,
+            commands::model_follow::research_follow_start,
+            commands::model_follow::research_follow_setup,
+            commands::model_follow::research_follow_update,
+            commands::model_follow::research_follow_delete,
+            commands::model_follow::research_follow_refresh,
+            commands::model_follow::research_follow_order,
             commands::research::research_workspace,
             commands::research::open_research_claude,
             commands::research::import_research_candidate,
@@ -1048,7 +1115,6 @@ pub fn run() {
             notifications::clear_notification_history,
             notifications::test_notification,
             news::analyze_archived_news,
-            news::get_news_ai_usage,
             notification_identity::get_notification_identity_status,
             notification_identity::register_notification_identity,
             desktop_toast::desktop_toast_ready,
@@ -1097,8 +1163,11 @@ pub fn run() {
             commands::updater::check_update,
             commands::updater::install_update,
             commands::updater::is_trading_session,
+            commands::simulation::simulation_auto_preset,
+            commands::simulation::simulation_save_auto_preset,
             commands::simulation::simulation_list_accounts,
             commands::simulation::simulation_save_account,
+            commands::simulation::simulation_adjust_capital,
             commands::simulation::simulation_delete_account,
             commands::simulation::simulation_get_detail,
             commands::simulation::simulation_submit_order,

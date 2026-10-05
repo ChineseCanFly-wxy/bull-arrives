@@ -1027,7 +1027,6 @@ impl Default for MarketFilter {
                 Board::SzMain,
                 Board::ChiNext,
                 Board::Star,
-                Board::Bse,
             ],
             industry_codes: Vec::new(),
             concept_codes: Vec::new(),
@@ -1182,6 +1181,9 @@ impl MarketFilter {
 
     /// 单个标的是否通过筛选，按 `caps` 决定哪些条件跳过
     pub fn accepts_with(&self, row: &SnapshotRow, caps: FilterCapabilities) -> bool {
+        // 用户研究范围是硬边界，空 boards 或关闭开关也不允许 ST/北交所/B股。
+        if !matches!(row.board, Board::ShMain | Board::SzMain | Board::ChiNext | Board::Star)
+            || row.is_st || row.is_delisting { return false; }
         if !self.boards.is_empty() && !self.boards.contains(&row.board) {
             return false;
         }
@@ -1274,210 +1276,51 @@ impl MarketFilter {
     }
 }
 
-// ── 内置预设方案 ──
+// ── 基础行情池：旧手工策略已退役，不向研究模型映射旧交易规则 ──
 
-/// 一键切换的筛选预设。
-///
-/// 设计理由：让用户每次手调十几个字段是不现实的。
-/// 内置方案分两类，**描述里必须说清楚是哪一类**，不要让用户误以为都能赚钱：
-///
-/// 1. **有公开实证支撑的因子类** —— 趋势确认、短期反转、低估值、低波动。
-///    这类策略的方向和大致阈值来自公开的 A 股因子研究，注释里都标了出处与量级。
-/// 2. **当日量价的行为类** —— 强势突破、短线活跃。它们只描述"今天盘面在发生什么"，
-///    是选股池而不是收益预期，描述里明确写出来。
-///
-/// 刻意**没有**内置小市值策略：2024 年退市新规后，连续 20 日市值低于 5 亿元会直接退市，
-/// 小盘组合的下行风险已经不是收益因子能覆盖的了。
+pub const RETIRED_PRESET_IDS: [&str; 6] = [
+    "steady_trend", "strong_breakout", "short_term_active",
+    "oversold_rebound", "low_valuation", "low_volatility",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum FilterPreset {
-    /// 全部：只做基础排除，不限数值
-    All,
-    /// 稳健趋势：中大盘、中期不弱、温和放量上涨
-    SteadyTrend,
-    /// 强势突破：当日明显放量、涨幅靠前
-    StrongBreakout,
-    /// 短线活跃：中小市值、高换手
-    ShortTermActive,
-    /// 超跌反弹：中期跌幅足够大，当日仍弱
-    OversoldRebound,
-    /// 低估值价值：低市净率 + 正盈利
-    LowValuation,
-    /// 低波动稳健：低振幅 + 中大盘
-    LowVolatility,
-}
+pub enum FilterPreset { All, QuoteLiquidity, QuoteActive, QuoteGentleRise }
 
 impl FilterPreset {
-    /// 全部预设，顺序即 UI 展示顺序
-    pub const ALL: [FilterPreset; 7] = [
-        Self::All,
-        Self::SteadyTrend,
-        Self::StrongBreakout,
-        Self::ShortTermActive,
-        Self::OversoldRebound,
-        Self::LowValuation,
-        Self::LowVolatility,
-    ];
-
-    /// 稳定标识，用于前端持久化选中项
+    pub const ALL: [FilterPreset; 4] = [Self::QuoteLiquidity, Self::QuoteActive, Self::QuoteGentleRise, Self::All];
     pub fn id(self) -> &'static str {
-        match self {
-            Self::All => "all",
-            Self::SteadyTrend => "steady_trend",
-            Self::StrongBreakout => "strong_breakout",
-            Self::ShortTermActive => "short_term_active",
-            Self::OversoldRebound => "oversold_rebound",
-            Self::LowValuation => "low_valuation",
-            Self::LowVolatility => "low_volatility",
-        }
+        match self { Self::All => "all", Self::QuoteLiquidity => "quote_liquidity", Self::QuoteActive => "quote_active", Self::QuoteGentleRise => "quote_gentle_rise" }
     }
-
-    /// 该 id 是否属于内置预设。
-    ///
-    /// 用户自建策略的 id 一律带 `custom_` 前缀，这里再兜一道：
-    /// 内置 id 绝不允许被自定义策略占用（否则「重置/切换」会指向错误的条件）。
-    pub fn is_builtin_id(id: &str) -> bool {
-        Self::ALL.iter().any(|preset| preset.id() == id)
-    }
-
-    /// 这条预设配套的交易规则。
-    ///
-    /// 映射依据是**预设想要的形态**与**规则的性格**匹配：
-    /// - 反转类（超跌反弹）→ 均值回归：公开测算里胜率能过六成的那一类
-    /// - 突破类（强势突破、短线活跃）→ 放量突破：靠量能确认把假信号率压下去
-    /// - 趋势 / 价值 / 低波 → 趋势跟随：持有周期长，靠止损截断亏损、让利润跑
-    ///
-    /// 规则只在**个股分析**里生效（筛选器用的是单日快照，没有均线和 ATR）。
-    pub fn rule(self) -> crate::quant::playbook::TradeRule {
-        use crate::quant::playbook::TradeRule;
-        match self {
-            Self::OversoldRebound => TradeRule::MeanReversion,
-            Self::StrongBreakout | Self::ShortTermActive => TradeRule::Breakout,
-            Self::All | Self::SteadyTrend | Self::LowValuation | Self::LowVolatility => {
-                TradeRule::TrendFollow
-            }
-        }
-    }
-
+    pub fn is_builtin_id(id: &str) -> bool { Self::ALL.iter().any(|preset| preset.id() == id) || RETIRED_PRESET_IDS.contains(&id) }
     pub fn label(self) -> &'static str {
-        match self {
-            Self::All => "全部",
-            Self::SteadyTrend => "稳健趋势",
-            Self::StrongBreakout => "强势突破",
-            Self::ShortTermActive => "短线活跃",
-            Self::OversoldRebound => "超跌反弹",
-            Self::LowValuation => "低估值价值",
-            Self::LowVolatility => "低波动稳健",
-        }
+        match self { Self::All => "沪深基础股票池", Self::QuoteLiquidity => "流动性优先", Self::QuoteActive => "今日活跃", Self::QuoteGentleRise => "温和上涨" }
     }
-
-    /// 一句话说明这条预设想选什么样的股票，直接展示给用户。
-    /// **必须诚实**：是收益因子就说因子，是当日盘面就说盘面，避免用户误读。
     pub fn description(self) -> &'static str {
         match self {
-            Self::All => "仅做基础排除（ST/退市/停牌/一字板/B股），不限数值区间",
-            Self::SteadyTrend => "中大盘 · 近 60 日不弱 · 温和放量上涨 —— 趋势确认，不追高",
-            Self::StrongBreakout => "当日明显放量且涨幅靠前 —— 资金驱动型选池，注意追高风险",
-            Self::ShortTermActive => "中小市值 · 高换手 —— 活跃度筛选，用于短线选池，非收益预期",
-            Self::OversoldRebound => {
-                "近 60 日跌超 15% 且今日仍弱 —— A 股短期反转效应，跌多的更易反弹"
-            }
-            Self::LowValuation => "低市净率 + 正盈利 —— 价值因子，低 PB 是 A 股最稳健的估值因子",
-            Self::LowVolatility => "低振幅 · 中大盘 —— 低波动因子，波动大的股票长期收益反而更差",
+            Self::All => "不限制数值条件，保留沪深股票安全排除",
+            Self::QuoteLiquidity => "3—100元 · 成交额≥1亿 · 总市值≥30亿",
+            Self::QuoteActive => "3—100元 · 成交额≥2亿 · 总市值≥30亿 · 换手2—15% · 涨幅0—8%",
+            Self::QuoteGentleRise => "3—100元 · 成交额≥1亿 · 总市值30—1000亿 · 换手1—8% · 涨幅0—5%",
         }
     }
-
-    /// 展开成具体的筛选条件。
-    ///
-    /// 所有预设都继承 [`MarketFilter::default`] 的基础排除规则，
-    /// 只在此基础上叠加数值区间 —— 避免出现「某个预设忘了排除 ST」这类漏洞。
-    ///
-    /// 阈值取值说明见各分支注释：因子类方案的**方向**来自公开实证，
-    /// 具体数值是在「不至于筛出空集」和「保持区分度」之间取的折中，
-    /// 属于**未回测的手工阈值** —— 用户可在此基础上微调，也可以另存为自己的策略。
     pub fn build(self) -> MarketFilter {
         let mut filter = MarketFilter::default();
+        if self == Self::All { return filter; }
+        filter.price_min = Some(3.0); filter.price_max = Some(100.0);
+        filter.amount_min_wan = Some(10000.0); filter.market_cap_min_yi = Some(30.0);
         match self {
-            Self::All => {}
-            Self::SteadyTrend => {
-                // 中大盘：100 亿以下流动性差，3000 亿以上弹性不足
-                filter.market_cap_min_yi = Some(100.0);
-                filter.market_cap_max_yi = Some(3000.0);
-                filter.turnover_min = Some(1.0);
-                filter.turnover_max = Some(8.0);
-                filter.volume_ratio_min = Some(1.0);
-                // 涨跌幅温和，滤掉已经异动的
-                filter.change_pct_min = Some(-2.0);
-                filter.change_pct_max = Some(5.0);
-                filter.amount_min_wan = Some(10_000.0);
-                filter.price_min = Some(5.0);
-                // 趋势确认的关键一条：近 60 日不能是下跌趋势。
-                // 只要求「不弱」而不是「大涨」—— 追高在 A 股是负期望（见 OversoldRebound 注释）。
-                filter.change_60d_min = Some(0.0);
+            Self::QuoteActive => {
+                filter.amount_min_wan = Some(20000.0);
+                filter.turnover_min = Some(2.0); filter.turnover_max = Some(15.0);
+                filter.change_pct_min = Some(0.0); filter.change_pct_max = Some(8.0);
             }
-            Self::StrongBreakout => {
-                filter.volume_ratio_min = Some(2.0);
-                filter.change_pct_min = Some(3.0);
-                // 上游是一字板已被排除，这里再卡一道 9%
-                filter.change_pct_max = Some(9.0);
-                filter.turnover_min = Some(3.0);
-                filter.turnover_max = Some(20.0);
-                filter.amount_min_wan = Some(20_000.0);
+            Self::QuoteGentleRise => {
+                filter.market_cap_max_yi = Some(1000.0);
+                filter.turnover_min = Some(1.0); filter.turnover_max = Some(8.0);
+                filter.change_pct_min = Some(0.0); filter.change_pct_max = Some(5.0);
             }
-            Self::ShortTermActive => {
-                filter.market_cap_min_yi = Some(20.0);
-                filter.market_cap_max_yi = Some(300.0);
-                filter.turnover_min = Some(5.0);
-                filter.turnover_max = Some(25.0);
-                filter.volume_ratio_min = Some(1.5);
-                filter.change_pct_min = Some(-3.0);
-                filter.change_pct_max = Some(9.0);
-                filter.amount_min_wan = Some(8_000.0);
-            }
-            Self::OversoldRebound => {
-                // 核心是这条「中期跌够多」。此前只判当日跌幅，
-                // 结果「跌 1% 的高位股」也会入选，而真正腰斩的票只要当天平盘就落选 —— 名不副实。
-                //
-                // 方向依据：A 股 2015—2025 全样本的价格动量因子 IC 为**负**
-                // （3 个月回看、不跳过近期，IC≈-0.032，t≈-2.66），即短期显著**反转**；
-                // 3 个月回看是效应最强的窗口，正好对应这里的 60 日。
-                filter.change_60d_max = Some(-15.0);
-                // 今日仍弱：不在放量拉升时分批接，避免追在半山腰
-                filter.change_pct_min = Some(-9.0);
-                filter.change_pct_max = Some(0.0);
-                filter.turnover_min = Some(2.0);
-                // 有资金介入迹象（放量止跌比缩量阴跌更值得看）
-                filter.volume_ratio_min = Some(1.0);
-                filter.amount_min_wan = Some(5_000.0);
-                // 1 元附近的仙股不碰
-                filter.price_min = Some(3.0);
-            }
-            Self::LowValuation => {
-                // 价值因子的核心：A 股 2004—2024 二十年，低 PB 组合跑赢胜率约 55%，
-                // 且 2020—2024 更突出（破净股胜率均值约 70%）；多项研究认为
-                // **PB 比 PE 更稳健**，所以这里以 PB 为主约束、PE 只用来排除亏损股。
-                filter.pb_min = Some(0.01);
-                filter.pb_max = Some(2.0);
-                // pe 下限设成正数 = 只要盈利股（亏损股该字段为 0 或负）
-                filter.pe_min = Some(0.01);
-                filter.pe_max = Some(30.0);
-                // 50 亿以下避开退市新规的市值红线区域，也不至于买不到量
-                filter.market_cap_min_yi = Some(50.0);
-                filter.amount_min_wan = Some(5_000.0);
-                filter.price_min = Some(3.0);
-            }
-            Self::LowVolatility => {
-                // 低波动因子的方向在 A 股是稳的（多份券商测算显示低波组合的
-                // 风险调整后收益明显优于高波），但**这里只能用当日振幅近似**：
-                // 快照没有 60 日波动率，日线数据要逐只拉 K 线，不适合放进全市场粗筛。
-                // 所以这条是「低波动」的代理，不是严格的波动率因子。
-                filter.amplitude_max = Some(4.0);
-                filter.market_cap_min_yi = Some(100.0);
-                filter.turnover_min = Some(0.5);
-                filter.turnover_max = Some(5.0);
-                filter.amount_min_wan = Some(5_000.0);
-                filter.price_min = Some(5.0);
-            }
+            _ => {}
         }
         filter
     }
@@ -1521,7 +1364,7 @@ pub fn preset_infos() -> Vec<PresetInfo> {
             label: preset.label().to_owned(),
             description: preset.description().to_owned(),
             filter: preset.build(),
-            rule: preset.rule().id().to_owned(),
+            rule: String::new(),
             builtin: true,
             strategy_version_id: None,
             strategy_version: 0,
@@ -1741,6 +1584,10 @@ mod filter_tests {
             !filter.accepts(&row("600002", "退市某某")),
             "退市默认应被排除"
         );
+        let unrestricted=MarketFilter{boards:vec![],exclude_st:false,exclude_delisting:false,..MarketFilter::default()};
+        assert!(!unrestricted.accepts(&row("920001","北交样本")));
+        assert!(!unrestricted.accepts(&row("600001","*ST样本")));
+        assert!(!unrestricted.accepts(&row("600002","退市样本")));
     }
 
     #[test]
@@ -1856,22 +1703,7 @@ mod filter_tests {
 mod preset_tests {
     use super::*;
 
-    /// 构造一只可调字段的样本股，用于验证预设的区分度
-    fn sample(
-        code: &str,
-        name: &str,
-        change_pct: f64,
-        volume_ratio: f64,
-        turnover: f64,
-        amount: f64,
-    ) -> SnapshotRow {
-        let raw = serde_json::json!({
-            "f12": code, "f14": name,
-            "f2": 20.0, "f3": change_pct, "f5": 100000.0, "f6": amount,
-            "f7": 3.0, "f8": turnover, "f10": volume_ratio, "f20": 5.0e9
-        });
-        parse_row(&raw).expect("应能解析")
-    }
+
 
     #[test]
     fn every_preset_keeps_base_exclusions() {
@@ -1922,7 +1754,10 @@ mod preset_tests {
         // 除「全部」外的预设必须有区分度条件，否则选出来和全部一样
         for info in infos.iter().filter(|info| info.id != "all") {
             let f = &info.filter;
-            let has_narrowing = f.volume_ratio_min.is_some()
+            let has_narrowing = f.price_min.is_some()
+                || f.amount_min_wan.is_some()
+                || f.market_cap_min_yi.is_some()
+                || f.volume_ratio_min.is_some()
                 || f.turnover_min.is_some()
                 || f.change_60d_min.is_some()
                 || f.change_60d_max.is_some()
@@ -1937,147 +1772,59 @@ mod preset_tests {
         }
     }
 
-    /// 回归守卫：**趋势 / 反转类预设必须真的用上中期维度**。
-    ///
-    /// 曾经的实现里「稳健趋势」全都用当日字段，「超跌反弹」只判当日跌幅 ——
-    /// 名字承诺了趋势和超跌，条件里却一个字都没提。任何把 `change_60d` 摘掉的
-    /// 改动都应该在这里被拦住。
+
+
+
+
     #[test]
-    fn trend_and_reversal_presets_use_mid_term_return() {
-        let steady = FilterPreset::SteadyTrend.build();
-        assert!(
-            steady.change_60d_min.is_some(),
-            "「稳健趋势」必须带 60 日涨跌幅下限，否则谈不上趋势"
-        );
-
-        let oversold = FilterPreset::OversoldRebound.build();
-        assert!(
-            oversold.change_60d_max.is_some(),
-            "「超跌反弹」必须带 60 日涨跌幅上限，否则「超跌」无从体现"
-        );
-    }
-
-    /// 每条内置策略都必须带上一条可解析的交易规则 —— 否则「打开分析」拿不到买卖点。
-    ///
-    /// 同时锁住「形态 ↔ 规则」的匹配关系：超跌反弹必须走均值回归（公开测算里
-    /// 胜率能过六成的那一类），突破类必须走放量突破。这层映射被改错的话，
-    /// 用户会看到一条名叫「超跌反弹」却在用趋势规则算买点的策略。
-    #[test]
-    fn every_preset_carries_a_valid_trade_rule() {
-        use crate::quant::playbook::TradeRule;
-
+    fn quote_presets_have_explicit_values_without_hidden_history_or_retired_rules() {
+        let liquidity = FilterPreset::QuoteLiquidity.build();
+        assert_eq!(liquidity.price_min, Some(3.0));
+        assert_eq!(liquidity.price_max, Some(100.0));
+        assert_eq!(liquidity.amount_min_wan, Some(10000.0));
+        assert_eq!(liquidity.market_cap_min_yi, Some(30.0));
+        let active = FilterPreset::QuoteActive.build();
+        assert_eq!(active.amount_min_wan, Some(20000.0));
+        assert_eq!((active.turnover_min, active.turnover_max), (Some(2.0), Some(15.0)));
+        assert_eq!((active.change_pct_min, active.change_pct_max), (Some(0.0), Some(8.0)));
+        let gentle = FilterPreset::QuoteGentleRise.build();
+        assert_eq!(gentle.market_cap_max_yi, Some(1000.0));
+        assert_eq!((gentle.turnover_min, gentle.turnover_max), (Some(1.0), Some(8.0)));
+        assert_eq!((gentle.change_pct_min, gentle.change_pct_max), (Some(0.0), Some(5.0)));
         for preset in FilterPreset::ALL {
-            let rule = preset.rule();
-            assert_eq!(
-                TradeRule::from_id(rule.id()),
-                rule,
-                "规则 id 必须能往返解析"
-            );
-            assert!(!rule.label().is_empty(), "规则 {} 缺中文名", rule.id());
-            assert!(
-                !rule.profile().is_empty(),
-                "规则 {} 必须说明自己的胜率 / 盈亏比性格",
-                rule.id()
-            );
+            let filter = preset.build();
+            assert!(!filter.has_history_conditions());
+            assert!(filter.skipped_conditions(FilterCapabilities::for_source(SnapshotSource::Sina)).is_empty());
+            assert!(filter.exclude_st && filter.exclude_delisting && filter.exclude_suspended && filter.exclude_limit_locked);
+            assert!(!RETIRED_PRESET_IDS.contains(&preset.id()));
+            assert!(!filter.boards.contains(&Board::Bse));
         }
-
-        assert_eq!(
-            FilterPreset::OversoldRebound.rule(),
-            TradeRule::MeanReversion
-        );
-        assert_eq!(FilterPreset::StrongBreakout.rule(), TradeRule::Breakout);
-        assert_eq!(FilterPreset::ShortTermActive.rule(), TradeRule::Breakout);
-        assert_eq!(FilterPreset::SteadyTrend.rule(), TradeRule::TrendFollow);
-        assert_eq!(FilterPreset::LowValuation.rule(), TradeRule::TrendFollow);
     }
 
-    /// 规则必须随预设一起下发给前端，否则前端不知道按哪套规则算操作计划
+    /// 基础行情池没有交易规则，不能隐式用旧playbook代表新模型。
     #[test]
     fn preset_infos_expose_the_rule_id() {
         let infos = preset_infos();
         assert!(!infos.is_empty());
         for info in &infos {
-            assert!(!info.rule.is_empty(), "预设 {} 缺少规则 id", info.id);
+            assert!(info.rule.is_empty(), "基础池不得映射旧交易规则");
             assert!(info.builtin, "内置预设 {} 未标记 builtin", info.id);
         }
     }
 
-    /// 建一只可指定估值 / 60 日涨跌幅 / 振幅的样本股
-    fn sample_full(
-        change_pct: f64,
-        volume_ratio: f64,
-        turnover: f64,
-        pe: f64,
-        pb: f64,
-        change_60d: f64,
-        amplitude: f64,
-        market_cap: f64,
-    ) -> SnapshotRow {
-        let raw = serde_json::json!({
-            "f12": "600519", "f14": "样本股",
-            "f2": 20.0, "f3": change_pct, "f5": 100000.0, "f6": 1.0e8,
-            "f7": amplitude, "f8": turnover, "f9": pe, "f10": volume_ratio,
-            "f20": market_cap, "f23": pb, "f24": change_60d
-        });
-        parse_row(&raw).expect("应能解析")
-    }
 
-    /// 超跌反弹的核心是「中期跌够了」，而不是「今天跌了」——
-    /// 旧实现只判当日涨跌幅，会把高位回调 1% 的股票也放进来。
-    #[test]
-    fn oversold_rebound_requires_real_drawdown_not_just_a_red_day() {
-        let filter = FilterPreset::OversoldRebound.build();
 
-        // 60 日跌 30%、今日 -3%、放量 → 符合
-        assert!(filter.accepts(&sample_full(-3.0, 1.5, 5.0, 20.0, 2.0, -30.0, 5.0, 1.0e10)));
-        // 60 日基本没跌，只是今天绿了 → 不算超跌，必须被拒
-        assert!(
-            !filter.accepts(&sample_full(-3.0, 1.5, 5.0, 20.0, 2.0, 0.0, 5.0, 1.0e10)),
-            "没跌够就不该叫超跌反弹"
-        );
-        // 跌够了但今天在拉升 → 不追，拒掉
-        assert!(
-            !filter.accepts(&sample_full(2.0, 1.5, 5.0, 20.0, 2.0, -30.0, 5.0, 1.0e10)),
-            "今日走强时不接"
-        );
-    }
 
-    /// 价值因子以 PB 为主约束，同时要求正盈利（亏损股 pe 为 0）
-    #[test]
-    fn low_valuation_needs_low_pb_and_positive_earnings() {
-        let filter = FilterPreset::LowValuation.build();
 
-        // PE 12 / PB 1.2 / 市值 100 亿 → 符合
-        assert!(filter.accepts(&sample_full(1.0, 1.2, 3.0, 12.0, 1.2, 5.0, 3.0, 1.0e10)));
-        // PB 5.0 已经不算低估 → 拒
-        assert!(
-            !filter.accepts(&sample_full(1.0, 1.2, 3.0, 12.0, 5.0, 5.0, 3.0, 1.0e10)),
-            "高市净率不应被当成低估值"
-        );
-        // 亏损股（pe = 0）即使 PB 很低也要拒
-        assert!(
-            !filter.accepts(&sample_full(1.0, 1.2, 3.0, 0.0, 1.0, 5.0, 3.0, 1.0e10)),
-            "亏损股不该进低估值策略"
-        );
-    }
 
-    /// 低波动用的是当日振幅代理，振幅过大直接排除
-    #[test]
-    fn low_volatility_rejects_wide_amplitude() {
-        let filter = FilterPreset::LowVolatility.build();
 
-        assert!(filter.accepts(&sample_full(0.5, 1.1, 3.0, 15.0, 1.5, 3.0, 2.0, 2.0e10)));
-        assert!(
-            !filter.accepts(&sample_full(0.5, 1.1, 3.0, 15.0, 1.5, 3.0, 9.0, 2.0e10)),
-            "振幅 9% 不是低波动"
-        );
-    }
+
 
     /// 新浪通道不提供 60 日涨跌幅：依赖它的条件必须被跳过并明确告知，
     /// 否则会拿 0 去比较，把结果筛成空集。
     #[test]
     fn mid_term_condition_is_skipped_on_sources_without_the_field() {
-        let filter = FilterPreset::OversoldRebound.build();
+        let filter = MarketFilter { change_60d_max: Some(-15.0), ..MarketFilter::default() };
 
         let sina = FilterCapabilities::for_source(SnapshotSource::Sina);
         assert!(!sina.change_60d);
@@ -2100,29 +1847,9 @@ mod preset_tests {
         );
     }
 
-    #[test]
-    fn strong_breakout_rejects_weak_and_accepts_strong() {
-        let filter = FilterPreset::StrongBreakout.build();
-        // 温和上涨 + 量比不足 → 不符合「强势突破」
-        assert!(!filter.accepts(&sample("600519", "温和股", 2.0, 1.5, 8.0, 3.0e8)));
-        // 涨幅 5% + 量比 2.5 + 换手 8% + 成交额 3 亿 → 符合
-        assert!(filter.accepts(&sample("600519", "突破股", 5.0, 2.5, 8.0, 3.0e8)));
-    }
 
-    #[test]
-    fn short_term_active_rejects_large_caps() {
-        let filter = FilterPreset::ShortTermActive.build();
-        // 市值 50 亿（样本即 5e9）→ 符合
-        assert!(filter.accepts(&sample("300001", "小盘股", 3.0, 2.0, 10.0, 1.0e8)));
 
-        // 市值 5000 亿 → 超上限
-        let big = parse_row(&serde_json::json!({
-            "f12": "600519", "f14": "大盘股", "f2": 20.0, "f3": 3.0,
-            "f5": 100000.0, "f6": 1.0e9, "f7": 3.0, "f8": 10.0, "f10": 2.0, "f20": 5.0e11
-        }))
-        .expect("应能解析");
-        assert!(!filter.accepts(&big), "5000 亿市值应被短线预设排除");
-    }
+
 
     /// 区间填反了（min > max）结果恒为空集，保存策略前必须纠正 ——
     /// 否则用户会存下一个「永远筛不出任何股票」的策略却毫无察觉。
@@ -2167,6 +1894,7 @@ mod preset_tests {
         for preset in FilterPreset::ALL {
             assert!(FilterPreset::is_builtin_id(preset.id()));
         }
+        for id in RETIRED_PRESET_IDS {assert!(FilterPreset::is_builtin_id(id));}
         assert!(!FilterPreset::is_builtin_id("custom_1234567890"));
         assert!(!FilterPreset::is_builtin_id(""));
         assert!(!FilterPreset::is_builtin_id("custom"));

@@ -152,7 +152,6 @@ const statCards = computed(() => [
 }
 
 html[data-style="classic"] .index-detail { border-top-color: var(--color-border); padding: 12px 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
-html[data-style="trading"] .index-detail,
 html[data-style="modern"] .index-detail { height: calc(100dvh - var(--header-height) - var(--index-bar-height) - 28px); min-height: 220px; overflow: auto; }
 .detail-header {
   display: flex;
@@ -190,7 +189,6 @@ html[data-style="modern"] .index-detail { height: calc(100dvh - var(--header-hei
   line-height: 1;
 }
 .detail-close:hover { color: var(--color-text-primary); }
-html[data-style="trading"] .detail-close:hover,
 html[data-style="modern"] .detail-close:hover { background: var(--color-surface-hover); }
 
 .detail-body {
@@ -228,7 +226,7 @@ html[data-style="modern"] .detail-close:hover { background: var(--color-surface-
 }
 
 .card-label {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 
@@ -263,20 +261,14 @@ html[data-style="modern"] .detail-close:hover { background: var(--color-surface-
   align-items: center;
   gap: 8px;
 }
-html[data-style="trading"] .summary-grid,
 html[data-style="modern"] .summary-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-html[data-style="trading"] .summary-card,
 html[data-style="modern"] .summary-card { padding: var(--space-2) var(--space-3); min-width: 0; }
-html[data-style="trading"] .chart-toolbar,
 html[data-style="modern"] .chart-toolbar,
-html[data-style="trading"] .chart-toolbar-group,
 html[data-style="modern"] .chart-toolbar-group { gap: var(--space-2); flex-wrap: wrap; }
 @media (max-width: 780px) {
-  html[data-style="trading"] .summary-grid,
   html[data-style="modern"] .summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 500px) {
-  html[data-style="trading"] .summary-grid,
   html[data-style="modern"] .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>

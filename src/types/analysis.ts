@@ -54,6 +54,30 @@ export interface StockAnalysis {
   history: HistoryMeta | null;
   /** 后端冻结的 Agent 输入指纹，不回传可篡改的量化对象 */
   agent_context_fingerprint: string | null;
+  research_context?: {
+    model_research: {
+      available?: boolean; error?: string; requested_as_of?: string; frozen_as_of?: string;
+      date_matches?: boolean; run_id?: string; evidence_sha256?: string;
+      models: Array<{
+        id: string; name: string; holding_days: number;
+        signal_status: 'positive_record' | 'nonpositive_record' | 'not_in_scored_export' | 'not_in_positive_export' | 'date_mismatch';
+        score: number | null;
+        score_as_of?: string | null; score_source?: string; model_run_id?: number;
+        performance: {
+          train: { net_return_pct: number }; validation: { net_return_pct: number };
+          test: { net_return_pct: number; max_drawdown_pct: number };
+          double_cost_return_pct: number; unique_stocks: number; closed_cycles: number;
+        };
+      }>;
+      latest_model_scan?: { as_of: string; message: string; models: Array<{model_id: string; name: string; score_semantic: string; score: number|null; threshold: number; signal_status: string; job_id: number; score_source: string}> };
+      limitations?: string[];
+    };
+    recent_news: Array<{ id: string; title: string; body: string; source: string; received_at: number | string; published_at?: string | null; published_date?: string | null; publication_precision?: string | null; published_after_market_asof?: boolean | null; source_index_only?: boolean; url?: string | null }>;
+    mainlines: Array<{ sector_name: string; as_of: string }>;
+    mainline_error?: string | null; news_error?: string | null;
+    financial_research?: {available:boolean;message?:string;requested_as_of?:string;snapshot_as_of?:string;history_version_certified?:boolean;fields?:Record<string,number|boolean|null>;limitations?:string[]};
+    news_scope: string; legacy_rule_note: string;
+  } | null;
 }
 
 export interface AgentStatus {

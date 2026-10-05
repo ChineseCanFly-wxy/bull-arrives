@@ -1,14 +1,19 @@
 {
   "name": "bull-arrives",
   "private": true,
-  "version": "2.2.6",
+  "version": "3.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
-    "tauri:build": "node scripts/build.mjs"
+    "tauri": "node scripts/build-env.mjs tauri",
+    "tauri:build": "node scripts/build.mjs",
+    "release:check": "node scripts/check-release.mjs",
+    "release:prepare": "node scripts/prepare-release.mjs",
+    "release:test": "node scripts/test-release.mjs",
+    "test:rust": "node scripts/build-env.mjs cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:build-paths": "node scripts/test-build-paths.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -27,5 +32,10 @@
     "typescript": "^5.6.2",
     "vite": "^6.0.3",
     "vue-tsc": "^2.1.10"
+  },
+  "overrides": {
+    "postcss": "8.5.23",
+    "nanoid": "3.3.18",
+    "brace-expansion": "2.1.7"
   }
 }

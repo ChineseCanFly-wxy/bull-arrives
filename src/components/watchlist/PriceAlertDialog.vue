@@ -356,7 +356,7 @@ function close() {
   border-radius: 4px;
   background: color-mix(in srgb, var(--color-accent) 14%, transparent);
   color: var(--color-accent);
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 .strip-copy,
 .footer-note {
@@ -415,7 +415,7 @@ function close() {
 }
 .field-block { display: flex; flex-direction: column; gap: 6px; color: var(--color-text-secondary); font-size: var(--text-xs); }
 .field-block small,
-.enable-row small { color: var(--color-text-tertiary); font-size: 10px; line-height: 1.4; }
+.enable-row small { color: var(--color-text-tertiary); font-size: var(--text-xs); line-height: 1.4; }
 .threshold-input { width: 100%; }
 .cooldown-field { animation: reveal 140ms ease-out; }
 .enable-row {

@@ -4,12 +4,14 @@ use std::{collections::BTreeMap, sync::Mutex};
 pub fn workflow(task: &str, role: &str) -> &'static str {
     match (task, role) {
         ("strategy_discovery", _) => include_str!("../../prompts/strategy-discovery.md"),
+        ("model_research_discovery", _) => include_str!("../../prompts/model-research.md"),
         ("single_stock_analysis", _) => include_str!("../../prompts/single-stock.md"),
         ("multi_role_analysis", "technical") => include_str!("../../prompts/technical.md"),
         ("multi_role_analysis", "bull") => include_str!("../../prompts/bull.md"),
         ("multi_role_analysis", "bear") => include_str!("../../prompts/bear.md"),
         ("multi_role_analysis", "risk") => include_str!("../../prompts/risk.md"),
         ("news_summary", _) => include_str!("../../prompts/news.md"),
+        ("mainline_research", _) => include_str!("../../prompts/mainline.md"),
         ("dynamic_filter", _) => include_str!("../../prompts/filter.md"),
         _ => include_str!("../../prompts/connection.md"),
     }
@@ -70,9 +72,12 @@ pub fn inspect(db: &Database, fingerprint: &str) -> Result<AgentInspection, Stri
     .collect();
     let mut missing_data = vec![
         "实时盘口与逐笔成交".into(),
-        "财报、公告、新闻与资金流（本次个股任务未提供）".into(),
+        "公告时点财务因子与资金流；近期资讯仅覆盖已经采集的相关原文".into(),
         "个人持仓和账户资金".into(),
     ];
+    if input.quantitative_analysis.research_context.as_ref().is_none_or(|c|c["recent_news"].as_array().is_none_or(Vec::is_empty)) {
+        missing_data.push("近期相关原文未采集到；不能判断没有利好或利空".into());
+    }
     if input.recent_klines.is_empty() {
         missing_data.push("逐根 K 线未提供（旧快照请重新打开分析）".into());
     }

@@ -9,12 +9,13 @@ import { useSettingsStore } from '@/stores/settings';
 import { evaluateBacktest, tradeRuleFocus, tradeRuleLabel, verdictTone } from '@/types/analysis';
 import PriceLevelChart from '@/components/analysis/PriceLevelChart.vue';
 import AgentWorkbench from '@/components/analysis/AgentWorkbench.vue';
+import HelpTooltip from '@/components/common/HelpTooltip.vue';
 
 const props = defineProps<{
   show: boolean;
   symbol: string;
   name: string;
-  /** 用哪套交易规则算买卖点。缺省趋势跟随；筛选器会把当前策略配套的规则传进来 */
+  /** 技术规则对照；默认按当前形态匹配，不代表模型或策略已获准入。 */
   rule?: string;
 }>();
 const emit = defineEmits<{ 'update:show': [value: boolean] }>();
@@ -38,6 +39,11 @@ const storeStyleWidth = computed(() => settings.visualStyle === 'classic' ? 760 
 const storeStyleHeight = computed(() => settings.visualStyle === 'classic' ? 120 : 110);
 const selectedTaskId = ref<string | null>(null);
 const liveQuestion = ref('');
+const aiExpanded = ref(false);
+const evidenceExpanded = ref(false);
+const technicalExpanded = ref(false);
+const factorsExpanded = ref(false);
+const statisticsExpanded = ref(false);
 let taskTimer: ReturnType<typeof setInterval> | null = null;
 
 watch(() => [props.show, props.symbol, selectedTaskId.value] as const, ([visible, , taskId]) => {
@@ -81,6 +87,8 @@ watch(
   () => [props.show, props.symbol, props.rule] as const,
   ([open, sym, rule]) => {
     if (open && sym) {
+      aiExpanded.value = false; evidenceExpanded.value = false;
+      technicalExpanded.value = false; factorsExpanded.value = false; statisticsExpanded.value = false;
       void store.analyze(sym, rule);
       void store.loadAgentStatus();
     } else if (!open && (store.agentLoading || store.teamLoading)) {
@@ -100,12 +108,37 @@ const agentFieldLabel: Record<string, string> = {
   risk_reward: '盈亏比', position_pct: '仓位上限', backtest_expectancy_pct: '回测每笔期望',
   backtest_max_drawdown_pct: '回测最大回撤', backtest_win_rate: '回测胜率',
   oos_expectancy_pct: '样本外期望', profit_probability: '盈利概率',
+  research_status: '多年研究准入状态',
 };
+for (const [prefix,label] of [['breadth22','形态广度模型'],['index26','形态与指数模型']]) {
+  for (const [suffix,description] of [['signal','该股观察身份'],['label_score','收益标签预测'],['train_net','前段组合净收益'],['validation_net','中段组合净收益'],['test_net','后段组合净收益'],['test_drawdown','后段最大回撤'],['double_cost_net','双成本后段净收益']]) {
+    agentFieldLabel[`${prefix}_${suffix}`]=`${label} · ${description}`;
+  }
+}
+for(let i=1;i<=12;i++) agentFieldLabel[`news_${String(i).padStart(2,'0')}`]=`近期原文 ${i}`;
+const researchContext = computed(() => store.analysis?.research_context);
+const modelOverview = computed(() => researchContext.value?.model_research.models.map(model => ({
+  id: model.id, name: model.name,
+  opinion: model.signal_status === 'positive_record' ? '正分观察' :
+    model.signal_status === 'nonpositive_record' ? '零/负分，偏谨慎' :
+    model.signal_status === 'date_mismatch' ? '日期不符，方向未知' : '无评分记录，方向未知',
+})) ?? []);
+const aiState = computed(() => store.agentLoading || store.teamLoading ? '正在分析' :
+  store.agentAnalysis?.status === 'ready' ? '已有解读，点击查看' : '手动生成 · 点击展开');
+function safeSourceUrl(value?: string | null): string | undefined {
+  if(!value) return undefined;
+  try {const url=new URL(value);return ['http:','https:'].includes(url.protocol)&&!url.username&&!url.password ? url.href : undefined;}catch{return undefined;}
+}
+function newsTime(value: number | string | null | undefined): string {
+  if(value==null) return '未知';
+  const date=new Date(value);return Number.isNaN(date.getTime())?String(value):date.toLocaleString('zh-CN');
+}
 
 const agentOperatorLabel: Record<string, string> = {
   lt: '低于', lte: '不高于', gt: '高于', gte: '不低于',
   cross_below: '下穿', cross_above: '上穿',
 };
+const agentConclusionLabel: Record<string, string> = { bullish: '偏强', neutral: '中性', bearish: '偏弱', cautious: '谨慎' };
 const agentRoleLabel: Record<string, string> = { technical: '技术', bull: '多方', bear: '空方', risk: '风控' };
 
 function invalidationLabel(item: { field: string; operator: string; reference_field: string }): string {
@@ -184,7 +217,7 @@ function rate(v: number): string {
   <n-modal
     v-model:show="visible"
     preset="card"
-    title="个股技术分析"
+    title="个股模型与形态研究"
     :style="{ width: `min(${storeStyleWidth}px, calc(100vw - 24px))` }"
     :content-style="{ maxHeight: `calc(100dvh - ${storeStyleHeight}px)`, overflow: 'auto' }"
     :bordered="false"
@@ -209,18 +242,118 @@ function rate(v: number): string {
               <n-tag :type="verdictTone(store.analysis.verdict)" size="medium" :bordered="false">
                 {{ store.analysis.verdict }}
               </n-tag>
-              <span class="muted">综合评分（0–100）</span>
+              <span class="muted">量化技术状态分 · 0–100（非胜率）</span>
             </div>
           </div>
 
           <div class="section-title plan-title">
-            <span>AI 研究助手</span>
-            <span class="rule-tag">Claude Code</span>
-            <span class="muted">解释量化结果、回答快照问题、多空讨论</span>
+            <span>模型证据与近期原文</span>
+            <HelpTooltip label="模型研究使用说明">先看多年、多股组合证据，再看个股同日评分和近期原文。正负分是冻结模型的收益标签预测，不是上涨概率；缺少评分记录时方向未知。目前模型仍为研究观察。技术规则和单股回放用于对照。</HelpTooltip>
           </div>
-          <div class="agent-card">
-            <p class="muted">使用顺序：快照问答或生成解读会自动运行，进度和实际输入在下方“调用记录”；想边看边聊就打开 Claude 终端；需要队友互通消息则打开原生 Agent Team 终端。终端完成后点击对应任务的“导入结果”。</p>
+          <div v-if="researchContext" class="model-overview">
+            <span v-for="model in modelOverview" :key="model.id"><b>{{ model.name }}</b><small>{{ model.opinion }}</small></span>
+            <p v-if="!modelOverview.length">当前没有可核对的模型评分。</p>
+            <small>行情 {{ store.analysis.history?.end_date || '未知' }} · 研究观察，尚未生产准入 · 近期原文 {{ researchContext.recent_news.length }} 条</small>
+          </div>
+          <details v-if="researchContext" class="analysis-disclosure evidence-disclosure" :open="evidenceExpanded" @toggle="evidenceExpanded = ($event.target as HTMLDetailsElement).open">
+            <summary><span>模型证据与近期原文详情</span><small>{{ evidenceExpanded ? '收起' : '点击展开' }}</small></summary>
+          <div class="research-card">
+            <p><b>探索观察 · 未生产准入</b> · 冻结 {{ researchContext.model_research.frozen_as_of || '未知' }} · 个股 {{ store.analysis.history?.end_date || '未知' }}</p>
+            <p v-if="researchContext.model_research.error" class="error-line">{{ researchContext.model_research.error }}</p>
+            <p v-if="researchContext.mainline_error" class="error-line">主线关联读取失败：{{ researchContext.mainline_error }}</p>
+            <p v-if="researchContext.news_error" class="error-line">近期资讯读取失败：{{ researchContext.news_error }}</p>
+            <div v-for="model in researchContext.model_research.models" :key="model.id" class="research-row">
+              <b>{{ model.name }} · {{ model.holding_days }} 交易日标签</b>
+              <small v-if="model.score_source">{{model.score_source}} · 评分截止 {{model.score_as_of||'未知'}} · 账户 #{{model.model_run_id}}</small>
+              <span>{{ model.signal_status==='positive_record' ? '已登记正分观察' : model.signal_status==='nonpositive_record' ? '真实标签预测为零或负，方向偏谨慎' : model.signal_status==='date_mismatch' ? '日期不符，当前评分未知' : '无对应评分记录，当前方向未知' }}<template v-if="model.score!==null"> · 标签预测 {{ signed(model.score*100,4) }}%（非胜率）</template></span>
+              <small>前段 {{ signed(model.performance.train.net_return_pct) }}% · 中段 {{ signed(model.performance.validation.net_return_pct) }}% · 后段 {{ signed(model.performance.test.net_return_pct) }}% · 后段回撤 {{ model.performance.test.max_drawdown_pct.toFixed(2) }}% · 双成本 {{ signed(model.performance.double_cost_return_pct) }}%</small>
+              <small>{{ model.performance.unique_stocks }} 只成交股票 · {{ model.performance.closed_cycles }} 个平仓周期；这些是组合证据，不是该股预测胜率。</small>
+            </div>
+            <details v-if="researchContext.model_research.latest_model_scan?.models.length"><summary>本次筛选模型证据 · {{researchContext.model_research.latest_model_scan.as_of}}</summary><div v-for="model in researchContext.model_research.latest_model_scan.models" :key="model.model_id" class="research-row"><b>{{model.name}} · {{model.signal_status==='positive_record'?'满足条件':model.signal_status==='nonpositive_record'?'未过阈值':'该股无评分'}}</b><p>任务 #{{model.job_id}} · 原始分数 {{model.score ?? '未知'}} · 固定阈值 &gt; {{model.threshold}}</p><small>{{model.score_semantic}}。{{model.score_source}}</small></div></details>
+            <p class="muted">{{ researchContext.legacy_rule_note }}</p>
+            <details v-if="researchContext.financial_research"><summary>公告时点基本面 · {{researchContext.financial_research.available?'保守版本可读':'未知'}}</summary><p>{{researchContext.financial_research.message}}</p><p v-if="researchContext.financial_research.fields">报告期 {{researchContext.financial_research.fields.report_date}} · 公告 {{researchContext.financial_research.fields.first_notice_date}} · 修订 {{researchContext.financial_research.fields.revision_date}} · 可用日 {{researchContext.financial_research.fields.available_signal_date}}</p><p v-if="researchContext.financial_research.fields">营收累计同比 {{researchContext.financial_research.fields.revenue_yoy_pct??'未知'}}% · 利润累计同比 {{researchContext.financial_research.fields.profit_yoy_pct??'未知'}}% · 累计ROE {{researchContext.financial_research.fields.roe_pct??'未知'}}% · 经营现金流每股 {{researchContext.financial_research.fields.cash_per_share_cny??'未知'}}元 · 负债资产比例 {{researchContext.financial_research.fields.debt_assets_pct??'未知'}}%</p><p v-for="item in researchContext.financial_research.limitations" :key="item">{{item}}</p></details>
+            <details><summary>近期相关原文（{{ researchContext.recent_news.length }} 条）</summary>
+              <p class="muted">{{ researchContext.news_scope }}</p>
+              <p v-if="!researchContext.recent_news.length">未采集到相关原文，利好利空仍未知。</p>
+              <article v-for="item in researchContext.recent_news" :key="item.id" class="research-row">
+                <b>{{ item.title }}</b><small>{{ item.source }} · 发布 {{ item.published_at ? newsTime(item.published_at) : item.published_date ? `${item.published_date}（仅日期，具体公开时点未知）` : '未知' }} · 采集 {{ newsTime(item.received_at) }}</small>
+                <small v-if="item.published_after_market_asof===true">行情截止后的新信息，用于补充当前风险，不能回填截止日模型。</small>
+                <small v-if="item.source_index_only">标题索引；原文正文尚未采集。</small>
+                <p>{{ item.body || '只有标题索引，尚未读取全文。' }}</p>
+                <a v-if="safeSourceUrl(item.url)" :href="safeSourceUrl(item.url)" target="_blank" rel="noopener noreferrer">核对来源原文</a>
+              </article>
+            </details>
+            <details v-if="researchContext.model_research.limitations?.length"><summary>研究局限</summary><p v-for="item in researchContext.model_research.limitations" :key="item">{{ item }}</p></details>
+          </div>
+          </details>
+          <details class="analysis-disclosure ai-disclosure" :open="aiExpanded" @toggle="aiExpanded = ($event.target as HTMLDetailsElement).open">
+            <summary><span>AI 解读 · 模型、原文与反证</span><small>{{ aiState }}</small></summary>
+          <div v-if="aiExpanded" class="agent-card">
+            <p class="muted">手动生成后，先看当前结论，再看模型为何支持或反对、近期原文影响、等待条件和最强反证。每条判断会附本次快照的数值与日期。</p>
+            <div class="agent-actions">
+              <button
+                class="agent-btn"
+                :disabled="!store.agentStatus?.installed || !store.analysis.agent_context_fingerprint || store.agentLoading || store.teamLoading"
+                :title="store.agentStatus?.installed ? '生成结构化解读' : store.agentStatus?.guidance"
+                @click="store.analyzeWithAgent()"
+              >
+                {{ store.agentLoading ? '分析中…' : '生成 AI 解读' }}
+              </button>
+              <button class="agent-btn" :disabled="!store.agentStatus?.installed || !store.analysis.agent_context_fingerprint || store.agentLoading || store.teamLoading" @click="store.analyzeWithTeam">
+                {{ store.teamLoading ? '多角色研判中…' : '多角度交叉研判' }}
+              </button>
+              <button v-if="store.agentLoading || store.teamLoading" class="link-btn" @click="store.cancelAgentAnalysis">中止</button>
+              <span v-if="store.agentAnalysis?.cached" class="muted">同一数据时点已复用</span>
+            </div>
+
+            <div v-if="store.agentStatus && !store.agentStatus.installed" class="agent-unavailable">
+              <b>{{ store.agentStatus.message }}</b>
+              <span>{{ store.agentStatus.guidance }}</span>
+            </div>
+            <template v-if="store.agentAnalysis?.status === 'ready'">
+              <details v-if="importedTeamTask" :key="importedTeamTask.id" class="team-discussion">
+                <summary>Team 团队讨论记录 · {{ importedTeamTask.symbol }}</summary>
+                <p class="muted">负责人整理的过程摘要，可查看角色分工、交叉质疑、分歧与风控收口；原始对话可在对应终端复核。下方最终结论使用同一行情快照，可能与单个 Agent 一致。</p>
+                <pre v-if="importedTeamActivity?.progress" class="team-progress">{{ importedTeamActivity.progress }}</pre>
+                <p v-else class="muted">暂未读到讨论记录，可点击刷新；如果仍为空，请让负责人将各方观点、相互质疑和最终取舍写入本次任务的 progress.md。</p>
+                <button class="link-btn" @click="store.inspectInteractiveTask(importedTeamTask.id)">刷新讨论记录</button>
+              </details>
+              <p v-if="importedTeamTask" class="muted">Team 最终结论（已通过结构与证据字段校验）</p>
+              <p class="agent-conclusion"><b>{{ agentConclusionLabel[store.agentAnalysis.conclusion || ''] || store.agentAnalysis.conclusion }}</b></p>
+              <p v-if="store.agentAnalysis.summary" class="agent-summary">{{ store.agentAnalysis.summary }}</p>
+              <div class="agent-confidence">模型主观确定性 {{ store.agentAnalysis.confidence }}%（非上涨概率） · {{ store.agentAnalysis.generated_at }}</div>
+              <div v-for="(claim, index) in store.agentAnalysis.claims" :key="index" class="agent-claim">
+                <b>{{ { support: '支持因素', risk: '主要风险', watch: '继续观察' }[claim.kind] }}</b>
+                <p>{{ claim.text }}</p>
+                <small v-for="item in claim.evidence" :key="item.field">{{ agentFieldLabel[item.field] ?? item.field }} = {{ item.value }} · {{ item.source }} · {{ item.as_of }}</small>
+              </div>
+              <div class="agent-evidence">
+                <span v-for="item in store.agentAnalysis.evidence" :key="item.field">
+                  <b>{{ agentFieldLabel[item.field] ?? item.field }}</b> {{ item.value }}
+                  <small>{{ item.source }} · {{ item.as_of }}</small>
+                </span>
+              </div>
+              <div class="agent-invalid"><b>失效条件</b><span v-for="item in store.agentAnalysis.invalidation_conditions" :key="`${item.field}:${item.operator}:${item.reference_field}`">· {{ invalidationLabel(item) }}</span></div>
+            </template>
+            <div v-else-if="store.agentAnalysis" class="agent-unavailable">
+              <b>Agent 未完成，已降级为纯量化结果</b>
+              <span>{{ store.agentAnalysis.error }}</span><span>{{ store.agentAnalysis.guidance }}</span>
+            </div>
+            <div v-if="store.teamError" class="agent-unavailable">多角色研判失败：{{ store.teamError }}</div>
+            <div v-if="store.teamAnalysis" class="agent-team">
+              <p v-if="store.teamAnalysis.status === 'cancelled'">多角色研判已中止，未保存预测。</p>
+              <p><b>风控收口：{{ store.teamAnalysis.final_conclusion ? ({ bullish: '偏强', bearish: '偏弱', neutral: '中性', cautious: '谨慎' }[store.teamAnalysis.final_conclusion] ?? store.teamAnalysis.final_conclusion) : '无结论' }}</b><span v-if="store.teamAnalysis.confidence !== null"> · 主观确定性 {{ store.teamAnalysis.confidence }}%（非上涨概率）</span></p>
+              <div v-for="role in store.teamAnalysis.roles" :key="`${role.round}:${role.role}`" class="agent-role" :class="{ failed: role.status === 'failed' }">
+                <b>第 {{ role.round }} 轮 · {{ agentRoleLabel[role.role] ?? role.role }}</b>
+                <span>{{ role.argument ?? role.error }}</span>
+                <small v-if="role.evidence.length">{{ role.evidence.map(item => `${agentFieldLabel[item.field] ?? item.field}=${item.value} @ ${item.as_of}`).join('；') }}</small>
+              </div>
+              <small>真实校准：{{ store.teamAnalysis.calibration.verified }}/{{ store.teamAnalysis.calibration.required_verified }} 条，跨度 {{ store.teamAnalysis.calibration.span_days }}/{{ store.teamAnalysis.calibration.required_span_days }} 天 · {{ store.teamAnalysis.calibration.status === 'ready' ? '已就绪' : '观察中' }}</small>
+            </div>
+            <details class="ai-workbench"><summary>针对性提问、提示词与调用记录</summary>
             <AgentWorkbench v-if="store.analysis.agent_context_fingerprint" :fingerprint="store.analysis.agent_context_fingerprint" :busy="store.agentLoading || store.teamLoading" :installed="!!store.agentStatus?.installed" :visible="props.show" @ask="store.analyzeWithAgent($event)" />
+            </details>
+            <details class="advanced-ai"><summary>连续对话与 Claude 终端（高级）</summary>
             <section class="live-agent" aria-label="应用内 Claude Code 会话">
               <div class="interactive-intro"><b>应用内连续对话</b><span>发送后下方会持续显示 Claude Code 回复与工具名称，状态会提示本轮是否结束；这里不显示工具内容。每轮使用设置中的单次预算（默认 $10，最高 $50），账户额度另计。普通 Claude Code 设置会加载，需人工批准的工具请用可见终端。文本回复不会自动变成已校验的结构化分析。</span></div>
               <button class="agent-btn" :disabled="!store.agentStatus?.installed || store.liveBusy || store.liveStatus?.running" @click="store.startLiveAnalysis">新建应用内会话</button>
@@ -271,99 +404,51 @@ function rate(v: number): string {
                 <small>任务目录：{{ task.directory }}。任务文件会保留到你主动清理；{{ task.live ? '应用内会话的消息只在本次运行的应用进程内保存，重启后可继续提问，但历史消息不会恢复。' : '如果终端未启动，可在该目录手动运行 Claude Code。' }}清理任务文件不会删除应用数据库中的分析快照。</small>
               </div>
             </div>
-            <div class="agent-actions">
-              <button
-                class="agent-btn"
-                :disabled="!store.agentStatus?.installed || !store.analysis.agent_context_fingerprint || store.agentLoading || store.teamLoading"
-                :title="store.agentStatus?.installed ? '生成结构化解读' : store.agentStatus?.guidance"
-                @click="store.analyzeWithAgent()"
-              >
-                {{ store.agentLoading ? '分析中…' : '生成 Agent 解读' }}
-              </button>
-              <button class="agent-btn" :disabled="!store.agentStatus?.installed || !store.analysis.agent_context_fingerprint || store.agentLoading || store.teamLoading" @click="store.analyzeWithTeam">
-                {{ store.teamLoading ? '多角色研判中…' : '自动多角色研判（分阶段）' }}
-              </button>
-              <button v-if="store.agentLoading || store.teamLoading" class="link-btn" @click="store.cancelAgentAnalysis">中止</button>
-              <span v-if="store.agentAnalysis?.cached" class="muted">同一数据时点已复用</span>
-            </div>
-            <div v-if="store.agentStatus && !store.agentStatus.installed" class="agent-unavailable">
-              <b>{{ store.agentStatus.message }}</b>
-              <span>{{ store.agentStatus.guidance }}</span>
-            </div>
-            <template v-if="store.agentAnalysis?.status === 'ready'">
-              <details v-if="importedTeamTask" :key="importedTeamTask.id" class="team-discussion" open>
-                <summary>Team 团队讨论记录 · {{ importedTeamTask.symbol }}</summary>
-                <p class="muted">负责人整理的过程摘要，可查看角色分工、交叉质疑、分歧与风控收口；原始对话可在对应终端复核。下方最终结论使用同一行情快照，可能与单个 Agent 一致。</p>
-                <pre v-if="importedTeamActivity?.progress" class="team-progress">{{ importedTeamActivity.progress }}</pre>
-                <p v-else class="muted">暂未读到讨论记录，可点击刷新；如果仍为空，请让负责人将各方观点、相互质疑和最终取舍写入本次任务的 progress.md。</p>
-                <button class="link-btn" @click="store.inspectInteractiveTask(importedTeamTask.id)">刷新讨论记录</button>
-              </details>
-              <p v-if="importedTeamTask" class="muted">Team 最终结论（已通过结构与证据字段校验）</p>
-              <p class="agent-conclusion"><b>{{ store.agentAnalysis.conclusion }}</b></p>
-              <p v-if="store.agentAnalysis.summary" class="agent-summary">{{ store.agentAnalysis.summary }}</p>
-              <div class="agent-confidence">模型主观确定性 {{ store.agentAnalysis.confidence }}%（非上涨概率） · {{ store.agentAnalysis.generated_at }}</div>
-              <div v-for="(claim, index) in store.agentAnalysis.claims" :key="index" class="agent-claim">
-                <b>{{ { support: '支持因素', risk: '主要风险', watch: '继续观察' }[claim.kind] }}</b>
-                <p>{{ claim.text }}</p>
-                <small v-for="item in claim.evidence" :key="item.field">{{ agentFieldLabel[item.field] ?? item.field }} = {{ item.value }} · {{ item.source }} · {{ item.as_of }}</small>
-              </div>
-              <div class="agent-evidence">
-                <span v-for="item in store.agentAnalysis.evidence" :key="item.field">
-                  <b>{{ agentFieldLabel[item.field] ?? item.field }}</b> {{ item.value }}
-                  <small>{{ item.source }} · {{ item.as_of }}</small>
-                </span>
-              </div>
-              <div class="agent-invalid"><b>失效条件</b><span v-for="item in store.agentAnalysis.invalidation_conditions" :key="`${item.field}:${item.operator}:${item.reference_field}`">· {{ invalidationLabel(item) }}</span></div>
-            </template>
-            <div v-else-if="store.agentAnalysis" class="agent-unavailable">
-              <b>Agent 未完成，已降级为纯量化结果</b>
-              <span>{{ store.agentAnalysis.error }}</span><span>{{ store.agentAnalysis.guidance }}</span>
-            </div>
-            <div v-if="store.teamError" class="agent-unavailable">多角色研判失败：{{ store.teamError }}</div>
-            <div v-if="store.teamAnalysis" class="agent-team">
-              <p v-if="store.teamAnalysis.status === 'cancelled'">多角色研判已中止，未保存预测。</p>
-              <p><b>风控收口：{{ store.teamAnalysis.final_conclusion ? ({ bullish: '偏强', bearish: '偏弱', neutral: '中性', cautious: '谨慎' }[store.teamAnalysis.final_conclusion] ?? store.teamAnalysis.final_conclusion) : '无结论' }}</b><span v-if="store.teamAnalysis.confidence !== null"> · 主观确定性 {{ store.teamAnalysis.confidence }}%（非上涨概率）</span></p>
-              <div v-for="role in store.teamAnalysis.roles" :key="`${role.round}:${role.role}`" class="agent-role" :class="{ failed: role.status === 'failed' }">
-                <b>第 {{ role.round }} 轮 · {{ agentRoleLabel[role.role] ?? role.role }}</b>
-                <span>{{ role.argument ?? role.error }}</span>
-                <small v-if="role.evidence.length">{{ role.evidence.map(item => `${agentFieldLabel[item.field] ?? item.field}=${item.value} @ ${item.as_of}`).join('；') }}</small>
-              </div>
-              <small>真实校准：{{ store.teamAnalysis.calibration.verified }}/{{ store.teamAnalysis.calibration.required_verified }} 条，跨度 {{ store.teamAnalysis.calibration.span_days }}/{{ store.teamAnalysis.calibration.required_span_days }} 天 · {{ store.teamAnalysis.calibration.status === 'ready' ? '已就绪' : '观察中' }}</small>
-            </div>
+            </details>
           </div>
 
+          </details>
+
+          <details class="analysis-disclosure statistics-disclosure" :open="statisticsExpanded" @toggle="statisticsExpanded = ($event.target as HTMLDetailsElement).open">
+            <summary><span>因子与形态历史统计（可选）</span><small>辅助理解本股，不参与自动买卖</small></summary>
+            <p class="statistics-description">统计本股历史因子和形态出现后 5 个交易日的价格变化。结果为全样本描述，未做滚动样本外检验，也未计交易成本；不代表当前上涨概率或可执行组合收益。模型自动交易请使用研究中心 → 模拟跟踪。</p>
           <div class="section-title plan-title">
-            <span>因子与形态研究台</span>
-            <span class="muted">滚动检验，不把当前标签回填历史</span>
+            <span>本股历史 5 日统计</span>
             <button class="agent-btn" :disabled="store.researchLoading" @click="store.runResearch">
-              {{ store.researchLoading ? '计算中…' : '运行研究' }}
+              {{ store.researchLoading ? '计算中…' : '计算历史统计' }}
             </button>
           </div>
           <div v-if="store.researchError" class="error-line">{{ store.researchError }}</div>
-          <div v-if="store.research" class="research-card">
+          <div v-if="store.research" class="stock-statistics-card">
             <div class="research-meta">
-              <b>{{ store.research.bars }} 根日 K · 后看 {{ store.research.horizon_days }} 日</b>
-              <span :class="store.research.causal_audit_passed ? 'up' : 'down'">因果检查{{ store.research.causal_audit_passed ? '通过' : '失败' }}</span>
+              <b>{{ store.research.bars }} 根日 K · 观察后续 {{ store.research.horizon_days }} 个交易日</b>
+              <span :class="store.research.causal_audit_passed ? 'up' : 'down'">历史特征一致性检查{{ store.research.causal_audit_passed ? '通过' : '失败' }}</span>
               <span>{{ store.research.runtime }}</span>
             </div>
             <div v-for="factor in store.research.factors" :key="factor.id" class="research-row">
               <b>{{ factor.label }}</b>
               <span>Rank IC {{ factor.rank_ic === null ? '-' : signed(factor.rank_ic, 3) }} · {{ factor.samples }} 样本</span>
-              <small>五分位平均收益：{{ factor.quantiles.map(item => `Q${item.quantile} ${signed(item.avg_return_pct)}%`).join(' / ') }}</small>
+              <small>因子分组的后续收盘平均变化：{{ factor.quantiles.map(item => `Q${item.quantile} ${signed(item.avg_return_pct)}%`).join(' / ') }}</small>
             </div>
             <div v-for="pattern in store.research.patterns" :key="pattern.id" class="research-row">
               <b>{{ pattern.label }}</b>
-              <span>{{ pattern.samples }} 次 · 上涨概率 {{ pattern.positive_probability === null ? '-' : rate(pattern.positive_probability) }}</span>
-              <small>平均收益 {{ pattern.avg_return_pct === null ? '-' : `${signed(pattern.avg_return_pct)}%` }} · 最大回撤 {{ pattern.max_drawdown_pct === null ? '-' : `${pattern.max_drawdown_pct.toFixed(2)}%` }}</small>
+              <span>{{ pattern.samples }} 次 · 历史上涨占比 {{ pattern.positive_probability === null ? '-' : rate(pattern.positive_probability) }}</span>
+              <small>后续收盘平均变化 {{ pattern.avg_return_pct === null ? '-' : `${signed(pattern.avg_return_pct)}%` }} · 信号后最低价最大跌幅 {{ pattern.max_drawdown_pct === null ? '-' : `${pattern.max_drawdown_pct.toFixed(2)}%` }}</small>
             </div>
+            <p class="statistics-description">特征一致性检查只核对历史特征是否读取未来数据；上面的跌幅按信号日收盘到后续最低价计算，不是交易账户回撤。</p>
             <div class="research-note">板块/市值分层：{{ store.research.stratification_note }}</div>
             <div class="research-note">盘中截止匹配：{{ store.research.intraday_note }}</div>
           </div>
 
+          </details>
+
+          <details class="analysis-disclosure technical-disclosure" :open="technicalExpanded" @toggle="technicalExpanded = ($event.target as HTMLDetailsElement).open">
+            <summary><span>技术形态与规则对照</span><small>{{ tradeRuleLabel(store.ruleUsed) }} · {{ plan?.ready ? '规则已触发' : '规则待触发' }} · 点击查看</small></summary>
+            <p class="rule-validation"><b>多股多年盈利验证：未准入</b><span>{{ backtest ? backtest.trust.eligible && backtest.causal_audit.passed ? '本股回放门禁已通过，仍需多股多年组合验证' : '本股回放门禁未通过，展开查看具体原因' : '本次未取得单股回放结果' }}</span></p>
           <!-- 交易规则：按当前市场状态自动匹配，也可以手动切换 -->
           <template v-if="ruleMatch">
             <div class="section-title plan-title">
-              <span>交易规则</span>
+              <span>当前形态匹配</span>
               <span class="rule-tag">{{ ruleMatch.recommended_label }}</span>
               <span class="muted">
                 {{ isAuto ? '按当前状态自动匹配' : '已手动指定' }}
@@ -405,16 +490,15 @@ function rate(v: number): string {
               </div>
 
               <div class="rule-caveat">
-                选哪条规则看的是<b>当前处于什么状态</b>（趋势 / 超跌 / 突破），
-                不是「历史上哪条赚得多」—— 后者实测选对率只有 40%，随机挑还有 33%，
-                本质是在噪声里挑最大值。回测数字仅供参照，没有参与这里的判断。
+                三条规则用于描述当前的趋势、超跌或突破形态，并生成可核对的价格情景。
+                自动匹配依据当前形态条件；本股回放只供对照，不代表规则已通过多年、多股的盈利验证。
               </div>
             </div>
           </template>
 
           <!-- 操作计划：把「选出来」变成「照着做」 -->
           <div class="section-title plan-title">
-            <span>操作计划</span>
+            <span>规则情景价位</span>
             <span class="rule-tag">{{ plan ? plan.rule_label : tradeRuleLabel(store.ruleUsed) }}</span>
             <span v-if="plan" class="ready-tag" :class="plan.ready ? 'ok' : 'wait'">
               {{ plan.ready ? '当前满足入场条件' : '当前未触发' }}
@@ -478,7 +562,7 @@ function rate(v: number): string {
           <!-- 规则回测：让「胜率」落到这只股票自己的历史上 -->
           <template v-if="backtest">
             <div class="section-title plan-title">
-              <span>规则历史回测</span>
+              <span>本股规则历史回放</span>
               <span class="rule-tag">{{ backtest.rule_label }}</span>
               <span class="muted">{{ store.analysis?.history?.source_label || '在线历史' }} · {{ store.analysis?.history?.start_date || '—' }} → {{ store.analysis?.history?.end_date || '—' }} · {{ store.analysis?.history?.bars ?? backtest.bars }} 根 · 前复权</span>
             </div>
@@ -521,7 +605,7 @@ function rate(v: number): string {
               </div>
               <div v-if="backtest.trust.cost_flip" class="bt-history-warning">成本翻倍后每笔期望由正转负，已自动拦截。</div>
               <details class="bt-details">
-                <summary>准入门禁（{{ backtest.trust.gates.filter(gate => gate.passed).length }}/{{ backtest.trust.gates.length }} 通过）</summary>
+                <summary>本股回放门禁（{{ backtest.trust.gates.filter(gate => gate.passed).length }}/{{ backtest.trust.gates.length }} 通过）</summary>
                 <div v-for="gate in backtest.trust.gates" :key="gate.key" class="bt-gate" :class="{ failed: !gate.passed }">
                   {{ gate.passed ? '✓' : '✕' }} {{ gate.label }}：{{ gate.detail }}
                 </div>
@@ -537,6 +621,8 @@ function rate(v: number): string {
             </div>
           </template>
 
+          </details>
+          <details class="analysis-disclosure factor-disclosure" :open="factorsExpanded" @toggle="factorsExpanded = ($event.target as HTMLDetailsElement).open"><summary><span>技术评分明细与指标</span><small>点击查看因子、权重与指标快照</small></summary>
           <!-- 因子明细 -->
           <div class="section-title">因子明细</div>
           <div class="factors">
@@ -566,6 +652,7 @@ function rate(v: number): string {
             <div class="cell"><span class="k">60 日动量</span><span class="v mono">{{ momentum(store.analysis.momentum60) }}</span></div>
             <div class="cell"><span class="k">量比</span><span class="v mono">{{ pct(store.analysis.volume_ratio) }}</span></div>
           </div>
+          </details>
         </template>
 
         <div v-else-if="!store.loading" class="muted">暂无分析结果</div>
@@ -575,6 +662,24 @@ function rate(v: number): string {
 </template>
 
 <style scoped>
+.analysis-disclosure { margin: 12px 0; border: 1px solid var(--color-border-0); border-radius: 10px; background: var(--color-surface-1); padding: 0 14px; }
+.analysis-disclosure > summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; min-height: 48px; padding: 12px 0; font-size: 13px; font-weight: 600; color: var(--color-text-primary); cursor: pointer; list-style: none; }
+.analysis-disclosure > summary::-webkit-details-marker { display: none; }
+.analysis-disclosure > summary::before { content: '›'; font-size: 20px; line-height: 18px; color: var(--color-text-secondary); transition: transform 120ms; }
+.analysis-disclosure[open] > summary::before { transform: rotate(90deg); }
+.analysis-disclosure > summary > span { flex: 1; }
+.analysis-disclosure > summary small { font-size: var(--text-xs); font-weight: 400; color: var(--color-text-secondary); }
+.analysis-disclosure[open] { padding-bottom: 12px; }
+.analysis-disclosure[open] > summary { border-bottom: 1px solid var(--color-border-0); margin-bottom: 12px; }
+.ai-disclosure > summary > span { color: var(--color-accent); }
+.ai-disclosure .agent-card { border: 0; padding: 0; }
+.model-overview { display: flex; flex-wrap: wrap; gap: 8px; border: 1px solid var(--color-border-0); border-radius: 10px; padding: 12px 14px; background: var(--color-surface-1); }
+.model-overview > span { flex: 1; min-width: 220px; padding: 9px 11px; background: var(--color-surface-2); border-radius: 7px; }
+.model-overview b,.model-overview span small { display: block; }
+.model-overview b { font-size: 12px; font-weight: 550; }.model-overview small { font-size: var(--text-xs); color: var(--color-text-secondary); }.model-overview > small { width: 100%; }.model-overview p { margin: 0; font-size: 12px; }
+.rule-validation { display: grid; gap: 4px; padding: 10px 12px; border-radius: 7px; background: var(--color-warning-bg); font-size: 12px; color: var(--color-warning); }.rule-validation span { font-size: var(--text-xs); color: var(--color-text-secondary); }
+.ai-workbench > summary,.advanced-ai > summary { cursor: pointer; color: var(--color-text-secondary); font-size: 12px; padding: 8px 0; }.advanced-ai > section,.advanced-ai > div { margin: 10px 0; }
+
 .analysis {
   display: flex;
   flex-direction: column;
@@ -723,7 +828,7 @@ function rate(v: number): string {
 }
 .rc-strength {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .rule-note {
   font-size: var(--text-xs);
@@ -891,7 +996,6 @@ html[data-style="classic"] .interactive-agent { gap: 8px; margin: 10px 0; paddin
 .team-discussion .team-progress { max-height: 420px; line-height: 1.75; }
 .interactive-task small { width: 100%; overflow-wrap: anywhere; color: var(--color-text-tertiary); }
 .agent-actions { display: flex; align-items: center; gap: var(--space-2); }
-html[data-style="trading"] .agent-actions,
 html[data-style="modern"] .agent-actions { flex-wrap: wrap; }
 @media (max-width: 620px) {
   .score-num { font-size: 36px; }
@@ -911,7 +1015,7 @@ html[data-style="modern"] .agent-actions { flex-wrap: wrap; }
 .agent-evidence span { display: flex; flex-direction: column; padding: 6px; border-radius: var(--radius-xs); background: var(--color-bg-2); }
 .agent-evidence small { color: var(--color-text-tertiary); }
 .agent-team{display:flex;flex-direction:column;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--color-border-0);font-size:var(--text-xs)}.agent-team p{margin:0}.agent-role{display:grid;grid-template-columns:90px 1fr;gap:4px 8px;padding:6px;background:var(--color-bg-2);border-radius:var(--radius-xs)}.agent-role small{grid-column:2;color:var(--color-text-tertiary)}.agent-role.failed{opacity:.65}
-.research-card{display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid var(--color-border-0);border-radius:var(--radius-sm);background:var(--color-bg-card)}.research-meta{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:var(--text-xs)}.research-row{display:grid;grid-template-columns:120px 1fr;gap:3px 8px;padding:6px;background:var(--color-bg-2);border-radius:var(--radius-xs);font-size:var(--text-xs)}.research-row small{grid-column:2;color:var(--color-text-tertiary)}.research-note{font-size:var(--text-xs);color:var(--color-warning);line-height:1.5}
+.research-card,.stock-statistics-card{display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid var(--color-border-0);border-radius:var(--radius-sm);background:var(--color-bg-card)}.statistics-description{font-size:var(--text-xs);color:var(--color-text-secondary);line-height:1.7;margin:6px 0 10px;overflow-wrap:anywhere}.stock-statistics-card .research-row{grid-template-columns:minmax(0,120px) minmax(0,1fr)}.research-meta{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:var(--text-xs)}.research-row{display:grid;grid-template-columns:120px 1fr;gap:3px 8px;padding:6px;background:var(--color-bg-2);border-radius:var(--radius-xs);font-size:var(--text-xs)}.research-row small{grid-column:2;color:var(--color-text-tertiary)}.research-note{font-size:var(--text-xs);color:var(--color-warning);line-height:1.5}
 .bt-trust-grid { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: var(--text-xs); color: var(--color-text-secondary); }
 .bt-details { font-size: var(--text-xs); color: var(--color-text-secondary); }
 .bt-details summary { cursor: pointer; color: var(--color-text-primary); }

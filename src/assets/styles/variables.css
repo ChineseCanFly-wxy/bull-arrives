@@ -27,8 +27,8 @@
 
   /* ── Text Palette ── */
   --color-text-primary: #e6edf3;   /* Headings, primary content */
-  --color-text-secondary: #8b949e; /* Secondary text, labels */
-  --color-text-tertiary: #6e7681;  /* Muted text, placeholders */
+  --color-text-secondary: #a7b1bc; /* Secondary text, labels */
+  --color-text-tertiary: #959fab;  /* Muted text, placeholders */
 
   /* ── Semantic: P&L (A-share: red=up, green=down) ── */
   --color-up: #f85149;
@@ -57,10 +57,10 @@
     "Microsoft YaHei", "Helvetica Neue", sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", "Menlo", monospace;
 
-  --text-xs: 0.6875rem;
-  --text-sm: 0.75rem;
-  --text-base: 0.8125rem;
-  --text-md: 0.875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-md: 0.9375rem;
   --text-lg: 1rem;
   --text-xl: 1.25rem;
 
@@ -130,8 +130,8 @@
   --color-border-1: #c0c7cf;
 
   --color-text-primary: #1f2328;
-  --color-text-secondary: #656d76;
-  --color-text-tertiary: #8b949e;
+  --color-text-secondary: #505963;
+  --color-text-tertiary: #5c6670;
 
   --color-up: #d1242f;
   --color-up-bg: rgba(209, 36, 47, 0.08);
@@ -159,44 +159,7 @@
 }
 
 /* Classic preserves the original palette and density. Brightness remains
-   independent from the two new visual styles. */
-[data-style="trading"] {
-  --color-surface-0: #0b1420;
-  --color-surface-1: #111f2d;
-  --color-surface-2: #1b2e40;
-  --color-surface-3: #283b4c;
-  --color-border-0: #254051;
-  --color-border-1: #345469;
-  --color-text-primary: #f1f6fa;
-  --color-text-secondary: #a8c3d1;
-  --color-text-tertiary: #85a2b4;
-  --color-accent: #6dd2e0;
-  --color-accent-dim: rgba(109, 210, 224, 0.13);
-  --color-accent-contrast: #0b1420;
-  --color-focus-ring: #a6eff3;
-  --color-surface-hover: #243b4c;
-  --header-height: 46px;
-  --control-height: 30px;
-  --table-row-height: 38px;
-}
-
-[data-theme="light"][data-style="trading"] {
-  --color-surface-0: #f1f5f7;
-  --color-surface-1: #ffffff;
-  --color-surface-2: #e4edf2;
-  --color-surface-3: #d7e5eb;
-  --color-border-0: #c9d9df;
-  --color-border-1: #a8c1ca;
-  --color-text-primary: #162c36;
-  --color-text-secondary: #435e6c;
-  --color-text-tertiary: #5e7582;
-  --color-accent: #086f80;
-  --color-accent-dim: rgba(8, 111, 128, 0.11);
-  --color-accent-contrast: #ffffff;
-  --color-focus-ring: #086f80;
-  --color-surface-hover: #dcecf0;
-}
-
+   independent from the modern visual style. */
 [data-style="modern"] {
   --space-3: 14px;
   --space-4: 20px;
@@ -220,8 +183,8 @@
   --color-border-0: #314159;
   --color-border-1: #475a72;
   --color-text-primary: #f0f5fc;
-  --color-text-secondary: #b5c6da;
-  --color-text-tertiary: #91a5bf;
+  --color-text-secondary: #c0cede;
+  --color-text-tertiary: #a5b6ca;
   --color-accent: #81bcff;
   --color-accent-dim: rgba(129, 188, 255, 0.16);
   --color-focus-ring: #acd4ff;
@@ -238,8 +201,8 @@
   --color-border-0: #d8e1ed;
   --color-border-1: #bdccde;
   --color-text-primary: #152337;
-  --color-text-secondary: #455b74;
-  --color-text-tertiary: #62758d;
+  --color-text-secondary: #3f546d;
+  --color-text-tertiary: #53657d;
   --color-accent: #1659b7;
   --color-accent-dim: rgba(22, 89, 183, 0.10);
   --color-focus-ring: #1659b7;
@@ -254,8 +217,6 @@
    ================================================================ */
 html {
   font-size: 16px;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
@@ -270,15 +231,18 @@ body {
   padding: 0;
 }
 
-:is([data-style="trading"], [data-style="modern"]) :where(button, [role="button"], [role="tab"], input, select, textarea):focus-visible {
+small { font-size: var(--text-xs); }
+:where(button, input, select, textarea) { font-family: var(--font-sans); }
+
+[data-style="modern"] :where(button, [role="button"], [role="tab"], input, select, textarea):focus-visible {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :is([data-style="trading"], [data-style="modern"]) *,
-  :is([data-style="trading"], [data-style="modern"]) *::before,
-  :is([data-style="trading"], [data-style="modern"]) *::after {
+  [data-style="modern"] *,
+  [data-style="modern"] *::before,
+  [data-style="modern"] *::after {
     animation-duration: 0.01ms !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
@@ -289,4 +253,158 @@ body {
 .tabular-nums {
   font-feature-settings: "tnum";
   font-variant-numeric: tabular-nums;
+}
+
+/* Chinese financial desk: modern layout, independent type and surface system. */
+html[data-style="modern"][data-appearance="elegant"] {
+  --font-sans: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-numeric: Arial, "Helvetica Neue", var(--font-sans);
+  --font-mono: var(--font-numeric);
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.375rem;
+  --line-height-body: 1.7;
+  --line-height-heading: 1.45;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --header-height: 62px;
+  --index-bar-height: 112px;
+  --control-height: 36px;
+  --table-row-height: 44px;
+  --workspace-gutter: 24px;
+  --panel-padding: 24px;
+  --space-3: 12px;
+  --space-4: 24px;
+  --color-surface-0: #151d1c;
+  --color-surface-1: #1e2927;
+  --color-surface-2: #25332f;
+  --color-surface-3: #30413b;
+  --color-border-0: #364740;
+  --color-border-1: #50665d;
+  --color-text-primary: #e8eeea;
+  --color-text-secondary: #bed0c6;
+  --color-text-tertiary: #a9beb1;
+  --color-accent: #83c6ba;
+  --color-accent-dim: rgba(131, 198, 186, 0.10);
+  --color-accent-contrast: #122c27;
+  --color-focus-ring: #a5dacf;
+  --color-surface-hover: #2c3c36;
+  --color-up: #ff9195;
+  --color-up-bg: rgba(255, 145, 149, 0.08);
+  --color-down: #75cb99;
+  --color-down-bg: rgba(117, 203, 153, 0.08);
+  --color-error: #ff9195;
+  --color-error-bg: rgba(255, 145, 149, 0.08);
+  --color-warning: #e2bc78;
+  --color-warning-bg: rgba(226, 188, 120, 0.08);
+  --color-warning-border: rgba(226, 188, 120, 0.24);
+  --color-bg-elevated: rgba(178, 194, 185, 0.06);
+  --color-bg-card: var(--color-surface-1);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.12);
+  --shadow-md: 0 16px 48px rgba(0, 0, 0, 0.28);
+}
+
+html[data-theme="light"][data-style="modern"][data-appearance="elegant"] {
+  --color-surface-0: #f4f3ef;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #eeefea;
+  --color-surface-3: #e6eae3;
+  --color-border-0: #dce2db;
+  --color-border-1: #bbc9c0;
+  --color-text-primary: #263b34;
+  --color-text-secondary: #4c6257;
+  --color-text-tertiary: #566b5f;
+  --color-accent: #246c62;
+  --color-accent-dim: rgba(36, 108, 98, 0.07);
+  --color-accent-contrast: #ffffff;
+  --color-focus-ring: #17564e;
+  --color-surface-hover: #edf3ed;
+  --color-up: #b93840;
+  --color-up-bg: rgba(185, 56, 64, 0.06);
+  --color-down: #237747;
+  --color-down-bg: rgba(35, 119, 71, 0.06);
+  --color-error: #b93840;
+  --color-error-bg: rgba(185, 56, 64, 0.06);
+  --color-warning: #865f22;
+  --color-warning-bg: rgba(134, 95, 34, 0.06);
+  --color-warning-border: rgba(134, 95, 34, 0.20);
+  --color-bg-elevated: rgba(38, 59, 52, 0.035);
+  --shadow-sm: 0 1px 2px rgba(38, 59, 52, 0.035);
+  --shadow-md: 0 16px 48px rgba(38, 59, 52, 0.13);
+}
+
+html[data-style="modern"][data-appearance="elegant"] body { line-height: var(--line-height-body); }
+html[data-style="modern"][data-appearance="elegant"] :is(button, input, select, textarea) { font-family: var(--font-sans); }
+html[data-style="modern"][data-appearance="elegant"] :is(.tabular-nums, .code-text, .price-col, .pct-col, .quant-score, .quick-code, .ticker-price, .ticker-change) {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0;
+}
+
+html[data-style="modern"][data-appearance="elegant"] .index-section .tabular-nums { font-variant-numeric: tabular-nums lining-nums; }
+
+/* Keep headings and data distinct; leave compact tooltips and chart labels alone. */
+html[data-style="modern"][data-appearance="elegant"] .watchlist-header { padding-block: 20px 14px; }
+html[data-style="modern"][data-appearance="elegant"] .section-title { font-size: 17px; font-weight: 600; line-height: var(--line-height-heading); }
+html[data-style="modern"][data-appearance="elegant"] .section-kicker { font: 500 12px var(--font-numeric); letter-spacing: .06em; }
+html[data-style="modern"][data-appearance="elegant"] .watchlist-container .watchlist-table .n-data-table-th {
+  background: var(--color-surface-2); color: var(--color-text-secondary); font-size: 13px; font-weight: 500;
+}
+html[data-style="modern"][data-appearance="elegant"] .n-data-table-td { font-size: 14px; line-height: 1.6; }
+html[data-style="modern"][data-appearance="elegant"] .n-data-table-tr { height: var(--table-row-height); }
+html[data-style="modern"][data-appearance="elegant"] :is(.research-modal, .dialog, .mainline-research) table { font-size: 14px; line-height: 1.6; }
+html[data-style="modern"][data-appearance="elegant"] :is(.research-modal, .dialog, .mainline-research) :is(th, td) {
+  height: var(--table-row-height); padding: 10px 16px; border-bottom-color: var(--color-border-0); font-variant-numeric: tabular-nums;
+}
+html[data-style="modern"][data-appearance="elegant"] :is(.research-modal, .dialog, .mainline-research) th { font-size: 13px; font-weight: 500; color: var(--color-text-secondary); background: var(--color-surface-2); }
+
+html[data-style="modern"][data-appearance="elegant"] .research-navigation { padding: 8px 28px 0; }
+html[data-style="modern"][data-appearance="elegant"] .research-scroll { padding: 24px 28px; }
+html[data-style="modern"][data-appearance="elegant"] .research-title h2 { font-size: 20px; line-height: var(--line-height-heading); }
+html[data-style="modern"][data-appearance="elegant"] .research-title p { font-size: 13px; line-height: 1.7; }
+html[data-style="modern"][data-appearance="elegant"] .discovery-candidates > button { padding: 20px; border-radius: var(--radius-md); background: var(--color-surface-1); }
+html[data-style="modern"][data-appearance="elegant"] .candidate-heading { font-size: 15px; }
+html[data-style="modern"][data-appearance="elegant"] .candidate-strength { font-family: var(--font-numeric); font-variant-numeric: tabular-nums; }
+
+/* Naive UI teleports dialogs to body; these selectors also cover those surfaces. */
+html[data-style="modern"][data-appearance="elegant"] :is(.n-modal.n-card, .n-modal.n-dialog) {
+  font-family: var(--font-sans); line-height: var(--line-height-body); background: var(--color-surface-1); border-radius: var(--radius-lg);
+}
+html[data-style="modern"][data-appearance="elegant"] .n-modal.n-card > .n-card-header { padding: 22px 28px 18px; border-bottom: 1px solid var(--color-border-0); }
+html[data-style="modern"][data-appearance="elegant"] .n-card-header__main { font-size: 20px; font-weight: 600; line-height: var(--line-height-heading); }
+html[data-style="modern"][data-appearance="elegant"] .n-modal.n-card > .n-card__content { padding: 24px 28px; }
+html[data-style="modern"][data-appearance="elegant"] .n-modal.n-card > .n-card__footer { padding: 16px 28px; }
+html[data-style="modern"][data-appearance="elegant"] .n-dialog__title { font-size: 20px; line-height: var(--line-height-heading); }
+html[data-style="modern"][data-appearance="elegant"] :is(.research-modal, .mainline-research) { font-size: 14px; line-height: var(--line-height-body); }
+html[data-style="modern"][data-appearance="elegant"] :is(.research-modal, .mainline-research, .dialog) h3 { font-size: 18px; line-height: var(--line-height-heading); font-weight: 600; }
+html[data-style="modern"][data-appearance="elegant"] :is(.research-modal, .mainline-research, .dialog) h4 { font-size: 15px; line-height: 1.6; font-weight: 600; }
+html[data-style="modern"][data-appearance="elegant"] .research-modal :is(.mode-card, .detail, .flow-cards > div, .wizard-result, .observation-help),
+html[data-style="modern"][data-appearance="elegant"] :is(.mainline-leader, .mainline-news, .mainline-summary, .simulation-account-cards button) {
+  padding: 20px; border-radius: var(--radius-md); border-color: var(--color-border-0); background: var(--color-surface-1); box-shadow: none;
+}
+html[data-style="modern"][data-appearance="elegant"] .research-modal .mode-card.selected,
+html[data-style="modern"][data-appearance="elegant"] .simulation-account-cards button.selected { border-color: var(--color-accent); background: var(--color-accent-dim); }
+html[data-style="modern"][data-appearance="elegant"] .research-modal :is(.reading, .mode-card p, .hypothesis, .wizard-update p) { font-size: 14px; line-height: var(--line-height-body); }
+html[data-style="modern"][data-appearance="elegant"] .research-modal :is(.mode-card small, .health, .metrics small, .config-grid label, .note),
+html[data-style="modern"][data-appearance="elegant"] :is(.mainline-meta, .mainline-metrics span, .simulation-account-cards small) { font-size: 12px; line-height: 1.7; }
+html[data-style="modern"][data-appearance="elegant"] .research-modal :is(button, input:not([type="checkbox"]), select) { font-size: 14px; border-radius: var(--radius-sm); }
+html[data-style="modern"][data-appearance="elegant"] :is(.research-modal, .dialog) .metrics { gap: 16px; margin-block: 20px; }
+html[data-style="modern"][data-appearance="elegant"] :is(.research-modal, .dialog) .metrics > div,
+html[data-style="modern"][data-appearance="elegant"] .mainline-metrics > div { padding: 16px 18px; border: 1px solid var(--color-border-0); border-radius: var(--radius-sm); background: var(--color-surface-1); gap: 8px; }
+html[data-style="modern"][data-appearance="elegant"] :is(.research-modal, .dialog) .metrics b,
+html[data-style="modern"][data-appearance="elegant"] .mainline-metrics b { font-family: var(--font-numeric); font-size: 22px; line-height: 1.3; font-weight: 500; font-variant-numeric: tabular-nums; }
+html[data-style="modern"][data-appearance="elegant"] .dialog .model-overview.metrics > div:last-child b { font-family: var(--font-sans); font-size: 16px; }
+html[data-style="modern"][data-appearance="elegant"] .research-modal .toolbar,
+html[data-style="modern"][data-appearance="elegant"] .mainline-navigation { padding-block: 14px; border-bottom: 1px solid var(--color-border-0); background: transparent; border-radius: 0; }
+html[data-style="modern"][data-appearance="elegant"] :is(.mainline-observation, .mainline-model) { background: var(--color-bg-elevated); padding: 14px 18px; }
+
+@media (max-width: 680px) {
+  html[data-style="modern"][data-appearance="elegant"] { --workspace-gutter: 14px; --panel-padding: 16px; }
+  html[data-style="modern"][data-appearance="elegant"] .n-modal.n-card > :is(.n-card-header, .n-card__content, .n-card__footer) { padding-inline: 16px; }
+  html[data-style="modern"][data-appearance="elegant"] :is(.research-navigation, .research-scroll) { padding-inline: 16px; }
+  html[data-style="modern"][data-appearance="elegant"] :is(.research-modal, .dialog) .metrics { gap: 10px; }
 }

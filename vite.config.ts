@@ -24,6 +24,7 @@ export default defineConfig(async () => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
+  cacheDir: fileURLToPath(new URL("./src-tauri/target/vite-cache", import.meta.url)),
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 3000,
@@ -43,6 +44,7 @@ export default defineConfig(async () => ({
   },
 
   build: {
+    outDir: fileURLToPath(new URL("./src-tauri/target/frontend", import.meta.url)),
     rollupOptions: {
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),

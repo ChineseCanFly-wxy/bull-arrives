@@ -1,0 +1,1821 @@
+{
+  "schema": "model-follow-allocation-evidence-v1",
+  "policy_version": "per-model-caps2-3-5-v2",
+  "status": "completed",
+  "start": "2020-01-02",
+  "end": "2026-09-30",
+  "early_period": "2020–2021",
+  "later_period": "2022–2026年9月30日",
+  "ledger_count": 200,
+  "annual_slice_count": 1400,
+  "source_sha_unchanged": true,
+  "adapter_sha256": "049b5319df078ca4d434961605bd8c20526d65fd92cece800f934f08f8897dbd",
+  "default_selector_sha256": "489ce76afeacbe7bae2e34296442d720e5672c6dca9bcf8772328fa7ca1d14f2",
+  "summary_sha256": "24f74e08d3e55450b2c6baaef6df7abd10de651fda66c8782338b5a628b3b3da",
+  "default_report_sha256": "2c358f1d49e8bd5e5c22ee229c84b825ea7fa4fc633c073df37f75caf875bce9",
+  "decision": "各模型独立选择默认数量和预算。仅排序模型5只/50%预算通过新增仓位复验，其他模型保留原8%入场规则；弱压力结果如实标记为原基准研究。",
+  "selection_note": "先按较早年份的净收益减2倍回撤选择，再检查后段收益、回撤、年度一致性及成本/延迟。已观察历史，不是全新样本。",
+  "default_selection_note": "Two plans fixed using earlier 2020-2021 only: baseline cap from fixed8 cap2/3/5; enhanced joint cap/allocation from each cap earlier winner. Adopt enhanced only if its declared later/stress admission passes; otherwise use earlier baseline plan. If baseline lacks later positive return/50 cycles/positive stress, keep previously configured cap3 baseline for research. Later results never choose among alternative caps.",
+  "models": {
+    "breadth22_h20": {
+      "caps": {
+        "2": {
+          "selected_policy_id": "fixed8",
+          "selected": "原8%目标（预算含费）",
+          "admitted": false,
+          "reasons": [
+            "较早年份的风险收益对照保留原8%基准",
+            "后段净收益未超过同成本原基准",
+            "后段年度一致性不足",
+            "双倍成本后未保持正收益与基准优势",
+            "延迟一日后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份保留原20日/3ATR退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 16,
+              "net_return_pct": 26.84222759999999,
+              "max_drawdown_pct": 6.1667492045231365,
+              "average_invested_pct": 14.861977596758567
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 68.88806810000001,
+              "max_drawdown_pct": 16.919059780363497,
+              "average_invested_pct": 33.26690311077153
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 40,
+              "net_return_pct": 97.6040352,
+              "max_drawdown_pct": 19.347159216348274,
+              "average_invested_pct": 38.13511576002632
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 40,
+              "net_return_pct": 97.6040352,
+              "max_drawdown_pct": 19.347159216348274,
+              "average_invested_pct": 38.13511576002632
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 93.13439960000001,
+              "max_drawdown_pct": 17.086656184668914,
+              "average_invested_pct": 33.363998010343835
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": 12.237021700000007,
+              "max_drawdown_pct": 11.32778410193791,
+              "average_invested_pct": 14.238125350969417
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 40,
+              "net_return_pct": 97.6040352,
+              "max_drawdown_pct": 19.347159216348274,
+              "average_invested_pct": 38.13511576002632
+            }
+          ]
+        },
+        "3": {
+          "selected_policy_id": "fixed8",
+          "selected": "原8%目标（预算含费）",
+          "admitted": false,
+          "reasons": [
+            "较早年份的风险收益对照保留原8%基准",
+            "后段净收益未超过同成本原基准",
+            "后段年度一致性不足",
+            "双倍成本后未保持正收益与基准优势",
+            "延迟一日后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份保留原20日/3ATR退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 24,
+              "net_return_pct": 34.074329000000006,
+              "max_drawdown_pct": 10.22624369301921,
+              "average_invested_pct": 22.174177968251946
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 53.702867600000005,
+              "max_drawdown_pct": 16.416228665568866,
+              "average_invested_pct": 32.28526669658055
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 50,
+              "net_return_pct": 93.19017310000002,
+              "max_drawdown_pct": 23.390065450671372,
+              "average_invested_pct": 47.00838372281706
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 60,
+              "net_return_pct": 109.28756059999998,
+              "max_drawdown_pct": 31.18343363565198,
+              "average_invested_pct": 56.641141944290226
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 62.814875699999995,
+              "max_drawdown_pct": 16.297971362154406,
+              "average_invested_pct": 33.178349835597494
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": 10.591567400000002,
+              "max_drawdown_pct": 13.73407419285474,
+              "average_invested_pct": 17.032656269017224
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 60,
+              "net_return_pct": 109.28756059999998,
+              "max_drawdown_pct": 31.18343363565198,
+              "average_invested_pct": 56.641141944290226
+            }
+          ]
+        },
+        "5": {
+          "selected_policy_id": "rank35",
+          "selected": "总预算35%按同模型排序",
+          "admitted": false,
+          "reasons": [
+            "双倍成本后未保持正收益与基准优势",
+            "延迟一日后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份保留原20日/3ATR退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 40,
+              "net_return_pct": 38.3860222,
+              "max_drawdown_pct": 13.101112892902611,
+              "average_invested_pct": 26.073214803715125
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 29.724136199999982,
+              "max_drawdown_pct": 13.314082066664323,
+              "average_invested_pct": 22.169712057710946
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 50,
+              "net_return_pct": 47.97829360000001,
+              "max_drawdown_pct": 16.7415856982445,
+              "average_invested_pct": 33.01640861867063
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 60,
+              "net_return_pct": 48.4702825,
+              "max_drawdown_pct": 19.498811956238637,
+              "average_invested_pct": 39.75968201253954
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 50.23784280000001,
+              "max_drawdown_pct": 13.699924018385346,
+              "average_invested_pct": 26.58679280589051
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": 5.1518769000000075,
+              "max_drawdown_pct": 10.92911325501037,
+              "average_invested_pct": 18.312887704607743
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 80,
+              "net_return_pct": 77.424329,
+              "max_drawdown_pct": 24.9773672026535,
+              "average_invested_pct": 52.99187180317682
+            }
+          ]
+        }
+      },
+      "recommendation": {
+        "name": "广度绝对收益22",
+        "default_max_positions": 2,
+        "allocation_policy": "baseline8",
+        "position_pct": 8,
+        "total_entry_pct": 16,
+        "earlier_baseline_selected": {
+          "cap": 2,
+          "policy": "fixed8",
+          "early_score": -7.126774007882509,
+          "later_net_return_pct": 22.712654237926078,
+          "later_cycles": 125,
+          "stress_later_net_return_pct": {
+            "double_cost": 20.046173244784615,
+            "one_session_delay": 4.28851873107734
+          }
+        },
+        "earlier_enhanced_selected": {
+          "cap": 2,
+          "policy": "fixed8",
+          "early_score": -7.126774007882509,
+          "later_net_return_pct": 22.712654237926078,
+          "later_cycles": 125,
+          "stress_later_net_return_pct": {
+            "double_cost": 20.046173244784615,
+            "one_session_delay": 4.28851873107734
+          }
+        },
+        "enhanced_adopted": false,
+        "default_passed_pressure": true,
+        "baseline_candidates": [
+          {
+            "cap": 2,
+            "policy": "fixed8",
+            "early_score": -7.126774007882509,
+            "later_net_return_pct": 22.712654237926078,
+            "later_cycles": 125,
+            "stress_later_net_return_pct": {
+              "double_cost": 20.046173244784615,
+              "one_session_delay": 4.28851873107734
+            }
+          },
+          {
+            "cap": 3,
+            "policy": "fixed8",
+            "early_score": -8.281563197287989,
+            "later_net_return_pct": 21.77613231193447,
+            "later_cycles": 186,
+            "stress_later_net_return_pct": {
+              "double_cost": 17.745199956938663,
+              "one_session_delay": 3.8727049953815262
+            }
+          },
+          {
+            "cap": 5,
+            "policy": "fixed8",
+            "early_score": -18.663556773582755,
+            "later_net_return_pct": 28.93277072842533,
+            "later_cycles": 186,
+            "stress_later_net_return_pct": {
+              "double_cost": 20.8552248314658,
+              "one_session_delay": 1.4291217096938258
+            }
+          }
+        ],
+        "enhanced_candidates": [
+          {
+            "cap": 2,
+            "policy": "fixed8",
+            "early_score": -7.126774007882509,
+            "later_net_return_pct": 22.712654237926078,
+            "later_cycles": 125,
+            "stress_later_net_return_pct": {
+              "double_cost": 20.046173244784615,
+              "one_session_delay": 4.28851873107734
+            }
+          },
+          {
+            "cap": 3,
+            "policy": "fixed8",
+            "early_score": -8.281563197287989,
+            "later_net_return_pct": 21.77613231193447,
+            "later_cycles": 186,
+            "stress_later_net_return_pct": {
+              "double_cost": 17.745199956938663,
+              "one_session_delay": 3.8727049953815262
+            }
+          },
+          {
+            "cap": 5,
+            "policy": "rank35",
+            "early_score": -16.093534738581038,
+            "later_net_return_pct": 38.3409163304224,
+            "later_cycles": 186,
+            "stress_later_net_return_pct": {
+              "double_cost": 19.94359606112259,
+              "one_session_delay": -1.259000232330254
+            }
+          }
+        ],
+        "characteristics": "绝对收益与市场广度；低数量组合在早段风险收益对照中较稳。",
+        "reason": "较早年份独立选型通过后段与压力检查；仅作为该模型模拟默认。",
+        "execution": {
+          "holding_sessions": 20,
+          "entry_atr_multiple": 3,
+          "max_gap_pct": 4,
+          "exit_adaptation_admitted": false
+        }
+      },
+      "slot_comparison": [
+        {
+          "max_positions": 2,
+          "net_return_pct": 26.84222759999999,
+          "max_drawdown_pct": 6.1667492045231365,
+          "completed_cycles": 176,
+          "buy_orders": 178,
+          "sell_orders": 176,
+          "average_invested_pct": 14.861977596758567
+        },
+        {
+          "max_positions": 3,
+          "net_return_pct": 34.074329000000006,
+          "max_drawdown_pct": 10.22624369301921,
+          "completed_cycles": 263,
+          "buy_orders": 266,
+          "sell_orders": 263,
+          "average_invested_pct": 22.174177968251946
+        },
+        {
+          "max_positions": 5,
+          "net_return_pct": 38.3860222,
+          "max_drawdown_pct": 13.101112892902611,
+          "completed_cycles": 284,
+          "buy_orders": 289,
+          "sell_orders": 286,
+          "average_invested_pct": 26.073214803715125
+        },
+        {
+          "max_positions": 10,
+          "net_return_pct": 78.7224999,
+          "max_drawdown_pct": 26.424590145618865,
+          "completed_cycles": 678,
+          "buy_orders": 688,
+          "sell_orders": 682,
+          "average_invested_pct": 58.726314005331844
+        }
+      ]
+    },
+    "index26_h20": {
+      "caps": {
+        "2": {
+          "selected_policy_id": "fixed8",
+          "selected": "原8%目标（预算含费）",
+          "admitted": false,
+          "reasons": [
+            "较早年份的风险收益对照保留原8%基准",
+            "后段净收益未超过同成本原基准",
+            "后段年度一致性不足",
+            "双倍成本后未保持正收益与基准优势",
+            "延迟一日后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份保留原20日/3ATR退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 16,
+              "net_return_pct": 6.760007500000009,
+              "max_drawdown_pct": 15.16639486202427,
+              "average_invested_pct": 14.253384340440391
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 7.703266900000005,
+              "max_drawdown_pct": 34.14727859674384,
+              "average_invested_pct": 32.67932269313761
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 40,
+              "net_return_pct": 20.692338799999987,
+              "max_drawdown_pct": 31.127825601980884,
+              "average_invested_pct": 37.17386321518804
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 40,
+              "net_return_pct": 20.692338799999987,
+              "max_drawdown_pct": 31.127825601980884,
+              "average_invested_pct": 37.17386321518804
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 9.535319799999996,
+              "max_drawdown_pct": 33.276896942405784,
+              "average_invested_pct": 32.28465219757524
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": -1.1419161000000067,
+              "max_drawdown_pct": 21.390071222904982,
+              "average_invested_pct": 19.437514254304208
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 40,
+              "net_return_pct": 20.692338799999987,
+              "max_drawdown_pct": 31.127825601980884,
+              "average_invested_pct": 37.17386321518804
+            }
+          ]
+        },
+        "3": {
+          "selected_policy_id": "equal50",
+          "selected": "总预算50%均配",
+          "admitted": false,
+          "reasons": [
+            "后段回撤超过预设容忍范围",
+            "双倍成本后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份保留原20日/3ATR退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 24,
+              "net_return_pct": 17.59124030000001,
+              "max_drawdown_pct": 17.153848735274124,
+              "average_invested_pct": 16.970391865342087
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 24.55963589999999,
+              "max_drawdown_pct": 22.20794133576841,
+              "average_invested_pct": 25.22745044231355
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 50,
+              "net_return_pct": 46.72955669999999,
+              "max_drawdown_pct": 28.941593682942944,
+              "average_invested_pct": 36.54937154020253
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 60,
+              "net_return_pct": 54.344433300000006,
+              "max_drawdown_pct": 35.23209187158746,
+              "average_invested_pct": 44.67318152885569
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 27.132701300000008,
+              "max_drawdown_pct": 27.25654554588165,
+              "average_invested_pct": 27.70164779697731
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": 3.5692454999999956,
+              "max_drawdown_pct": 18.107604269185305,
+              "average_invested_pct": 15.805562239030067
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 60,
+              "net_return_pct": 54.344433300000006,
+              "max_drawdown_pct": 35.23209187158746,
+              "average_invested_pct": 44.67318152885569
+            }
+          ]
+        },
+        "5": {
+          "selected_policy_id": "equal80",
+          "selected": "总预算80%均配（受20%单票上限）",
+          "admitted": false,
+          "reasons": [
+            "后段年度一致性不足",
+            "双倍成本后未保持正收益与基准优势",
+            "延迟一日后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份选择的退出调整未通过后续复验，保留本模型原退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 40,
+              "net_return_pct": 8.753837200000003,
+              "max_drawdown_pct": 32.309154489142436,
+              "average_invested_pct": 30.750578688332418
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": -2.6637501999999924,
+              "max_drawdown_pct": 31.20546556602334,
+              "average_invested_pct": 26.25600576395983
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 50,
+              "net_return_pct": 2.3736573999999955,
+              "max_drawdown_pct": 43.95778798618214,
+              "average_invested_pct": 39.16488748169128
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 60,
+              "net_return_pct": 2.86341160000001,
+              "max_drawdown_pct": 50.87357084547604,
+              "average_invested_pct": 47.49335071730867
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 3.081993500000002,
+              "max_drawdown_pct": 31.89985814973064,
+              "average_invested_pct": 29.547699903203153
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": -2.296972500000005,
+              "max_drawdown_pct": 21.231012159976704,
+              "average_invested_pct": 16.723621324126906
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 80,
+              "net_return_pct": 42.017954300000014,
+              "max_drawdown_pct": 39.880606478865964,
+              "average_invested_pct": 63.79982949344056
+            }
+          ]
+        }
+      },
+      "recommendation": {
+        "name": "指数绝对收益26",
+        "default_max_positions": 3,
+        "allocation_policy": "baseline8",
+        "position_pct": 8,
+        "total_entry_pct": 24,
+        "earlier_baseline_selected": {
+          "cap": 3,
+          "policy": "fixed8",
+          "early_score": 1.1733129512858866,
+          "later_net_return_pct": 2.9857019711749366,
+          "later_cycles": 122,
+          "stress_later_net_return_pct": {
+            "double_cost": 0.451741349829482,
+            "one_session_delay": -0.07022737274058333
+          }
+        },
+        "earlier_enhanced_selected": {
+          "cap": 3,
+          "policy": "equal50",
+          "early_score": 11.405382640445662,
+          "later_net_return_pct": 6.131515288690936,
+          "later_cycles": 124,
+          "stress_later_net_return_pct": {
+            "double_cost": -4.725585510174701,
+            "one_session_delay": 10.372066200722752
+          }
+        },
+        "enhanced_adopted": false,
+        "default_passed_pressure": false,
+        "baseline_candidates": [
+          {
+            "cap": 2,
+            "policy": "fixed8",
+            "early_score": -9.454149780835074,
+            "later_net_return_pct": 3.5501468956596893,
+            "later_cycles": 122,
+            "stress_later_net_return_pct": {
+              "double_cost": -3.163004765683297,
+              "one_session_delay": 0.4200587143478929
+            }
+          },
+          {
+            "cap": 3,
+            "policy": "fixed8",
+            "early_score": 1.1733129512858866,
+            "later_net_return_pct": 2.9857019711749366,
+            "later_cycles": 122,
+            "stress_later_net_return_pct": {
+              "double_cost": 0.451741349829482,
+              "one_session_delay": -0.07022737274058333
+            }
+          },
+          {
+            "cap": 5,
+            "policy": "fixed8",
+            "early_score": -10.435273677895653,
+            "later_net_return_pct": -4.590270010913877,
+            "later_cycles": 244,
+            "stress_later_net_return_pct": {
+              "double_cost": -10.88879266351107,
+              "one_session_delay": -2.5741657459164125
+            }
+          }
+        ],
+        "enhanced_candidates": [
+          {
+            "cap": 2,
+            "policy": "fixed8",
+            "early_score": -9.454149780835074,
+            "later_net_return_pct": 3.5501468956596893,
+            "later_cycles": 122,
+            "stress_later_net_return_pct": {
+              "double_cost": -3.163004765683297,
+              "one_session_delay": 0.4200587143478929
+            }
+          },
+          {
+            "cap": 3,
+            "policy": "equal50",
+            "early_score": 11.405382640445662,
+            "later_net_return_pct": 6.131515288690936,
+            "later_cycles": 124,
+            "stress_later_net_return_pct": {
+              "double_cost": -4.725585510174701,
+              "one_session_delay": 10.372066200722752
+            }
+          },
+          {
+            "cap": 5,
+            "policy": "equal80",
+            "early_score": -3.5707201523945713,
+            "later_net_return_pct": 1.6307259858116874,
+            "later_cycles": 244,
+            "stress_later_net_return_pct": {
+              "double_cost": -28.023146636521513,
+              "one_session_delay": -9.782601529379342
+            }
+          }
+        ],
+        "characteristics": "受大盘条件影响；5只在本轮历史收益下降、回撤升高，压力检查也较弱。",
+        "reason": "较早年份选型未通过后段正收益/压力检查；保留既定3只原基准作研究，不事后改挑更好年份。",
+        "execution": {
+          "holding_sessions": 20,
+          "entry_atr_multiple": 3,
+          "max_gap_pct": 4,
+          "exit_adaptation_admitted": false
+        }
+      },
+      "slot_comparison": [
+        {
+          "max_positions": 2,
+          "net_return_pct": 6.760007500000009,
+          "max_drawdown_pct": 15.16639486202427,
+          "completed_cycles": 170,
+          "buy_orders": 172,
+          "sell_orders": 170,
+          "average_invested_pct": 14.253384340440391
+        },
+        {
+          "max_positions": 3,
+          "net_return_pct": 17.59124030000001,
+          "max_drawdown_pct": 17.153848735274124,
+          "completed_cycles": 188,
+          "buy_orders": 191,
+          "sell_orders": 189,
+          "average_invested_pct": 16.970391865342087
+        },
+        {
+          "max_positions": 5,
+          "net_return_pct": 8.753837200000003,
+          "max_drawdown_pct": 32.309154489142436,
+          "completed_cycles": 357,
+          "buy_orders": 362,
+          "sell_orders": 358,
+          "average_invested_pct": 30.750578688332418
+        },
+        {
+          "max_positions": 10,
+          "net_return_pct": 69.52187729999999,
+          "max_drawdown_pct": 38.40434288023857,
+          "completed_cycles": 679,
+          "buy_orders": 689,
+          "sell_orders": 682,
+          "average_invested_pct": 58.69823539551751
+        }
+      ]
+    },
+    "breadth22_excess_csi20": {
+      "caps": {
+        "2": {
+          "selected_policy_id": "fixed8",
+          "selected": "原8%目标（预算含费）",
+          "admitted": false,
+          "reasons": [
+            "较早年份的风险收益对照保留原8%基准",
+            "后段净收益未超过同成本原基准",
+            "后段年度一致性不足",
+            "双倍成本后未保持正收益与基准优势",
+            "延迟一日后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份选择的退出调整未通过后续复验，保留本模型原退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 16,
+              "net_return_pct": 14.742313499999993,
+              "max_drawdown_pct": 9.723458166204002,
+              "average_invested_pct": 14.5544243961039
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 58.2325623,
+              "max_drawdown_pct": 21.42848066454516,
+              "average_invested_pct": 33.091373896715986
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 40,
+              "net_return_pct": 62.08422630000001,
+              "max_drawdown_pct": 24.34194885119989,
+              "average_invested_pct": 37.96144333115854
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 40,
+              "net_return_pct": 62.08422630000001,
+              "max_drawdown_pct": 24.34194885119989,
+              "average_invested_pct": 37.96144333115854
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 47.109099199999996,
+              "max_drawdown_pct": 23.306136426949465,
+              "average_invested_pct": 33.119159555252914
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": 23.957403499999998,
+              "max_drawdown_pct": 15.798849234569644,
+              "average_invested_pct": 19.47400315936068
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 40,
+              "net_return_pct": 62.08422630000001,
+              "max_drawdown_pct": 24.34194885119989,
+              "average_invested_pct": 37.96144333115854
+            }
+          ]
+        },
+        "3": {
+          "selected_policy_id": "fixed8",
+          "selected": "原8%目标（预算含费）",
+          "admitted": false,
+          "reasons": [
+            "较早年份的风险收益对照保留原8%基准",
+            "后段净收益未超过同成本原基准",
+            "后段年度一致性不足",
+            "双倍成本后未保持正收益与基准优势",
+            "延迟一日后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份选择的退出调整未通过后续复验，保留本模型原退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 24,
+              "net_return_pct": 13.669906499999996,
+              "max_drawdown_pct": 16.425745112962197,
+              "average_invested_pct": 21.347391705315037
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 15.489456,
+              "max_drawdown_pct": 19.374039229049966,
+              "average_invested_pct": 31.97943944540748
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 50,
+              "net_return_pct": 32.342087500000005,
+              "max_drawdown_pct": 27.00201649233016,
+              "average_invested_pct": 46.19506286393425
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 60,
+              "net_return_pct": 37.287962900000004,
+              "max_drawdown_pct": 32.46848365160909,
+              "average_invested_pct": 56.11253493806398
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 22.06362070000001,
+              "max_drawdown_pct": 21.189905661116615,
+              "average_invested_pct": 32.82042528951533
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": -1.330981100000006,
+              "max_drawdown_pct": 16.27565459999999,
+              "average_invested_pct": 19.3786670918333
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 60,
+              "net_return_pct": 37.287962900000004,
+              "max_drawdown_pct": 32.46848365160909,
+              "average_invested_pct": 56.11253493806398
+            }
+          ]
+        },
+        "5": {
+          "selected_policy_id": "rank35",
+          "selected": "总预算35%按同模型排序",
+          "admitted": false,
+          "reasons": [
+            "后段净收益未超过同成本原基准",
+            "后段年度一致性不足",
+            "双倍成本后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份选择的退出调整未通过后续复验，保留本模型原退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 40,
+              "net_return_pct": 17.3259638,
+              "max_drawdown_pct": 23.387851428153116,
+              "average_invested_pct": 34.06642947627629
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 35.2432359,
+              "max_drawdown_pct": 19.545619070244324,
+              "average_invested_pct": 29.98227404329678
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 50,
+              "net_return_pct": 11.54075830000001,
+              "max_drawdown_pct": 35.98986610402852,
+              "average_invested_pct": 44.406757349956614
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 60,
+              "net_return_pct": 0.5426625000000129,
+              "max_drawdown_pct": 41.867904524632216,
+              "average_invested_pct": 52.63678008647032
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 16.326838099999996,
+              "max_drawdown_pct": 24.101645831993167,
+              "average_invested_pct": 31.326436173836065
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": 20.358402100000017,
+              "max_drawdown_pct": 14.37328,
+              "average_invested_pct": 18.95619581785708
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 80,
+              "net_return_pct": 7.515026499999999,
+              "max_drawdown_pct": 48.34640493268974,
+              "average_invested_pct": 70.71029342660391
+            }
+          ]
+        }
+      },
+      "recommendation": {
+        "name": "CSI超额收益22",
+        "default_max_positions": 3,
+        "allocation_policy": "baseline8",
+        "position_pct": 8,
+        "total_entry_pct": 24,
+        "earlier_baseline_selected": {
+          "cap": 2,
+          "policy": "fixed8",
+          "early_score": -0.23753262341042003,
+          "later_net_return_pct": 1.6840019122233096,
+          "later_cycles": 126,
+          "stress_later_net_return_pct": {
+            "double_cost": -0.4318046218627303,
+            "one_session_delay": 9.249540495051999
+          }
+        },
+        "earlier_enhanced_selected": {
+          "cap": 2,
+          "policy": "fixed8",
+          "early_score": -0.23753262341042003,
+          "later_net_return_pct": 1.6840019122233096,
+          "later_cycles": 126,
+          "stress_later_net_return_pct": {
+            "double_cost": -0.4318046218627303,
+            "one_session_delay": 9.249540495051999
+          }
+        },
+        "enhanced_adopted": false,
+        "default_passed_pressure": false,
+        "baseline_candidates": [
+          {
+            "cap": 2,
+            "policy": "fixed8",
+            "early_score": -0.23753262341042003,
+            "later_net_return_pct": 1.6840019122233096,
+            "later_cycles": 126,
+            "stress_later_net_return_pct": {
+              "double_cost": -0.4318046218627303,
+              "one_session_delay": 9.249540495051999
+            }
+          },
+          {
+            "cap": 3,
+            "policy": "fixed8",
+            "early_score": -12.172205229475107,
+            "later_net_return_pct": 4.756835996497832,
+            "later_cycles": 193,
+            "stress_later_net_return_pct": {
+              "double_cost": 3.391101352644821,
+              "one_session_delay": 11.80110432631276
+            }
+          },
+          {
+            "cap": 5,
+            "policy": "fixed8",
+            "early_score": -20.188987099999988,
+            "later_net_return_pct": 7.62168789775548,
+            "later_cycles": 302,
+            "stress_later_net_return_pct": {
+              "double_cost": 9.79571117236917,
+              "one_session_delay": 29.48840496399905
+            }
+          }
+        ],
+        "enhanced_candidates": [
+          {
+            "cap": 2,
+            "policy": "fixed8",
+            "early_score": -0.23753262341042003,
+            "later_net_return_pct": 1.6840019122233096,
+            "later_cycles": 126,
+            "stress_later_net_return_pct": {
+              "double_cost": -0.4318046218627303,
+              "one_session_delay": 9.249540495051999
+            }
+          },
+          {
+            "cap": 3,
+            "policy": "fixed8",
+            "early_score": -12.172205229475107,
+            "later_net_return_pct": 4.756835996497832,
+            "later_cycles": 193,
+            "stress_later_net_return_pct": {
+              "double_cost": 3.391101352644821,
+              "one_session_delay": 11.80110432631276
+            }
+          },
+          {
+            "cap": 5,
+            "policy": "rank35",
+            "early_score": -15.969351199999982,
+            "later_net_return_pct": 5.956178754442321,
+            "later_cycles": 305,
+            "stress_later_net_return_pct": {
+              "double_cost": 6.640125851337597,
+              "one_session_delay": 35.413535471984005
+            }
+          }
+        ],
+        "characteristics": "预测相对沪深300的超额，不等同绝对盈利；少持股压力表现未保持优势。",
+        "reason": "较早年份选型未通过后段正收益/压力检查；保留既定3只原基准作研究，不事后改挑更好年份。",
+        "execution": {
+          "holding_sessions": 20,
+          "entry_atr_multiple": 3,
+          "max_gap_pct": 4,
+          "exit_adaptation_admitted": false
+        }
+      },
+      "slot_comparison": [
+        {
+          "max_positions": 2,
+          "net_return_pct": 14.742313499999993,
+          "max_drawdown_pct": 9.723458166204002,
+          "completed_cycles": 172,
+          "buy_orders": 174,
+          "sell_orders": 172,
+          "average_invested_pct": 14.5544243961039
+        },
+        {
+          "max_positions": 3,
+          "net_return_pct": 13.669906499999996,
+          "max_drawdown_pct": 16.425745112962197,
+          "completed_cycles": 262,
+          "buy_orders": 265,
+          "sell_orders": 262,
+          "average_invested_pct": 21.347391705315037
+        },
+        {
+          "max_positions": 5,
+          "net_return_pct": 17.3259638,
+          "max_drawdown_pct": 23.387851428153116,
+          "completed_cycles": 413,
+          "buy_orders": 418,
+          "sell_orders": 414,
+          "average_invested_pct": 34.06642947627629
+        },
+        {
+          "max_positions": 10,
+          "net_return_pct": 66.7767604,
+          "max_drawdown_pct": 33.92397346190828,
+          "completed_cycles": 714,
+          "buy_orders": 724,
+          "sell_orders": 717,
+          "average_invested_pct": 62.28454108949635
+        }
+      ]
+    },
+    "breadth22_rank20": {
+      "caps": {
+        "2": {
+          "selected_policy_id": "rankrisk35",
+          "selected": "排序＋波动及大盘削减风险",
+          "admitted": false,
+          "reasons": [
+            "双倍成本后未保持正收益与基准优势",
+            "延迟一日后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份选择的退出调整未通过后续复验，保留本模型原退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 16,
+              "net_return_pct": 16.897366899999987,
+              "max_drawdown_pct": 9.584013731718333,
+              "average_invested_pct": 9.101211411479184
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 47.56579070000002,
+              "max_drawdown_pct": 21.139948222820593,
+              "average_invested_pct": 20.94243194095231
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 40,
+              "net_return_pct": 55.278823899999985,
+              "max_drawdown_pct": 23.42476917482833,
+              "average_invested_pct": 23.913312467443536
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 40,
+              "net_return_pct": 55.278823899999985,
+              "max_drawdown_pct": 23.42476917482833,
+              "average_invested_pct": 23.913312467443536
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 47.66204699999999,
+              "max_drawdown_pct": 21.65766212388013,
+              "average_invested_pct": 21.007093536279758
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": 25.207330299999995,
+              "max_drawdown_pct": 7.902012350442556,
+              "average_invested_pct": 15.299922580951002
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 40,
+              "net_return_pct": 55.278823899999985,
+              "max_drawdown_pct": 23.42476917482833,
+              "average_invested_pct": 23.913312467443536
+            }
+          ]
+        },
+        "3": {
+          "selected_policy_id": "fixed8",
+          "selected": "原8%目标（预算含费）",
+          "admitted": false,
+          "reasons": [
+            "较早年份的风险收益对照保留原8%基准",
+            "后段净收益未超过同成本原基准",
+            "后段年度一致性不足",
+            "双倍成本后未保持正收益与基准优势",
+            "延迟一日后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份选择的退出调整未通过后续复验，保留本模型原退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 24,
+              "net_return_pct": 33.771217600000014,
+              "max_drawdown_pct": 12.19944497837291,
+              "average_invested_pct": 13.272242638384025
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 21.685758799999988,
+              "max_drawdown_pct": 13.649726872094249,
+              "average_invested_pct": 15.293910167981055
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 50,
+              "net_return_pct": 40.44393599999998,
+              "max_drawdown_pct": 19.900745703984345,
+              "average_invested_pct": 21.858562600061017
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 60,
+              "net_return_pct": 49.14667370000001,
+              "max_drawdown_pct": 23.934197899136834,
+              "average_invested_pct": 26.285429193251296
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 57.175205699999985,
+              "max_drawdown_pct": 19.581412116812224,
+              "average_invested_pct": 20.45336802502082
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": 9.088140600000006,
+              "max_drawdown_pct": 5.917792908106412,
+              "average_invested_pct": 12.561186439961416
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 60,
+              "net_return_pct": 49.14667370000001,
+              "max_drawdown_pct": 23.934197899136834,
+              "average_invested_pct": 26.285429193251296
+            }
+          ]
+        },
+        "5": {
+          "selected_policy_id": "equal50",
+          "selected": "总预算50%均配",
+          "admitted": true,
+          "reasons": [
+            "通过本轮后段、年度、双倍成本和延迟检验；仍是已观察历史的模拟配置"
+          ],
+          "exit_decision": "较早年份保留原20日/3ATR退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 40,
+              "net_return_pct": 37.0980895,
+              "max_drawdown_pct": 19.725511247931948,
+              "average_invested_pct": 20.461014568597584
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 32.432657700000014,
+              "max_drawdown_pct": 14.822912735794658,
+              "average_invested_pct": 17.835775458201756
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 50,
+              "net_return_pct": 72.77676389999999,
+              "max_drawdown_pct": 24.672032544501533,
+              "average_invested_pct": 25.824787077831182
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 60,
+              "net_return_pct": 55.63478279999998,
+              "max_drawdown_pct": 25.099402161552387,
+              "average_invested_pct": 27.54960817071145
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 38.85607370000002,
+              "max_drawdown_pct": 16.49896163835114,
+              "average_invested_pct": 19.098417105661365
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": 17.390554800000004,
+              "max_drawdown_pct": 6.324261759563021,
+              "average_invested_pct": 13.762539932786733
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 80,
+              "net_return_pct": 82.2650151,
+              "max_drawdown_pct": 32.3359164814338,
+              "average_invested_pct": 37.01396719912012
+            }
+          ]
+        }
+      },
+      "recommendation": {
+        "name": "截面排序22",
+        "default_max_positions": 5,
+        "allocation_policy": "rank5_equal50",
+        "position_pct": 10,
+        "total_entry_pct": 50,
+        "earlier_baseline_selected": {
+          "cap": 5,
+          "policy": "fixed8",
+          "early_score": 0.32618923877016925,
+          "later_net_return_pct": 24.7763067981279,
+          "later_cycles": 172,
+          "stress_later_net_return_pct": {
+            "double_cost": 20.447681759918,
+            "one_session_delay": 25.89924236246006
+          }
+        },
+        "earlier_enhanced_selected": {
+          "cap": 5,
+          "policy": "equal50",
+          "early_score": 10.827298242946549,
+          "later_net_return_pct": 41.48407439662507,
+          "later_cycles": 174,
+          "stress_later_net_return_pct": {
+            "double_cost": 24.082535239946836,
+            "one_session_delay": 38.993880201266684
+          }
+        },
+        "enhanced_adopted": true,
+        "default_passed_pressure": true,
+        "baseline_candidates": [
+          {
+            "cap": 2,
+            "policy": "fixed8",
+            "early_score": -9.987076024010067,
+            "later_net_return_pct": 18.56057591805893,
+            "later_cycles": 79,
+            "stress_later_net_return_pct": {
+              "double_cost": 15.405227951375089,
+              "one_session_delay": 22.385585894494618
+            }
+          },
+          {
+            "cap": 3,
+            "policy": "fixed8",
+            "early_score": -5.21485877150163,
+            "later_net_return_pct": 29.65864894907291,
+            "later_cycles": 113,
+            "stress_later_net_return_pct": {
+              "double_cost": 25.590543931494402,
+              "one_session_delay": 25.1958392389136
+            }
+          },
+          {
+            "cap": 5,
+            "policy": "fixed8",
+            "early_score": 0.32618923877016925,
+            "later_net_return_pct": 24.7763067981279,
+            "later_cycles": 172,
+            "stress_later_net_return_pct": {
+              "double_cost": 20.447681759918,
+              "one_session_delay": 25.89924236246006
+            }
+          }
+        ],
+        "enhanced_candidates": [
+          {
+            "cap": 2,
+            "policy": "rankrisk35",
+            "early_score": -6.167397413998676,
+            "later_net_return_pct": 20.22015421011478,
+            "later_cycles": 79,
+            "stress_later_net_return_pct": {
+              "double_cost": 3.9508495225422102,
+              "one_session_delay": 20.267211473731873
+            }
+          },
+          {
+            "cap": 3,
+            "policy": "fixed8",
+            "early_score": -5.21485877150163,
+            "later_net_return_pct": 29.65864894907291,
+            "later_cycles": 113,
+            "stress_later_net_return_pct": {
+              "double_cost": 25.590543931494402,
+              "one_session_delay": 25.1958392389136
+            }
+          },
+          {
+            "cap": 5,
+            "policy": "equal50",
+            "early_score": 10.827298242946549,
+            "later_net_return_pct": 41.48407439662507,
+            "later_cycles": 174,
+            "stress_later_net_return_pct": {
+              "double_cost": 24.082535239946836,
+              "one_session_delay": 38.993880201266684
+            }
+          }
+        ],
+        "characteristics": "分数是同日强弱排序、阈值0.6，不是收益率或胜率；5只50%预算通过本轮复验。",
+        "reason": "较早年份独立选型通过后段与压力检查；仅作为该模型模拟默认。",
+        "execution": {
+          "holding_sessions": 20,
+          "entry_atr_multiple": 3,
+          "max_gap_pct": 4,
+          "exit_adaptation_admitted": false
+        }
+      },
+      "slot_comparison": [
+        {
+          "max_positions": 2,
+          "net_return_pct": 16.897366899999987,
+          "max_drawdown_pct": 9.584013731718333,
+          "completed_cycles": 110,
+          "buy_orders": 110,
+          "sell_orders": 110,
+          "average_invested_pct": 9.101211411479184
+        },
+        {
+          "max_positions": 3,
+          "net_return_pct": 33.771217600000014,
+          "max_drawdown_pct": 12.19944497837291,
+          "completed_cycles": 158,
+          "buy_orders": 158,
+          "sell_orders": 158,
+          "average_invested_pct": 13.272242638384025
+        },
+        {
+          "max_positions": 5,
+          "net_return_pct": 37.0980895,
+          "max_drawdown_pct": 19.725511247931948,
+          "completed_cycles": 245,
+          "buy_orders": 245,
+          "sell_orders": 245,
+          "average_invested_pct": 20.461014568597584
+        },
+        {
+          "max_positions": 10,
+          "net_return_pct": 70.20968350000001,
+          "max_drawdown_pct": 28.31148830138186,
+          "completed_cycles": 408,
+          "buy_orders": 410,
+          "sell_orders": 409,
+          "average_invested_pct": 35.37025322407435
+        }
+      ]
+    },
+    "breadth22_open_downside20": {
+      "caps": {
+        "2": {
+          "selected_policy_id": "fixed8",
+          "selected": "原8%目标（预算含费）",
+          "admitted": false,
+          "reasons": [
+            "较早年份的风险收益对照保留原8%基准",
+            "后段净收益未超过同成本原基准",
+            "后段年度一致性不足",
+            "双倍成本后未保持正收益与基准优势",
+            "延迟一日后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份选择的退出调整未通过后续复验，保留本模型原退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 16,
+              "net_return_pct": 12.365051000000005,
+              "max_drawdown_pct": 7.841393060663693,
+              "average_invested_pct": 11.244137334943819
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 16.555973199999997,
+              "max_drawdown_pct": 24.073691670863482,
+              "average_invested_pct": 25.44547999901481
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 40,
+              "net_return_pct": 25.3103909,
+              "max_drawdown_pct": 22.725329945170902,
+              "average_invested_pct": 28.903068421198686
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 40,
+              "net_return_pct": 25.3103909,
+              "max_drawdown_pct": 22.725329945170902,
+              "average_invested_pct": 28.903068421198686
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 22.754104999999992,
+              "max_drawdown_pct": 20.200928131312924,
+              "average_invested_pct": 24.86809532616469
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": 6.011137100000008,
+              "max_drawdown_pct": 8.997827038201622,
+              "average_invested_pct": 17.077606065382096
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 40,
+              "net_return_pct": 25.3103909,
+              "max_drawdown_pct": 22.725329945170902,
+              "average_invested_pct": 28.903068421198686
+            }
+          ]
+        },
+        "3": {
+          "selected_policy_id": "fixed8",
+          "selected": "原8%目标（预算含费）",
+          "admitted": false,
+          "reasons": [
+            "较早年份的风险收益对照保留原8%基准",
+            "后段净收益未超过同成本原基准",
+            "后段年度一致性不足",
+            "双倍成本后未保持正收益与基准优势",
+            "延迟一日后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份选择的退出调整未通过后续复验，保留本模型原退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 24,
+              "net_return_pct": 31.78686689999999,
+              "max_drawdown_pct": 10.923292579753408,
+              "average_invested_pct": 16.765392925487333
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 40.2875412,
+              "max_drawdown_pct": 20.90821283737736,
+              "average_invested_pct": 24.84039466187026
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 50,
+              "net_return_pct": 64.50753730000001,
+              "max_drawdown_pct": 28.266853622133105,
+              "average_invested_pct": 35.82842733214397
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 60,
+              "net_return_pct": 79.27465719999998,
+              "max_drawdown_pct": 32.3662448708326,
+              "average_invested_pct": 42.97410874635216
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 47.8109479,
+              "max_drawdown_pct": 18.96417073767942,
+              "average_invested_pct": 24.722043295180285
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": 6.3268244999999945,
+              "max_drawdown_pct": 8.675963922380259,
+              "average_invested_pct": 16.778488958758402
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 60,
+              "net_return_pct": 79.27465719999998,
+              "max_drawdown_pct": 32.3662448708326,
+              "average_invested_pct": 42.97410874635216
+            }
+          ]
+        },
+        "5": {
+          "selected_policy_id": "rank35",
+          "selected": "总预算35%按同模型排序",
+          "admitted": false,
+          "reasons": [
+            "后段年度一致性不足",
+            "延迟一日后未保持正收益与基准优势"
+          ],
+          "exit_decision": "较早年份保留原20日/3ATR退出",
+          "policies": [
+            {
+              "id": "fixed8",
+              "name": "原8%目标（预算含费）",
+              "total_entry_pct": 40,
+              "net_return_pct": 49.162515799999994,
+              "max_drawdown_pct": 14.381090843976907,
+              "average_invested_pct": 23.855593036815897
+            },
+            {
+              "id": "equal35",
+              "name": "总预算35%均配",
+              "total_entry_pct": 35,
+              "net_return_pct": 38.59345069999998,
+              "max_drawdown_pct": 13.099030531304878,
+              "average_invested_pct": 20.725367693980925
+            },
+            {
+              "id": "equal50",
+              "name": "总预算50%均配",
+              "total_entry_pct": 50,
+              "net_return_pct": 59.57135389999999,
+              "max_drawdown_pct": 17.785714203277582,
+              "average_invested_pct": 30.04631921361335
+            },
+            {
+              "id": "equal60",
+              "name": "总预算60%均配",
+              "total_entry_pct": 60,
+              "net_return_pct": 62.16569969999999,
+              "max_drawdown_pct": 24.585635102170965,
+              "average_invested_pct": 36.41946716064409
+            },
+            {
+              "id": "rank35",
+              "name": "总预算35%按同模型排序",
+              "total_entry_pct": 35,
+              "net_return_pct": 49.34319899999999,
+              "max_drawdown_pct": 12.139972192946258,
+              "average_invested_pct": 21.58864196354676
+            },
+            {
+              "id": "rankrisk35",
+              "name": "排序＋波动及大盘削减风险",
+              "total_entry_pct": 35,
+              "net_return_pct": 10.681826800000005,
+              "max_drawdown_pct": 7.171950056380483,
+              "average_invested_pct": 14.711447856311112
+            },
+            {
+              "id": "equal80",
+              "name": "总预算80%均配（受20%单票上限）",
+              "total_entry_pct": 80,
+              "net_return_pct": 92.31701930000003,
+              "max_drawdown_pct": 29.661740303708694,
+              "average_invested_pct": 48.615126173066976
+            }
+          ]
+        }
+      },
+      "recommendation": {
+        "name": "开盘下行惩罚22",
+        "default_max_positions": 2,
+        "allocation_policy": "baseline8",
+        "position_pct": 8,
+        "total_entry_pct": 16,
+        "earlier_baseline_selected": {
+          "cap": 2,
+          "policy": "fixed8",
+          "early_score": -5.245891893533371,
+          "later_net_return_pct": 8.89425757681035,
+          "later_cycles": 87,
+          "stress_later_net_return_pct": {
+            "double_cost": 6.852524633663237,
+            "one_session_delay": 4.199593578941885
+          }
+        },
+        "earlier_enhanced_selected": {
+          "cap": 5,
+          "policy": "rank35",
+          "early_score": -4.17881595452414,
+          "later_net_return_pct": 38.86074778654349,
+          "later_cycles": 175,
+          "stress_later_net_return_pct": {
+            "double_cost": 30.613174441927704,
+            "one_session_delay": 20.34150102818706
+          }
+        },
+        "enhanced_adopted": false,
+        "default_passed_pressure": true,
+        "baseline_candidates": [
+          {
+            "cap": 2,
+            "policy": "fixed8",
+            "early_score": -5.245891893533371,
+            "later_net_return_pct": 8.89425757681035,
+            "later_cycles": 87,
+            "stress_later_net_return_pct": {
+              "double_cost": 6.852524633663237,
+              "one_session_delay": 4.199593578941885
+            }
+          },
+          {
+            "cap": 3,
+            "policy": "fixed8",
+            "early_score": -9.51791205551158,
+            "later_net_return_pct": 28.07596059003852,
+            "later_cycles": 132,
+            "stress_later_net_return_pct": {
+              "double_cost": 24.12750257024625,
+              "one_session_delay": 9.842491889629512
+            }
+          },
+          {
+            "cap": 5,
+            "policy": "fixed8",
+            "early_score": -5.428889818125015,
+            "later_net_return_pct": 37.27435980157474,
+            "later_cycles": 175,
+            "stress_later_net_return_pct": {
+              "double_cost": 30.557457775071416,
+              "one_session_delay": 23.29230305183174
+            }
+          }
+        ],
+        "enhanced_candidates": [
+          {
+            "cap": 2,
+            "policy": "fixed8",
+            "early_score": -5.245891893533371,
+            "later_net_return_pct": 8.89425757681035,
+            "later_cycles": 87,
+            "stress_later_net_return_pct": {
+              "double_cost": 6.852524633663237,
+              "one_session_delay": 4.199593578941885
+            }
+          },
+          {
+            "cap": 3,
+            "policy": "fixed8",
+            "early_score": -9.51791205551158,
+            "later_net_return_pct": 28.07596059003852,
+            "later_cycles": 132,
+            "stress_later_net_return_pct": {
+              "double_cost": 24.12750257024625,
+              "one_session_delay": 9.842491889629512
+            }
+          },
+          {
+            "cap": 5,
+            "policy": "rank35",
+            "early_score": -4.17881595452414,
+            "later_net_return_pct": 38.86074778654349,
+            "later_cycles": 175,
+            "stress_later_net_return_pct": {
+              "double_cost": 30.613174441927704,
+              "one_session_delay": 20.34150102818706
+            }
+          }
+        ],
+        "characteristics": "带下行惩罚的开盘收益代理；较少数量保留较低敞口，5只也可作为独立对照。",
+        "reason": "较早年份独立选型通过后段与压力检查；仅作为该模型模拟默认。",
+        "execution": {
+          "holding_sessions": 20,
+          "entry_atr_multiple": 3,
+          "max_gap_pct": 4,
+          "exit_adaptation_admitted": false
+        }
+      },
+      "slot_comparison": [
+        {
+          "max_positions": 2,
+          "net_return_pct": 12.365051000000005,
+          "max_drawdown_pct": 7.841393060663693,
+          "completed_cycles": 125,
+          "buy_orders": 125,
+          "sell_orders": 125,
+          "average_invested_pct": 11.244137334943819
+        },
+        {
+          "max_positions": 3,
+          "net_return_pct": 31.78686689999999,
+          "max_drawdown_pct": 10.923292579753408,
+          "completed_cycles": 188,
+          "buy_orders": 188,
+          "sell_orders": 188,
+          "average_invested_pct": 16.765392925487333
+        },
+        {
+          "max_positions": 5,
+          "net_return_pct": 49.162515799999994,
+          "max_drawdown_pct": 14.381090843976907,
+          "completed_cycles": 264,
+          "buy_orders": 265,
+          "sell_orders": 265,
+          "average_invested_pct": 23.855593036815897
+        },
+        {
+          "max_positions": 10,
+          "net_return_pct": 78.26010860000001,
+          "max_drawdown_pct": 25.476702798595074,
+          "completed_cycles": 477,
+          "buy_orders": 480,
+          "sell_orders": 480,
+          "average_invested_pct": 44.04099772353728
+        }
+      ]
+    }
+  }
+}

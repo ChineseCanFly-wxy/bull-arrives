@@ -1,82 +1,30 @@
 #!/usr/bin/env node
-/**
- * Extract changelog entry for a specific version from CHANGELOG.md.
- *
- * Usage:
- *   node scripts/extract-changelog.mjs v1.2.0
- *
- * Expected CHANGELOG.md format (Keep a Changelog style):
- *   ## v1.2.0 (2026-06-20)
- *   ### Added
- *   - item 1
- *   - item 2
- *   ### Fixed
- *   - item 3
- *
- *   ## v1.1.1 (2026-06-15)
- *   ...
- */
-
-import { readFileSync } from 'node:fs';
+import { readFileSync, appendFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const version = process.argv[2];
-
-if (!version) {
-  console.error('Usage: node scripts/extract-changelog.mjs <version>');
-  console.error('Example: node scripts/extract-changelog.mjs v1.2.0');
-  process.exit(1);
+export function extractChangelog(content, version) {
+  const normalized = version.replace(/^v/, '');
+  if (!/^\d+\.\d+\.\d+$/.test(normalized)) throw new Error('版本格式必须为 vX.Y.Z 或 X.Y.Z');
+  const escaped = normalized.replaceAll('.', '\\.');
+  const match = content.match(new RegExp('^##\\s+v?' + escaped + '(?=\\s|$)', 'm'));
+  if (!match) throw new Error('CHANGELOG.md 找不到 v' + normalized);
+  const rest = content.slice(match.index + match[0].length);
+  const next = rest.search(/^##\s+/m);
+  return content.slice(match.index, next < 0 ? undefined : match.index + match[0].length + next).trim();
 }
 
-// Normalize: accept both "1.2.0" and "v1.2.0"
-const tag = version.startsWith('v') ? version : `v${version}`;
-const altTag = version.startsWith('v') ? version.slice(1) : version;
-
-const changelogPath = resolve(__dirname, '..', 'CHANGELOG.md');
-
-let content;
-try {
-  content = readFileSync(changelogPath, 'utf-8');
-} catch {
-  console.error(`CHANGELOG.md not found at ${changelogPath}`);
-  process.exit(1);
-}
-
-// Match the version section header
-// e.g. "## v1.2.0" or "## 1.2.0" optionally followed by date
-const versionRegex = new RegExp(
-  `^##\\s+(${escapeRegex(tag)}|${escapeRegex(altTag)})\\b`,
-  'm'
-);
-const match = content.match(versionRegex);
-
-if (!match) {
-  console.error(`Version ${tag} not found in CHANGELOG.md`);
-  process.exit(1);
-}
-
-const startIndex = match.index;
-// Find the next version header
-const nextVersionMatch = content
-  .slice(startIndex + match[0].length)
-  .match(/^##\s+v?\d+\.\d+\.\d+/m);
-
-const endIndex = nextVersionMatch
-  ? startIndex + match[0].length + nextVersionMatch.index
-  : content.length;
-
-const entry = content.slice(startIndex, endIndex).trim();
-
-if (!entry) {
-  console.error(`Empty changelog entry for ${tag}`);
-  process.exit(1);
-}
-
-// Output the extracted entry
-process.stdout.write(entry + '\n');
-
-function escapeRegex(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    if (!process.argv[2]) throw new Error('Usage: node scripts/extract-changelog.mjs <version>');
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+    const entry = extractChangelog(readFileSync(resolve(root, 'CHANGELOG.md'), 'utf8'), process.argv[2]);
+    if (process.argv[3]) {
+      if (process.argv[3] !== '--github-output' || process.argv[4] || !process.env.GITHUB_OUTPUT) throw new Error('GitHub输出参数或环境无效');
+      const delimiter = 'notes_' + randomUUID();
+      appendFileSync(process.env.GITHUB_OUTPUT, 'body<<' + delimiter + '\n' + entry + '\n' + delimiter + '\n');
+    }
+    process.stdout.write(entry + '\n');
+  } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

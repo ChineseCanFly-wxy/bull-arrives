@@ -5,6 +5,9 @@ pub mod monitors;
 pub mod news;
 pub mod predictions;
 pub mod research_loop;
+pub mod model_research;
+pub mod model_follow;
+pub mod research_jobs;
 #[cfg(test)]
 mod regression_tests;
 pub mod simulation;
@@ -43,6 +46,11 @@ impl Database {
         db.migrate_agent()?;
         db.migrate_predictions()?;
         db.migrate_research_loop()?;
+        db.migrate_model_research()?;
+        db.migrate_model_follow()?;
+        db.migrate_research_jobs()?;
+        db.migrate_simulation_optional_costs()?;
+        db.retire_legacy_market_templates()?;
         db.init_defaults()?;
         Ok(db)
     }
@@ -176,14 +184,11 @@ impl Database {
             ("ticker_text_color", "#9AA5B1"),
             ("ticker_display_mode", "carousel"),
             ("ticker_page_size", "2"),
-            ("quote_schedule_enabled", "0"),
             ("auto_launch", "false"),
             ("alerts_enabled", "1"),
             // 资讯轮询会联网并可能弹通知，默认关闭。
             ("news_notifications_enabled", "0"),
             ("news_notification_mode", "direct"),
-            ("news_ai_daily_limit", "3"),
-            ("news_ai_keywords", ""),
             ("news_flash_initialized", "0"),
             ("news_announcement_initialized", "0"),
             // AI / 量化智能总开关：关闭后所有「自动运行」的智能功能一并停止。
@@ -192,6 +197,7 @@ impl Database {
             // 智能监控（ATR 自动止损/止盈），跟随 ai_enabled
             ("ai_monitor_enabled", "1"),
             // Claude Code 由应用探测并使用其自身登录；不在应用内保存凭据。
+            ("agent_provider", "claude"),
             ("agent_claude_path", ""),
             ("agent_timeout_seconds", "180"),
             ("agent_budget_usd", "10.00"),
@@ -202,6 +208,8 @@ impl Database {
             ("local_history_engine_dir", ""),
             ("local_history_engine_path", ""),
             ("local_history_updater_path", ""),
+            ("local_history_auto_update_enabled", "1"),
+            ("local_history_auto_update_time", "09:00"),
             // 全市场快照取数通道：auto（东财优先，新浪兜底）/ sina / eastmoney。
             // 实测部分网络下东财 clist 路径被针对性阻断，故默认 auto。
             ("universe_source", "auto"),
@@ -213,14 +221,26 @@ impl Database {
                 self.set_setting(k, v)?;
             }
         }
-        // Older builds used "ai" to send every filtered story to Claude. Move that costly mode to selective AI.
-        if self.get_setting("news_notification_mode")?.as_deref() == Some("ai") {
-            self.set_setting("news_notification_mode", "hybrid")?;
+        // Preserve the old mute preference once, then research alerts are independent.
+        if self.get_setting("research_notifications_enabled")?.is_none() {
+            let previous = self.get_setting("alerts_enabled")?.unwrap_or_else(|| "1".into());
+            self.set_setting("research_notifications_enabled", &previous)?;
+        }
+        // 资讯只采集原文；升级后不再保留自动 AI 或混合模式。
+        self.set_setting("news_notification_mode", "direct")?;
+        self.set_setting("agent_provider", "claude")?;
+        {
+            let conn = self.conn.lock().unwrap_or_else(|error| error.into_inner());
+            conn.execute("DELETE FROM settings WHERE key IN ('news_ai_daily_limit','news_ai_keywords','quote_schedule','quote_schedule_enabled') OR key GLOB 'agent_codex_*'", [])?;
         }
         if !self.get_setting("agent_budget_usd")?.as_deref()
             .and_then(|value| value.parse::<f64>().ok())
             .is_some_and(|value| value.is_finite() && (10.0..=50.0).contains(&value)) {
             self.set_setting("agent_budget_usd", "10.00")?;
+        }
+        // Retired theme: retain brightness and migrate to the modern layout.
+        if self.get_setting("visual_style")?.as_deref() == Some("trading") {
+            self.set_setting("visual_style", "modern")?;
         }
         // 旧版本默认打开了“允许读取本地服务”，但并未授权应用自动执行 exe。
         // 首次升级到托管版时安全地关闭一次，之后只保留用户的新选择。
@@ -338,6 +358,14 @@ impl Database {
             Some(Ok(v)) => Ok(Some(v)),
             _ => Ok(None),
         }
+    }
+
+    pub(crate) fn research_notifications_enabled(&self) -> SqliteResult<bool> {
+        let value = match self.get_setting("research_notifications_enabled")? {
+            Some(value) => Some(value),
+            None => self.get_setting("alerts_enabled")?,
+        };
+        Ok(value.as_deref().is_none_or(|value| value == "1"))
     }
 
     pub fn set_setting(&self, key: &str, value: &str) -> SqliteResult<()> {
@@ -686,4 +714,21 @@ pub struct WatchItem {
     pub name: String,
     pub sort_order: i32,
     pub added_at: String,
+}
+
+impl Database {
+    pub fn stockdb_update_record(&self)->Result<crate::stockdb_schedule::UpdateRecord,String>{
+        Ok(self.get_setting(crate::stockdb_schedule::RECORD_KEY).map_err(|e|e.to_string())?.and_then(|raw|serde_json::from_str(&raw).ok()).unwrap_or_default())
+    }
+    pub fn change_stockdb_update_record<T>(&self,change:impl FnOnce(&mut crate::stockdb_schedule::UpdateRecord)->Result<T,String>)->Result<T,String>{
+        use rusqlite::OptionalExtension;
+        let mut conn=self.conn.lock().unwrap_or_else(|e|e.into_inner());
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e|e.to_string())?;
+        let raw:Option<String>=tx.query_row("SELECT value FROM settings WHERE key=?1",[crate::stockdb_schedule::RECORD_KEY],|row|row.get(0)).optional().map_err(|e|e.to_string())?;
+        let mut record=raw.and_then(|raw|serde_json::from_str(&raw).ok()).unwrap_or_default();
+        let result=change(&mut record)?;
+        let value=serde_json::to_string(&record).map_err(|e|e.to_string())?;
+        tx.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",rusqlite::params![crate::stockdb_schedule::RECORD_KEY,value]).map_err(|e|e.to_string())?;
+        tx.commit().map_err(|e|e.to_string())?;Ok(result)
+    }
 }

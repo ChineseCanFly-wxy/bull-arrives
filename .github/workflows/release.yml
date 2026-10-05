@@ -5,44 +5,100 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: '已推送且尚未正式发布的稳定版标签，例如 v2.2.7'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
-  publish:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.release.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check version, committed inputs and release helpers
+        run: |
+          node scripts/check-release.mjs "$RELEASE_TAG" --tracked
+          node scripts/test-release.mjs
+          python3 scripts/check-portable.py --self-test
+          test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$(git rev-parse HEAD)"
+      - name: Check updater signing configuration
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo '::error::缺少TAURI_SIGNING_PRIVATE_KEY，不能发布无法验证更新的正式包。'
+            exit 1
+          fi
+      - name: Create or reuse unpublished draft
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/extract-changelog.mjs "$RELEASE_TAG" > "$RUNNER_TEMP/changelog.md"
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/draft" 2>/dev/null; then
+            if [ "$(cat "$RUNNER_TEMP/draft")" != 'true' ]; then
+              echo '::error::此版本已经正式发布，禁止覆盖。修正后使用新版本标签。'
+              exit 1
+            fi
+            gh release edit "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/changelog.md"
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/changelog.md"
+          fi
+          echo "id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.id')" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
     permissions:
       contents: write
     strategy:
       fail-fast: false
+      # ponytail: 串行矩阵避免多个tauri-action同时覆盖共享latest.json；构建耗时成为问题再独立汇总上传。
+      max-parallel: 1
       matrix:
         include:
           - platform: windows-latest
-            args: --target x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc --bundles nsis --ci -- --locked
           - platform: macos-latest
-            args: --target universal-apple-darwin
+            args: --target universal-apple-darwin --bundles app,dmg --ci -- --locked
           - platform: ubuntu-latest
-            args: --target x86_64-unknown-linux-gnu
-
+            args: --target x86_64-unknown-linux-gnu --bundles deb,appimage --ci -- --locked
     runs-on: ${{ matrix.platform }}
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust build
-        uses: swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
           cache-targets: true
           cache-on-failure: true
-
-      - name: Cache Tauri tools (NSIS, WiX)
+      - name: Cache Tauri tools
         uses: actions/cache@v4
         with:
           path: |
@@ -50,111 +106,89 @@ jobs:
             ~/.local/share/tauri
             ~/AppData/Local/Temp/.tauri
           key: tauri-tools-${{ matrix.platform }}
-
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev \
-            libxdo-dev \
-            libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev
-          sudo apt-get install -y libayatana-appindicator3-dev 2>/dev/null || \
-            sudo apt-get install -y libappindicator3-dev 2>/dev/null || true
-
+          sudo apt-get install -y build-essential libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf libssl-dev libxdo-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev
       - name: Install macOS Rust targets
         if: matrix.platform == 'macos-latest'
         run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Extract changelog for release body
-        id: changelog
+      - name: Build frontend and run offline unit tests
         shell: bash
         run: |
-          VERSION="${{ github.ref_name }}"
-          NOTE="$RUNNER_TEMP/changelog.md"
-
-          # 这里必须失败即中断。曾经用 `|| echo "No changelog entry ..."` 兜底，
-          # 结果是 tag 打在 CHANGELOG 提交之前时 CI 一路绿灯，latest.json 的
-          # notes 被写成那句占位文案，终端用户点更新只能看到"暂无更新说明"。
-          if ! node scripts/extract-changelog.mjs "$VERSION" > "$NOTE"; then
-            echo "::error::CHANGELOG.md 中找不到 $VERSION 的条目。请先补好 CHANGELOG 并提交，再重新打 tag。"
-            echo "CHANGELOG.md 现有版本条目："
-            grep -E '^##[[:space:]]+v?[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md || true
-            exit 1
-          fi
-
-          if [ ! -s "$NOTE" ]; then
-            echo "::error::$VERSION 的 CHANGELOG 条目为空。"
-            exit 1
-          fi
-
-          # 应用端 UpdateDialog.vue 的 renderMarkdownLines 只认这种结构：
-          # 以 "## vX.Y.Z" 开头，靠 "### 分组" 建小节，靠 "- 条目" 收集内容。
-          # 没有 "###" 分组时所有条目会被静默丢弃，用户端同样看到"暂无更新说明"。
-          if ! head -n 1 "$NOTE" | grep -qE '^##[[:space:]]+v?[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "::error::CHANGELOG 条目首行必须是 '## vX.Y.Z'，当前为：$(head -n 1 "$NOTE")"
-            exit 1
-          fi
-          if ! grep -qE '^###[[:space:]]+\S' "$NOTE"; then
-            echo "::error::$VERSION 的 CHANGELOG 条目缺少 '### 分组'，应用端会显示为空。请用 '### 分组' + '- 条目' 的结构编写。"
-            exit 1
-          fi
-          if ! grep -qE '^[-*][[:space:]]+\S' "$NOTE"; then
-            echo "::error::$VERSION 的 CHANGELOG 条目没有任何 '- 条目'，应用端会显示为空。"
-            exit 1
-          fi
-
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          cat "$NOTE" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
+          npm ci
+          npm run release:check -- "$RELEASE_TAG" --tracked
+          npm run build
+          cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
+      - name: Extract exact updater notes
+        id: changelog
+        shell: bash
+        run: node scripts/extract-changelog.mjs "$RELEASE_TAG" --github-output
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "${{ github.ref_name }}"
+          releaseId: ${{ needs.prepare.outputs.release_id }}
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseDraft: true
           releaseBody: ${{ steps.changelog.outputs.body }}
-          releaseDraft: false
           prerelease: false
+          updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
-
-      - name: Create portable zip (Windows)
+      - name: Create and upload Windows portable zip
         if: matrix.platform == 'windows-latest'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $ErrorActionPreference = "Stop"
-          $src = "src-tauri/target/x86_64-pc-windows-msvc/release"
-          $ver = "${{ github.ref_name }}" -replace '^v', ''
-          $staging = "portable/BullArrives"
-          $null = New-Item -ItemType Directory -Force -Path $staging
-          # 自动查找主程序 exe（productName 与 Cargo bin 名可能不同，不写死文件名）
-          $exe = Get-ChildItem "$src/*.exe" | Select-Object -First 1
-          if (-not $exe) { throw "找不到可执行文件" }
-          Copy-Item $exe.FullName -Destination "$staging/"
-          Write-Host "打包主程序: $($exe.Name)"
-          $null = New-Item -ItemType File -Path "$staging/portable.dat"
-          $zipName = "BullArrives_$($ver)_x64-portable.zip"
-          $null = New-Item -ItemType Directory -Force -Path "$src/bundle"
-          Compress-Archive -Path "$staging/*" -DestinationPath "$src/bundle/$zipName"
-          Write-Host "Portable zip created: $src/bundle/$zipName"
+          $ErrorActionPreference = 'Stop'
+          $src = 'src-tauri/target/x86_64-pc-windows-msvc/release'
+          $exe = Join-Path $src 'bull-arrives.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw '找不到主程序bull-arrives.exe' }
+          $staging = Join-Path $env:RUNNER_TEMP 'portable/BullArrives'
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item -LiteralPath $exe -Destination $staging
+          New-Item -ItemType File -Path (Join-Path $staging 'portable.dat') | Out-Null
+          Copy-Item -LiteralPath 'docs/发布流程.md' -Destination (Join-Path $staging 'RELEASE-GUIDE.md')
+          Copy-Item -LiteralPath 'README.md' -Destination (Join-Path $staging 'README.md')
+          $version = $env:RELEASE_TAG -replace '^v', ''
+          $zip = Join-Path $env:RUNNER_TEMP "BullArrives_$($version)_x64-portable.zip"
+          Compress-Archive -Path "$staging/*" -DestinationPath $zip
+          gh release upload $env:RELEASE_TAG $zip --clobber
+          if ($LASTEXITCODE -ne 0) { throw '便携包上传失败' }
 
-      - name: Upload portable zip to release
-        if: matrix.platform == 'windows-latest'
-        uses: softprops/action-gh-release@v2
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
         with:
-          tag_name: ${{ github.ref_name }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          make_latest: false
-          files: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/BullArrives_*_x64-portable.zip
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install native updater signature verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+      - name: Download and verify complete draft assets
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
+          gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/release-assets"
+          python3 scripts/check-portable.py "$RUNNER_TEMP/release-assets/BullArrives_${RELEASE_TAG#v}_x64-portable.zip"
+          node scripts/verify-release.mjs "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/release-assets"
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/release-assets/SHA256SUMS.txt" --clobber
+      - name: Publish only after all checks pass
+        run: |
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/published.json"
+          gh release download "$RELEASE_TAG" --pattern SHA256SUMS.txt --dir "$RUNNER_TEMP/release-assets" --clobber
+          node scripts/verify-release.mjs "$RUNNER_TEMP/published.json" "$RUNNER_TEMP/release-assets" --published
+          echo "Release完成：https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"

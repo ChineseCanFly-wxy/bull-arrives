@@ -1,7 +1,7 @@
 //! 全市场资讯：独立轮询、事件白名单、自选标记与持久化去重。
 
 use crate::db::Database;
-use chrono::{Timelike, Utc};
+use chrono::{NaiveDateTime, TimeZone, Timelike, Utc};
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
@@ -32,7 +32,7 @@ impl Drop for AiRunGuard {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct RawNews {
     source: &'static str,
     source_label: &'static str,
@@ -40,6 +40,13 @@ struct RawNews {
     title: String,
     body: String,
     codes: Vec<String>,
+    published_at: Option<String>,
+    published_date: Option<String>,
+    publication_precision: &'static str,
+    published_at_source: &'static str,
+    url: Option<String>,
+    received_at: String,
+    source_index_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,32 +61,7 @@ struct PreparedNews {
     route: Route,
     key: String,
     fallback_body: String,
-}
-
-fn auto_ai_budget(db: &Database) -> u32 {
-    db.get_setting("news_ai_daily_limit").ok().flatten()
-        .and_then(|value| value.parse::<u32>().ok()).unwrap_or(3).min(20)
-}
-
-fn choose_auto_ai(db: &Database, prepared: &[PreparedNews], mode: &str) -> HashSet<String> {
-    let mut selected = HashSet::new();
-    if mode != "hybrid" || db.get_setting("ai_enabled").ok().flatten().as_deref() == Some("0") {
-        return selected;
-    }
-    let keywords_setting = db.get_setting("news_ai_keywords").ok().flatten().unwrap_or_default();
-    let keywords = keywords_setting.split([',', '，']).map(str::trim).filter(|word| !word.is_empty()).collect::<Vec<_>>();
-    let limit = auto_ai_budget(db);
-    let mut eligible = prepared.iter().filter(|news| ai_trigger(news, &keywords).is_some()).collect::<Vec<_>>();
-    eligible.sort_by_key(|news| if news.route.popup { 0 } else if !news.matches.is_empty() { 1 } else { 2 });
-    let day = local_day();
-    for news in eligible {
-        match db.claim_news_auto_ai(&day, &news.key, limit) {
-            Ok(true) => { selected.insert(news.key.clone()); }
-            Ok(false) => {}
-            Err(error) => log::warn!("[news] 自动 AI 名额登记失败，改为直接通知：{error}"),
-        }
-    }
-    selected
+    related_mainlines: Vec<Value>,
 }
 
 fn client() -> &'static reqwest::Client {
@@ -113,6 +95,23 @@ fn normalize_code(raw: &str) -> Option<String> {
     (tail.len() == 6 && tail.bytes().all(|byte| byte.is_ascii_digit())).then(|| tail.to_owned())
 }
 
+// 两个已实取的接口均返回北京时间；公告 display_time 的毫秒以冒号分隔。
+fn publication_time(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    let normalized = if raw.len() > 19 && raw.as_bytes().get(19) == Some(&b':') {
+        format!("{}.{}", &raw[..19], &raw[20..])
+    } else { raw.to_owned() };
+    let parsed = NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M:%S%.f").ok()?;
+    chrono::FixedOffset::east_opt(8 * 3600)?.from_local_datetime(&parsed).single().map(|t| t.to_rfc3339())
+}
+
+fn announcement_url(code: &str, art_code: &str) -> Option<String> {
+    // URL 结构已用实际公告 AN202610011830059731 验证；不把 sort_date 当发布时间。
+    (normalize_code(code).is_some() && art_code.starts_with("AN")
+        && art_code.len() > 2 && art_code[2..].bytes().all(|b| b.is_ascii_digit()))
+        .then(|| format!("https://data.eastmoney.com/notices/detail/{code}/{art_code}.html"))
+}
+
 fn parse_fast(value: &Value) -> Result<Vec<RawNews>, String> {
     if value.get("code").and_then(Value::as_str) != Some("1") {
         return Err(format!(
@@ -140,6 +139,7 @@ fn parse_fast(value: &Value) -> Result<Vec<RawNews>, String> {
                 .filter_map(Value::as_str)
                 .filter_map(normalize_code)
                 .collect();
+            let published_at = publication_time(&string(item.get("showTime")));
             Some(RawNews {
                 source: "eastmoney_flash",
                 source_label: "东方财富财经 / 上市公司快讯",
@@ -147,6 +147,14 @@ fn parse_fast(value: &Value) -> Result<Vec<RawNews>, String> {
                 title,
                 body,
                 codes,
+                published_date: published_at.as_ref().map(|t| t[..10].to_owned()),
+                publication_precision: if published_at.is_some() { "second" } else { "unknown" },
+                published_at_source: if published_at.is_some() { "showTime" } else { "unknown" },
+                published_at,
+                // 快讯列表没有逐条 URL 字段，不能按 ID 猜造文章链接。
+                url: None,
+                received_at: Utc::now().to_rfc3339(),
+                source_index_only: false,
             })
         })
         .collect())
@@ -167,7 +175,7 @@ fn parse_announcements(value: &Value) -> Result<Vec<RawNews>, String> {
             if title.is_empty() {
                 return None;
             }
-            let codes = item
+            let codes: Vec<String> = item
                 .get("codes")
                 .and_then(Value::as_array)
                 .into_iter()
@@ -175,13 +183,34 @@ fn parse_announcements(value: &Value) -> Result<Vec<RawNews>, String> {
                 .filter_map(|code| code.get("stock_code").and_then(Value::as_str))
                 .filter_map(normalize_code)
                 .collect();
+            let source_id = string(item.get("art_code"));
+            let display_time = publication_time(&string(item.get("display_time")));
+            let (published_at, published_at_source) = if display_time.is_some() {
+                (display_time, "display_time")
+            } else { (publication_time(&string(item.get("eiTime"))), "eiTime") };
+            let notice_date = string(item.get("notice_date"));
+            let published_date = published_at.as_ref().map(|t| t[..10].to_owned()).or_else(|| {
+                chrono::NaiveDate::parse_from_str(notice_date.get(..10).unwrap_or(""), "%Y-%m-%d")
+                    .ok().map(|d| d.to_string())
+            });
+            let publication_precision = if published_at.is_some() { "millisecond" }
+                else if published_date.is_some() { "date" } else { "unknown" };
+            let url = codes.first().and_then(|code| announcement_url(code, &source_id));
             Some(RawNews {
                 source: "eastmoney_announcement",
                 source_label: "东方财富公司公告",
-                source_id: string(item.get("art_code")),
+                source_id,
                 body: String::new(),
                 title,
                 codes,
+                published_at,
+                published_date,
+                publication_precision,
+                published_at_source: if publication_precision == "date" { "notice_date" }
+                    else if publication_precision == "unknown" { "unknown" } else { published_at_source },
+                url,
+                received_at: Utc::now().to_rfc3339(),
+                source_index_only: true,
             })
         })
         .collect())
@@ -368,26 +397,32 @@ fn related(item: &RawNews, targets: &HashMap<String, String>) -> Vec<(String, St
     rows
 }
 
+fn related_mainlines(item: &RawNews, targets: &[Value]) -> Vec<Value> {
+    let text = format!("{} {}", item.title, item.body);
+    targets.iter().filter_map(|target| {
+        if target["snapshot_current"] != true || target["as_of"].as_str().unwrap_or_default().is_empty()
+            || target["fingerprint"].as_str().unwrap_or_default().is_empty() { return None; }
+        let symbols: Vec<String> = target["symbols"].as_array().into_iter().flatten()
+            .filter_map(Value::as_str).filter_map(normalize_code).collect();
+        let matched_symbols: Vec<_> = symbols.iter().filter(|s| item.codes.contains(s)).cloned().collect();
+        let name_match = item.codes.is_empty() && target["names"].as_array().into_iter().flatten()
+            .filter_map(Value::as_str).any(|name| name.chars().count() >= 2 && text.contains(name));
+        let sector_name = target["sector_name"].as_str().unwrap_or_default();
+        let theme_match = sector_name.chars().count() >= 2 && text.contains(sector_name);
+        let basis = if !matched_symbols.is_empty() { "structured_symbol" } else if name_match { "name" }
+            else if theme_match { "theme" } else { return None; };
+        Some(serde_json::json!({"kind":target["kind"],"sector_code":target["sector_code"],
+            "sector_name":sector_name,"as_of":target["as_of"],"fingerprint":target["fingerprint"],
+            "match_basis":basis,"matched_symbols":matched_symbols,"price_effect_verified":false}))
+    }).collect()
+}
+
 fn news_codes(news: &PreparedNews) -> Vec<String> {
     if news.item.codes.is_empty() {
         news.matches.iter().map(|(code, _)| code.clone()).collect()
     } else {
         news.item.codes.clone()
     }
-}
-
-fn ai_trigger(news: &PreparedNews, keywords: &[&str]) -> Option<&'static str> {
-    if news.route.popup { return Some("重大事件"); }
-    if !news.matches.is_empty() { return Some("自选股"); }
-    let text = format!("{} {}", news.item.title, news.item.body);
-    keywords.iter().any(|word| text.contains(word)).then_some("关注词")
-}
-
-fn local_day() -> String {
-    Utc::now()
-        .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).expect("UTC+8"))
-        .format("%Y-%m-%d")
-        .to_string()
 }
 
 fn stable_hash(text: &str) -> String {
@@ -411,9 +446,20 @@ fn dedupe_key(item: &RawNews) -> String {
     }
 }
 
+#[cfg(test)]
 fn prepare_source(
     db: &Database,
     targets: &HashMap<String, String>,
+    init_key: &str,
+    result: Result<Vec<RawNews>, String>,
+) -> Vec<PreparedNews> {
+    prepare_source_with_mainlines(db, targets, &[], init_key, result)
+}
+
+fn prepare_source_with_mainlines(
+    db: &Database,
+    targets: &HashMap<String, String>,
+    mainlines: &[Value],
     init_key: &str,
     result: Result<Vec<RawNews>, String>,
 ) -> Vec<PreparedNews> {
@@ -428,28 +474,41 @@ fn prepare_source(
     let now = Utc::now().to_rfc3339();
     let mut prepared = Vec::new();
     for item in items {
+        if item.published_at.as_deref().and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
+            .is_some_and(|published| published.with_timezone(&Utc) > Utc::now()) { continue; }
+        if item.published_date.as_deref().and_then(|v| chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d").ok())
+            .is_some_and(|published| published > Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8*3600).unwrap()).date_naive()) { continue; }
         let matches = related(&item, targets);
-        let Some(route) = classify(&format!("{} {}", item.title, item.body)) else {
+        let related_mainlines = related_mainlines(&item, mainlines);
+        let associated = !related_mainlines.is_empty();
+        let Some(route) = classify(&format!("{} {}", item.title, item.body)).or_else(|| {
+            associated.then_some(Route { kind: "主线资讯", popup: false })
+        }) else {
             continue;
         };
-        if !relevant_event(&item, route) {
+        if !associated && !relevant_event(&item, route) {
             continue;
         }
         let key = dedupe_key(&item);
         match db.claim_news(&key, item.source, &now) {
-            Ok(true) if deliver => {
+            Ok(true) => {
                 let fallback_body = if item.body.is_empty() {
                     item.title.clone()
                 } else {
                     item.body.chars().take(240).collect()
                 };
-                prepared.push(PreparedNews {
+                let news = PreparedNews {
                     item,
                     matches,
                     route,
                     key,
                     fallback_body,
-                });
+                    related_mainlines,
+                };
+                if deliver { prepared.push(news); }
+                else if let Err(error) = db.archive_news(&news_payload(news)) {
+                    log::warn!("[news] 初始化原文归档失败：{error}");
+                }
             }
             Ok(_) => {}
             Err(error) => log::warn!("[news] 去重记录失败：{error}"),
@@ -494,32 +553,37 @@ async fn poll_once(db: &Arc<Database>, app: &tauri::AppHandle) {
             return;
         }
     };
-    let cutoff = (Utc::now() - chrono::Duration::days(7)).to_rfc3339();
+    let mainlines = match crate::commands::mainline::news_targets(db) {
+        Ok(rows) => rows,
+        Err(error) => { log::warn!("[news] 主线资讯目标暂不可用：{error}"); Vec::new() }
+    };
+    let cutoff = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
     if let Err(error) = db.purge_news_before(&cutoff) {
         log::warn!("[news] 清理过期去重记录失败：{error}");
     }
     let (fast, announcements) = tokio::join!(fetch_fast(), fetch_announcements());
-    let mut prepared = prepare_source(db, &targets, "news_flash_initialized", fast);
-    prepared.extend(prepare_source(
+    let mut prepared = prepare_source_with_mainlines(db, &targets, &mainlines, "news_flash_initialized", fast);
+    prepared.extend(prepare_source_with_mainlines(
         db,
         &targets,
+        &mainlines,
         "news_announcement_initialized",
         announcements,
     ));
     if prepared.is_empty() {
         return;
     }
-    let mode = db.get_setting("news_notification_mode").ok().flatten().unwrap_or_else(|| "direct".into());
     let db = Arc::clone(db);
     let app = app.clone();
-    // AI 可以花数分钟，资讯抓取必须继续按分钟运行，避免集中公告时漏掉后续页。
+    // 通知逐条投递，资讯抓取继续按分钟运行。自动流程只发布原文。
     tauri::async_runtime::spawn(async move {
-        deliver_prepared_news(&db, &app, prepared, &mode).await;
+        deliver_prepared_news(&db, &app, prepared).await;
     });
 }
 
-fn news_payload(news: PreparedNews, summary: Option<&crate::agent::NewsSummaryItem>, ai_mode: bool) -> Value {
+fn news_payload(news: PreparedNews) -> Value {
     let codes = news_codes(&news);
+    let received_at = if news.item.received_at.is_empty() { Utc::now().to_rfc3339() } else { news.item.received_at.clone() };
     let names = news
         .matches
         .iter()
@@ -531,7 +595,7 @@ fn news_payload(news: PreparedNews, summary: Option<&crate::agent::NewsSummaryIt
     } else {
         format!("★自选 {} · {}", names, news.item.title.chars().take(25).collect::<String>())
     };
-    let mut payload = serde_json::json!({
+    serde_json::json!({
         "signal_id": format!("news:{}", stable_hash(&news.key)),
         "signal_tag": news.route.kind,
         "signal_kind": "news",
@@ -541,17 +605,29 @@ fn news_payload(news: PreparedNews, summary: Option<&crate::agent::NewsSummaryIt
         "alert_type": "news",
         "news_source": news.item.source_label,
         "news_source_id": news.item.source_id,
+        "news_source_kind": news.item.source,
+        "url": news.item.url,
+        "source_url": if news.item.source == "eastmoney_announcement" { ANNOUNCEMENT_URL } else { FAST_URL },
+        "published_at": news.item.published_at,
+        "published_date": news.item.published_date,
+        "publication_precision": news.item.publication_precision,
+        "published_at_source": news.item.published_at_source,
+        "received_at": received_at,
+        "source_received_at": received_at,
+        "source_index_only": news.item.source_index_only,
+        "source_coverage": if news.item.source_index_only { "公告标题索引；未采集公告正文" } else { "快讯列表提供的标题及摘要；非完整报道" },
         "original_title": news.item.title,
         "original_body": news.item.body,
         "severity": if news.route.popup { "high" } else { "record" },
         "symbols": codes,
+        "source_symbols": news.item.codes,
         "watchlist_names": names,
         "watchlist_match": !news.matches.is_empty(),
-        "news_mode": if ai_mode { "ai" } else { "direct" },
+        "related_mainlines": news.related_mainlines,
+        "research_target_match": !news.related_mainlines.is_empty(),
+        "news_mode": "direct",
         "agent_summary": false,
-    });
-    if let Some(summary) = summary { apply_news_summary(&mut payload, summary); }
-    payload
+    })
 }
 
 fn archived_ai_input(payload: &Value) -> Result<crate::agent::NewsAgentItem, String> {
@@ -611,83 +687,15 @@ pub async fn analyze_archived_news(
     Ok(payload)
 }
 
-#[tauri::command]
-pub fn get_news_ai_usage(db: tauri::State<'_, Arc<Database>>) -> Result<Value, String> {
-    let day = local_day();
-    let used = db.news_auto_ai_used(&day).map_err(|error| error.to_string())?;
-    Ok(serde_json::json!({"day": day, "used": used, "limit": auto_ai_budget(&db)}))
-}
-
 async fn deliver_prepared_news(
     db: &Database,
     app: &tauri::AppHandle,
     prepared: Vec<PreparedNews>,
-    mode: &str,
 ) {
-    static AI_BATCHES: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
-    let ai_permit = (mode == "hybrid")
-        .then(|| AI_BATCHES.get_or_init(|| tokio::sync::Semaphore::new(2)).try_acquire().ok())
-        .flatten();
-    let selected = if ai_permit.is_some() { choose_auto_ai(db, &prepared, mode) } else { HashSet::new() };
-    let (ai_news, direct_news): (Vec<_>, Vec<_>) = prepared.into_iter().partition(|news| selected.contains(news.key.as_str()));
-    for news in direct_news {
+    for news in prepared {
         if db.get_setting("news_notifications_enabled").ok().flatten().as_deref() != Some("1") { return; }
-        crate::notifications::publish(app, news_payload(news, None, false));
+        crate::notifications::publish(app, news_payload(news));
         tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    if ai_news.is_empty() { return; }
-    for news in &ai_news {
-        if db.get_setting("news_notifications_enabled").ok().flatten().as_deref() != Some("1") { return; }
-        let mut payload = news_payload(PreparedNews {
-            item: news.item.clone(), matches: news.matches.clone(), route: news.route,
-            key: news.key.clone(), fallback_body: news.fallback_body.clone(),
-        }, None, false);
-        payload["news_mode"] = "hybrid".into();
-        crate::notifications::publish(app, payload);
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    let mut summaries = HashMap::new();
-    let mut pending = ai_news.into_iter();
-    loop {
-            let batch = pending.by_ref().take(20).collect::<Vec<_>>();
-            if batch.is_empty() { break; }
-            let chunk = batch.into_iter().filter_map(|news| {
-                let id = format!("news:{}", stable_hash(&news.key));
-                AiRunGuard::claim(id).ok().map(|guard| (news, guard))
-            }).collect::<Vec<_>>();
-            if chunk.is_empty() { continue; }
-            if db.get_setting("news_notifications_enabled").ok().flatten().as_deref() != Some("1") {
-                return;
-            }
-            let agent_items = chunk.iter().map(|(news, _guard)| crate::agent::NewsAgentItem {
-                id: news.key.clone(),
-                source: news.item.source_label.into(),
-                title: news.item.title.chars().take(240).collect(),
-                body: news.item.body.chars().take(500).collect(),
-                symbols: news_codes(news),
-                rule_kind: news.route.kind.into(),
-                severity: if news.route.popup { "high" } else { "record" }.into(),
-            }).collect::<Vec<_>>();
-            match crate::agent::summarize_news(db, &agent_items).await {
-                Ok(items) => summaries.extend(items.into_iter().map(|item| (item.id.clone(), item))),
-                Err(error) => log::warn!("[news] Agent 解读降级为原文：{error}"),
-            }
-            for (news, _guard) in chunk {
-                if db.get_setting("news_notifications_enabled").ok().flatten().as_deref() != Some("1") {
-                    return;
-                }
-                let summary = summaries.get(&news.key);
-                if let Some(summary) = summary {
-                    let id = format!("news:{}", stable_hash(&news.key));
-                    if let Ok(Some(mut payload)) = db.news_archive_item(&id) {
-                        apply_news_summary(&mut payload, summary);
-                        if db.update_news_analysis(&id, &payload).is_ok() {
-                            crate::notifications::news_analysis_updated(app, &payload, true);
-                        }
-                    }
-                }
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
     }
 }
 
@@ -755,6 +763,7 @@ mod tests {
             title: "别家公司年度报告".into(),
             body: String::new(),
             codes: vec!["000001".into()],
+            ..Default::default()
         };
         assert!(related(&item, &targets).is_empty());
         item.codes = vec!["600519".into()];
@@ -771,6 +780,7 @@ mod tests {
         let mut item = RawNews {
             source: "eastmoney_flash", source_label: "快讯", source_id: "1".into(),
             title: "英超世纪财务案：曼城面临处罚".into(), body: String::new(), codes: vec![],
+            ..Default::default()
         };
         assert!(!relevant_event(&item, classify(&item.title).unwrap()));
         item.title = "央行宣布降准，支持国内实体经济".into();
@@ -783,31 +793,19 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_routes_major_watchlist_and_keywords_but_caps_claude_calls() {
-        let dir = std::env::temp_dir().join(format!("bull-news-hybrid-{}-{}", std::process::id(), Utc::now().timestamp_micros()));
-        let db = Database::open(dir.clone()).unwrap();
-        db.set_setting("news_ai_daily_limit", "2").unwrap();
-        db.set_setting("news_ai_keywords", "机器人,半导体").unwrap();
-        let make = |key: &str, title: &str, popup: bool, matches: Vec<(String, String)>| PreparedNews {
-            item: RawNews { source: "test", source_label: "测试", source_id: key.into(), title: title.into(), body: String::new(), codes: vec![] },
-            matches, route: Route { kind: "测试", popup }, key: key.into(), fallback_body: title.into(),
-        };
-        let news = vec![
-            make("ordinary", "普通资讯", false, vec![]),
-            make("keyword", "机器人相关公告", false, vec![]),
-            make("watch", "自选股消息", false, vec![("600000".into(), "自选".into())]),
-            make("major", "重大风险", true, vec![]),
-        ];
-        let selected = choose_auto_ai(&db, &news, "hybrid");
-        assert_eq!(selected.len(), 2);
-        assert!(selected.contains("major"));
-        assert!(selected.contains("watch"));
-        assert!(!selected.contains("ordinary"));
-        assert!(!selected.contains("keyword"));
-        assert!(choose_auto_ai(&db, &news, "direct").is_empty());
-        assert_eq!(db.news_auto_ai_used(&local_day()).unwrap(), 2);
-        drop(db);
-        std::fs::remove_dir_all(dir).unwrap();
+    fn automatic_delivery_keeps_raw_payload_for_major_and_watchlist_news() {
+        for (popup, matches) in [(true, vec![]), (false, vec![("600000".into(), "自选".into())])] {
+            let payload = news_payload(PreparedNews {
+                item: RawNews { source: "test", source_label: "测试", source_id: "raw".into(), title: "重大风险原文".into(), body: "公告正文".into(), codes: vec!["600000".into()], ..Default::default() },
+                matches, route: Route { kind: "风险", popup }, key: "raw".into(), fallback_body: "公告正文".into(),
+                related_mainlines: vec![],
+            });
+            assert_eq!(payload["news_mode"], "direct");
+            assert_eq!(payload["agent_summary"], false);
+            assert_eq!(payload["original_body"], "公告正文");
+            assert_eq!(payload["body"], "公告正文");
+            assert!(archived_ai_input(&payload).is_ok(), "manual source remains available");
+        }
     }
 
     #[test]
@@ -866,6 +864,7 @@ mod tests {
             title: "非自选公司收到立案告知书".into(),
             body: String::new(),
             codes: vec!["600001".into()],
+            ..Default::default()
         };
         let targets = HashMap::new();
         assert!(prepare_source(&db, &targets, "news_flash_initialized", Ok(vec![item.clone()])).is_empty());
@@ -874,7 +873,7 @@ mod tests {
         let rows = prepare_source(&db, &targets, "news_flash_initialized", Ok(vec![fresh.clone()]));
         assert_eq!(rows.len(), 1);
         assert!(rows[0].matches.is_empty());
-        let payload = news_payload(rows.into_iter().next().unwrap(), None, false);
+        let payload = news_payload(rows.into_iter().next().unwrap());
         assert_eq!(payload["news_mode"], "direct");
         assert_eq!(payload["agent_summary"], false);
         assert_eq!(payload["watchlist_match"], false);
@@ -889,16 +888,18 @@ mod tests {
     #[test]
     fn ai_notification_displays_impact_industry_stocks_and_marks_watchlist() {
         let news = PreparedNews {
-            item: RawNews { source: "test", source_label: "测试", source_id: "1".into(), title: "公司利润预亏".into(), body: String::new(), codes: vec!["600001".into()] },
+            item: RawNews { source: "test", source_label: "测试", source_id: "1".into(), title: "公司利润预亏".into(), body: String::new(), codes: vec!["600001".into()], ..Default::default() },
             matches: vec![("600001".into(), "测试自选".into())],
             route: classify("利润预亏").unwrap(),
             key: "test:1".into(),
             fallback_body: "公司利润预亏".into(),
+            related_mainlines: vec![],
         };
         let summary = crate::agent::NewsSummaryItem {
             id: "test:1".into(), summary: "公司预亏".into(), viewpoint: "盈利压力可能偏利空，影响仍需核实".into(), sentiment: "negative".into(), impact_level: "medium".into(), industries: vec!["制造业".into()], industry_basis: "inferred".into(), stocks: vec!["600001".into()], stock_names: vec![], confidence: 60, evidence: "利润预亏".into(),
         };
-        let payload = news_payload(news, Some(&summary), true);
+        let mut payload = news_payload(news);
+        apply_news_summary(&mut payload, &summary);
         assert!(payload["title"].as_str().unwrap().contains("★自选 测试自选"));
         let body = payload["body"].as_str().unwrap();
         for text in ["事实：", "观点：", "利空", "影响：中", "制造业（推测）", "600001", "依据：利润预亏"] {
@@ -930,8 +931,75 @@ mod tests {
             title: "标题".into(),
             body: "正文".into(),
             codes: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(dedupe_key(&item), dedupe_key(&item));
         assert!(dedupe_key(&item).starts_with("test:body:"));
+    }
+
+    #[test]
+    fn verified_publication_metadata_and_mainline_original_news_keep_time_boundaries() {
+        let dir=std::env::temp_dir().join(format!("bull-mainline-news-{}-{}",std::process::id(),Utc::now().timestamp_micros()));
+        let db=Database::open(dir.clone()).unwrap();
+        db.set_setting("news_flash_initialized","1").unwrap();
+        let now=Utc::now()-chrono::Duration::seconds(2);
+        let local=now.with_timezone(&chrono::FixedOffset::east_opt(8*3600).unwrap());
+        let fast=parse_fast(&serde_json::json!({"code":"1","data":{"fastNewsList":[{
+            "code":"real-format-fixture","title":"恒瑞医药研发项目进度","summary":"源接口摘要", "stockList":["1.600276"],
+            "showTime":local.format("%Y-%m-%d %H:%M:%S").to_string()}]}})).unwrap();
+        assert_eq!(fast[0].published_at_source,"showTime");
+        assert!(fast[0].published_at.as_ref().unwrap().ends_with("+08:00"));
+        assert!(fast[0].url.is_none(),"列表没有链接字段，不能猜造快讯 URL");
+        let ann=parse_announcements(&serde_json::json!({"success":1,"data":{"list":[{
+            "art_code":"AN202610011830059731","title_ch":"贝泰妮投资者关系活动记录表",
+            "codes":[{"stock_code":"300957"}],"display_time":"2026-10-01 00:37:09:681",
+            "notice_date":"2026-10-01 00:00:00","sort_date":"2099-01-01 12:00:00"}]}})).unwrap();
+        assert_eq!(ann[0].published_at.as_deref(),Some("2026-10-01T00:37:09.681+08:00"));
+        assert_eq!(ann[0].published_at_source,"display_time");
+        assert!(ann[0].source_index_only && ann[0].body.is_empty());
+        assert_eq!(ann[0].url.as_deref(),Some("https://data.eastmoney.com/notices/detail/300957/AN202610011830059731.html"));
+        let targets=vec![serde_json::json!({"kind":"industry","sector_code":"801150","sector_name":"医药生物",
+            "as_of":"2026-09-30","fingerprint":"fixture","snapshot_current":true,
+            "symbols":["sh600276"],"names":["恒瑞医药"]}),
+            serde_json::json!({"kind":"concept","sector_code":"stale","sector_name":"研发",
+                "as_of":"2026-09-29","fingerprint":"stale","snapshot_current":false,"symbols":["sh600276"]})];
+        let prepared=prepare_source_with_mainlines(&db,&HashMap::new(),&targets,"news_flash_initialized",Ok(fast.clone()));
+        assert_eq!(prepared.len(),1,"主线原文无需事件白名单中的关键词");
+        let payload=news_payload(prepared.into_iter().next().unwrap());
+        assert_eq!(payload["related_mainlines"].as_array().unwrap().len(),1);
+        assert_eq!(payload["related_mainlines"][0]["match_basis"],"structured_symbol");
+        assert_eq!(payload["watchlist_match"],false);
+        assert_eq!(payload["agent_summary"],false);
+        db.archive_news(&payload).unwrap();
+        assert!(prepare_source_with_mainlines(&db,&HashMap::new(),&targets,"news_flash_initialized",Ok(fast)).is_empty());
+        let mut future=payload.clone();future["signal_id"]="news:future-received".into();
+        future["source_received_at"]=(Utc::now()+chrono::Duration::days(1)).to_rfc3339().into();
+        db.archive_news(&future).unwrap();
+        let mut future=payload.clone();future["signal_id"]="news:future-publication".into();
+        future["published_at"]=(Utc::now()+chrono::Duration::days(1)).to_rfc3339().into();
+        db.archive_news(&future).unwrap();
+        let mut manual=payload.clone();manual["body"]="后来手动 AI 观点".into();manual["agent_summary"]=true.into();
+        db.update_news_analysis(payload["signal_id"].as_str().unwrap(),&manual).unwrap();
+        let as_of=(local.date_naive()-chrono::Duration::days(1)).to_string();
+        let rows=db.recent_research_news(&[],&["sh600276".into()],&[],&as_of).unwrap();
+        assert_eq!(rows.len(),1,"未来采集/发布时间不能进入近期研究证据");
+        assert_eq!(rows[0]["body"],"源接口摘要","只引用原文，不把后续 AI 观点当资讯事实");
+        assert_eq!(rows[0]["available_for_market_asof"],false);
+        assert_eq!(rows[0]["coverage_complete"],false);
+        assert_eq!(rows[0]["match_basis"],"structured_symbol");
+        let inferred=news_payload(PreparedNews {
+            item:RawNews {source:"test",source_label:"测试",source_id:"name-only".into(),title:"恒瑞医药研发进度".into(),
+                body:"名称关联摘要".into(),received_at:Utc::now().to_rfc3339(),..Default::default()},
+            matches:vec![("600276".into(),"恒瑞医药".into())],route:Route{kind:"公司事项",popup:false},key:"name-only".into(),
+            fallback_body:"名称关联摘要".into(),related_mainlines:vec![],
+        });
+        assert!(inferred["source_symbols"].as_array().unwrap().is_empty());
+        assert_eq!(inferred["symbols"][0],"600276");
+        db.archive_news(&inferred).unwrap();
+        let rows=db.recent_research_news(&[],&["sh600276".into()],&["恒瑞医药".into()],&as_of).unwrap();
+        let row=rows.iter().find(|r|r["source_id"]=="name-only").unwrap();
+        assert_eq!(row["match_basis"],"name");
+        assert_ne!(row["match_basis"],"structured_symbol","名称推断不得改称源结构化代码");
+        drop(db);std::fs::remove_dir_all(dir).unwrap();
     }
 }

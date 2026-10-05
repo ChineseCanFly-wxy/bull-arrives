@@ -19,13 +19,13 @@ const DEFAULT_TIMEOUT_SECS: u64 = 180;
 const MAX_INPUT_BYTES: usize = 512 * 1024;
 const MAX_OUTPUT_BYTES: u64 = 64 * 1024;
 const SCHEMA_VERSION: &str = "agent-analysis-v2";
-const PROMPT_REVISION: &str = "single-stock-v4";
+const PROMPT_REVISION: &str = "single-stock-v7-model-scan";
 const NEWS_SCHEMA_VERSION: &str = "agent-news-v3";
 const NEWS_PROMPT_REVISION: &str = "news-summary-v4";
 const FILTER_SCHEMA_VERSION: &str = "agent-filter-v1";
 const FILTER_PROMPT_REVISION: &str = "dynamic-filter-v1";
 const TEAM_SCHEMA_VERSION: &str = "agent-team-v1";
-const TEAM_PROMPT_REVISION: &str = "multi-role-v3";
+const TEAM_PROMPT_REVISION: &str = "multi-role-v4-research";
 const LAUNCHER_ARG: &str = "--bull-arrives-agent-launcher";
 const START_FILE: &str = ".start";
 /// 每次调用用的工作目录都放在这个子目录下。
@@ -671,6 +671,34 @@ pub fn status(db: &Database) -> AgentStatus {
     }
 }
 
+pub(crate) fn attach_research_context(db: &Database, symbol: &str, analysis: &mut StockAnalysis) -> Result<(), String> {
+    let as_of=analysis.history.as_ref().and_then(|h|h.end_date.as_deref()).unwrap_or("未知");
+    let model_research=crate::commands::research_evidence::stock_research_context(db,symbol,as_of)
+        .unwrap_or_else(|error|serde_json::json!({"available":false,"production_admission":false,"error":error,"models":[]}));
+    let (targets,mainline_error)=match crate::commands::mainline::news_targets(db){Ok(rows)=>(rows,None),Err(error)=>(Vec::new(),Some(error))};
+    let mainlines=targets.into_iter().filter(|row| {
+        row["as_of"].as_str()==Some(as_of) && row["symbols"].as_array().is_some_and(|symbols|symbols.iter().any(|s|s.as_str()==Some(symbol)))
+    }).collect::<Vec<_>>();
+    let sector_names=mainlines.iter().filter_map(|r|r["sector_name"].as_str().map(str::to_owned)).collect::<Vec<_>>();
+    let name=model_research["models"].as_array().into_iter().flatten().find_map(|r|r["observation"]["name"].as_str()).map(str::to_owned);
+    let mut names=name.into_iter().collect::<Vec<_>>();
+    if let Ok(watchlist)=db.get_watchlist() {
+        names.extend(watchlist.into_iter().filter(|r|r.code==symbol).map(|r|r.name));
+    }
+    for mainline in &mainlines {
+        if let (Some(symbols),Some(labels))=(mainline["symbols"].as_array(),mainline["names"].as_array()) {
+            names.extend(symbols.iter().zip(labels).filter(|(code,_)|code.as_str()==Some(symbol)).filter_map(|(_,label)|label.as_str().map(str::to_owned)));
+        }
+    }
+    names.sort();names.dedup();
+    let (recent_news,news_error)=match db.recent_research_news(&sector_names,&[symbol.to_owned()],&names,as_of){Ok(rows)=>(rows,None),Err(error)=>(Vec::new(),Some(error))};
+    let financial_research=crate::commands::research_extensions::stock_financial_context(symbol,as_of).unwrap_or_else(|error|serde_json::json!({"available":false,"message":error}));
+    analysis.research_context=Some(serde_json::json!({"model_research":model_research,"financial_research":financial_research,"mainlines":mainlines,"mainline_error":mainline_error,"news_error":news_error,"recent_news":recent_news,
+        "news_scope":"最近七日采集的归档按结构化股票代码、已关注主线及名称检索；仅已采集原文，未采到不等于没有利空；发布时间与采集时间分开。资讯是当前研究解释，不作为历史模型因子或截止日开盘前已知证据。",
+        "legacy_rule_note":"旧技术评分与单股回测不能替代多股多年证据；财务37对执行时机敏感，未替换主模型"}));
+    Ok(())
+}
+
 fn evidence_values(analysis: &StockAnalysis) -> BTreeMap<String, EvidenceValue> {
     let history = analysis.history.as_ref();
     let source = history
@@ -721,6 +749,56 @@ fn evidence_values(analysis: &StockAnalysis) -> BTreeMap<String, EvidenceValue> 
             Some(backtest.trust.profit_probability),
         );
     }
+    if let Some(context)=&analysis.research_context {
+        let models=&context["model_research"];
+        let research_source=format!("多年冻结研究 {} · {}",models["run_id"].as_str().unwrap_or("不可用"),models["evidence_sha256"].as_str().unwrap_or("无指纹"));
+        let date=models["frozen_as_of"].as_str().unwrap_or(&as_of).to_owned();
+        let mut research_insert=|field:String,value:String,source:String,date:String| {
+            values.insert(field,EvidenceValue{value,source,as_of:date});
+        };
+        research_insert("research_status".into(),"探索研究，未生产准入；多年证据不等于该股票未来收益".into(),research_source.clone(),date.clone());
+        for model in models["models"].as_array().into_iter().flatten() {
+            let prefix=match model["id"].as_str(){Some("breadth22_h20")=>"breadth22",Some("index26_h20")=>"index26",_=>continue};
+            let score_date=model["score_as_of"].as_str().unwrap_or(&date).to_owned();
+            let score_source=if model["model_scan_job_id"].is_number(){format!("实际筛选任务 #{} · {} · {}",model["model_scan_job_id"],model["model_scan_source_fingerprint"],model["current_data_sha256"])}else if model["model_run_sha256"].is_string(){format!("本机受信前向账本 #{} · {} · {}",model["model_run_id"],model["model_run_sha256"].as_str().unwrap(),model["current_data_sha256"])}else{research_source.clone()};
+            let status=match model["signal_status"].as_str(){Some("positive_record")=>"已登记正分观察，非买入许可",Some("nonpositive_record")=>"真实二十日收益标签预测为零或负，非下跌概率",Some("date_mismatch")=>"日期不符，当前评分未知",_=>"未登记对应全量分值，不能判定负分或未评分"};
+            research_insert(format!("{prefix}_signal"),status.into(),score_source.clone(),score_date.clone());
+            if let Some(score)=model["score"].as_f64().filter(|n|n.is_finite()) {
+                research_insert(format!("{prefix}_label_score"),format!("{:.4}%（二十日收益标签预测，非胜率）",score*100.0),score_source.clone(),score_date.clone());
+            }
+            for (field,pointer) in [("train_net","/train/net_return_pct"),("validation_net","/validation/net_return_pct"),("test_net","/test/net_return_pct"),("test_drawdown","/test/max_drawdown_pct"),("double_cost_net","/double_cost_return_pct")] {
+                if let Some(value)=model["performance"].pointer(pointer).and_then(Value::as_f64).filter(|n|n.is_finite()) {
+                    research_insert(format!("{prefix}_{field}"),format!("{value:.3}%"),research_source.clone(),date.clone());
+                }
+            }
+        }
+        for model in models["latest_model_scan"]["models"].as_array().into_iter().flatten() {
+            let Some(id)=model["model_id"].as_str().filter(|id|crate::commands::research_jobs::MODEL_IDS.contains(id)) else {continue;};
+            let prefix=format!("scan_{id}");let date=model["as_of"].as_str().unwrap_or(&as_of).to_owned();
+            let source=format!("实际筛选任务 #{} · 模型 {} · 输入 {}",model["job_id"],model["model_sha256"].as_str().unwrap_or("未知"),model["source_fingerprint"].as_str().unwrap_or("未知"));
+            let status=match model["signal_status"].as_str(){Some("positive_record")=>"满足原冻结阈值与资格条件，尚未生产准入",Some("nonpositive_record")=>"该股已有真实评分，但未超过模型原阈值，非下跌概率",_=>"该股没有当日模型评分，方向未知"};
+            research_insert(format!("{prefix}_signal"),status.into(),source.clone(),date.clone());
+            if let (Some(score),Some(threshold))=(model["score"].as_f64(),model["threshold"].as_f64()) {
+                if score.is_finite()&&threshold.is_finite(){let units=if id=="breadth22_rank20"{format!("排序标签原值 {score:.6}，固定阈值 > {threshold:.6}")}else{format!("模型标签代理 {:.4}%，固定阈值 > {:.4}%",score*100.,threshold*100.)};research_insert(format!("{prefix}_label_score"),format!("{units}；{}；非胜率",model["score_semantic"].as_str().unwrap_or("标签含义未知")),source,date);}
+            }
+        }
+        for (index,news) in context["recent_news"].as_array().into_iter().flatten().take(12).enumerate() {
+            let text=format!("{}\n{}",news["title"].as_str().unwrap_or(""),news["body"].as_str().unwrap_or(""));
+            let text=text.chars().take(650).collect::<String>();
+            let source=format!("{} · {} · {}",news["source"].as_str().unwrap_or("资讯归档"),news["id"].as_str().unwrap_or(""),news["url"].as_str().unwrap_or("无原文链接"));
+            let date=format!("发布 {}；采集 {}",news["published_at"].as_str().unwrap_or("未知"),news["received_at"]);
+            research_insert(format!("news_{:02}",index+1),text,source,date);
+        }
+        let financial=&context["financial_research"];
+        let finance_source=format!("保守公告时点财务研究 {} · {}；历史修订链未认证",financial["source"].as_str().unwrap_or("未知"),financial["source_sha256"].as_str().unwrap_or("无指纹"));
+        let finance_date=format!("报告期 {}；首公告 {}；修订 {}；入库 {}；可用信号日 {}",financial["fields"]["report_date"],financial["fields"]["first_notice_date"],financial["fields"]["revision_date"],financial["fields"]["provider_ingestion_date"],financial["fields"]["available_signal_date"]);
+        if financial["available"]==true {
+            research_insert("financial_status".into(),"保守日期值可读；完整修订链与财务37执行稳健性未通过，非买入依据".into(),finance_source.clone(),finance_date.clone());
+            for (key,label,unit) in [("revenue_yoy_pct","营收累计同比","%"),("profit_yoy_pct","利润累计同比","%"),("roe_pct","累计ROE","%"),("cash_per_share_cny","累计经营现金流每股","元"),("debt_assets_pct","负债资产比例","%"),("eps_cny","累计每股收益","元")] {
+                if let Some(number)=financial["fields"][key].as_f64().filter(|n|n.is_finite()){research_insert(format!("financial_{key}"),format!("{label} {number:.4}{unit}"),finance_source.clone(),finance_date.clone());}
+            }
+        }
+    }
     values
 }
 
@@ -738,6 +816,12 @@ pub fn freeze_snapshot_with_history(
     analysis: &StockAnalysis,
     klines: &[crate::domain::KLineData],
 ) -> Result<String, String> {
+    let mut enriched;
+    let analysis=if analysis.research_context.is_none() {
+        enriched=analysis.clone();
+        attach_research_context(db,symbol,&mut enriched)?;
+        &enriched
+    }else{analysis};
     let recent_klines = &klines[klines.len().saturating_sub(60)..];
     let evidence = evidence_values(analysis);
     let as_of = analysis
@@ -847,6 +931,19 @@ fn parse_output(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
+    if input.quantitative_analysis.research_context.is_some() {
+        if !claims.iter().any(|claim|claim.evidence.iter().any(|e|e.field=="research_status")) {
+            return Err("解读必须引用多年研究准入状态，不能只复述旧技术指标".into());
+        }
+        if input.evidence.keys().any(|key|key.ends_with("_signal")) && !claims.iter().any(|claim|claim.evidence.iter().any(|e|e.field.ends_with("_signal")||e.field.ends_with("_label_score"))) {
+            return Err("解读必须解释该股的真实模型观察身份或分值，不能只贴研究免责声明".into());
+        }
+        if input.evidence.keys().any(|key|key.starts_with("news_")) && !claims.iter().any(|claim|claim.evidence.iter().any(|e|e.field.starts_with("news_"))) {
+            return Err("已提供近期相关原文，解读必须引用资讯证据并说明影响或不确定性".into());
+        }
+        if input.evidence.contains_key("financial_status")&&!claims.iter().any(|claim|claim.evidence.iter().any(|e|e.field.starts_with("financial_"))){return Err("已提供真实公告时点财务值，解读需要说明财务依据或版本局限".into());}
+        if input.evidence.contains_key("intraday_observation")&&!claims.iter().any(|claim|claim.evidence.iter().any(|e|e.field=="intraday_observation")){return Err("已提供新鲜分钟观察，解读必须说明确认状态与未验证盈利的边界".into());}
+    }
     if output.confidence > 100
         || output.evidence_fields.is_empty()
         || output.evidence_fields.len() > 8
@@ -1644,6 +1741,20 @@ pub async fn discover_strategy(db: &Database, context: Value) -> Result<Value, S
     serde_json::from_str(&raw).map_err(|_| "策略候选不是有效 JSON".into())
 }
 
+/// 研究中心的模型任务书；运行范围由可信回放程序固定，AI 不输出可执行代码。
+pub async fn discover_model_research(db:&Database,context:Value)->Result<Value,String>{
+    if db.get_setting("ai_enabled").ok().flatten().as_deref()==Some("0"){return Err("AI 总开关已关闭".into());}
+    let state=status(db);let path=state.path.filter(|_|state.installed).ok_or(state.message)?;
+    let schema=r#"{"type":"object","additionalProperties":false,"required":["name","hypothesis","model_id","holding_days","comparison","invalidation","missing_data"],"properties":{"name":{"type":"string","minLength":1,"maxLength":40},"hypothesis":{"type":"string","minLength":20,"maxLength":800},"model_id":{"enum":["breadth22_h20","index26_h20","breadth22_excess_csi20","breadth22_rank20","breadth22_open_downside20"]},"holding_days":{"enum":[15,20]},"comparison":{"enum":["baseline","holding15","cost_double","staged","verified_actions"]},"invalidation":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string","minLength":1,"maxLength":200}},"missing_data":{"type":"array","maxItems":12,"items":{"type":"string","minLength":1,"maxLength":200}}}}"#;
+    let input=serde_json::to_string_pretty(&serde_json::json!({"task":"model_research_discovery","context":context})).map_err(|e|e.to_string())?;
+    if input.len()>MAX_INPUT_BYTES{return Err("模型研究输入超过 512 KiB".into());}
+    let fingerprint=sha256(input.as_bytes());
+    let (raw,_)=run_structured(db,PathBuf::from(path),&fingerprint,&input,schema,None).await?;
+    let output:Value=serde_json::from_str(&raw).map_err(|_|"模型任务书不是有效 JSON")?;
+    // Caller validates the mechanism and deduplicates it against registered tasks.
+    Ok(output)
+}
+
 pub async fn analyze_question(
     db: &Database,
     fingerprint: &str,
@@ -1765,6 +1876,52 @@ pub async fn summarize_news(
     )
     .await?;
     parse_news_output(&raw, &input)
+}
+
+/// Claude 解释确定性主线快照；证据必须引用近期原文，数字仍由程序展示。
+pub async fn summarize_mainline(db: &Database, fingerprint: &str, context: Value) -> Result<Value, String> {
+    if db.get_setting("ai_enabled").ok().flatten().as_deref() == Some("0") { return Err("AI 总开关已关闭".into()); }
+    let state=status(db); let path=state.path.filter(|_|state.installed).ok_or(state.message)?;
+    let schema=r#"{"type":"object","additionalProperties":false,"required":["context_fingerprint","overview","positives","negatives","uncertainties"],"properties":{"context_fingerprint":{"type":"string","minLength":64,"maxLength":64},"overview":{"type":"string","minLength":1,"maxLength":600},"positives":{"type":"array","maxItems":6,"items":{"type":"object","additionalProperties":false,"required":["text","source_ids","evidence"],"properties":{"text":{"type":"string","minLength":1,"maxLength":300},"source_ids":{"type":"array","minItems":1,"maxItems":4,"items":{"type":"string"}},"evidence":{"type":"string","minLength":1,"maxLength":180}}}},"negatives":{"type":"array","maxItems":6,"items":{"type":"object","additionalProperties":false,"required":["text","source_ids","evidence"],"properties":{"text":{"type":"string","minLength":1,"maxLength":300},"source_ids":{"type":"array","minItems":1,"maxItems":4,"items":{"type":"string"}},"evidence":{"type":"string","minLength":1,"maxLength":180}}}},"uncertainties":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string","minLength":1,"maxLength":300}}}}"#;
+    let input=serde_json::to_string_pretty(&serde_json::json!({"task":"mainline_research","context_fingerprint":fingerprint,"context":context})).map_err(|e|e.to_string())?;
+    db.save_agent_snapshot(fingerprint,&input)?;
+    let key=sha256(format!("mainline:{}:{fingerprint}:{schema}",workbench::prompt_hash("mainline_research","")).as_bytes());
+    if let Some((raw,_))=db.get_agent_result(&key)? { return validate_mainline_output(&raw,&context,fingerprint); }
+    let (raw,generated)=run_structured(db,PathBuf::from(path),fingerprint,&input,schema,None).await?;
+    let result=validate_mainline_output(&raw,&context,fingerprint)?;
+    db.save_agent_result(&key,fingerprint,&raw,&generated)?;
+    Ok(result)
+}
+
+fn validate_mainline_output(raw: &str, context: &Value, fingerprint: &str) -> Result<Value,String> {
+    let output:Value=serde_json::from_str(raw).map_err(|_|"主线汇总不是有效 JSON")?;
+    let object=output.as_object().ok_or("主线汇总结构无效")?;
+    if object.len()!=5 || output["context_fingerprint"].as_str()!=Some(fingerprint) {return Err("主线汇总指纹或字段不符".into());}
+    let overview=output["overview"].as_str().ok_or("汇总缺概述")?;
+    if overview.trim().is_empty() || overview.chars().count()>600 || overview.chars().any(|c|c.is_ascii_digit()) {return Err("汇总概述无效或包含未绑定数值".into());}
+    let sources=context["news"].as_array().ok_or("快照缺资讯清单")?;
+    for key in ["positives","negatives"] {
+        let rows=output[key].as_array().ok_or("利好利空结构无效")?;
+        if rows.len()>6 {return Err("利好利空条数过多".into());}
+        for row in rows {
+            if row.as_object().map_or(true,|o|o.len()!=3) {return Err("资讯判断存在未知字段".into());}
+            let text=row["text"].as_str().ok_or("资讯判断缺文本")?;
+            let evidence=row["evidence"].as_str().ok_or("资讯判断缺原文证据")?;
+            if text.trim().is_empty() || text.chars().count()>300 || text.chars().any(|c|c.is_ascii_digit()) || evidence.is_empty() || evidence.chars().count()>180 {return Err("资讯判断或证据长度无效；数值请查看原文".into());}
+            let ids=row["source_ids"].as_array().ok_or("缺资讯引用")?;
+            if ids.is_empty() || ids.len()>4 {return Err("资讯引用数量无效".into());}
+            let mut copied=false;
+            for id in ids {
+                let id=id.as_str().ok_or("资讯引用标识无效")?;
+                let source=sources.iter().find(|s|s["id"].as_str()==Some(id)).ok_or("汇总引用了不存在的资讯")?;
+                copied |= source["title"].as_str().unwrap_or("").contains(evidence) || source["body"].as_str().unwrap_or("").contains(evidence);
+            }
+            if !copied {return Err("汇总证据不是引用资讯的连续原文".into());}
+        }
+    }
+    let missing=output["uncertainties"].as_array().ok_or("缺少不确定性说明")?;
+    if missing.is_empty() || missing.len()>8 || missing.iter().any(|v|v.as_str().map_or(true,|s|s.trim().is_empty()||s.chars().count()>300)) {return Err("不确定性说明无效".into());}
+    Ok(output)
 }
 
 pub async fn propose_dynamic_filter(
@@ -2171,6 +2328,67 @@ mod tests {
     }
 
     #[test]
+    fn mainline_rejects_made_up_sources_and_evidence() {
+        let context=serde_json::json!({"news":[{"id":"news:one","title":"研发取得进展","body":"试验仍需后续验证"}]});
+        let mut result=serde_json::json!({"context_fingerprint":"frozen","overview":"研发进展支持观察，但仍需验证","positives":[{"text":"研发有所进展","source_ids":["news:one"],"evidence":"研发取得进展"}],"negatives":[],"uncertainties":["行情观察尚未经过多年验证"]});
+        assert!(validate_mainline_output(&result.to_string(),&context,"frozen").is_ok());
+        result["positives"][0]["source_ids"]=serde_json::json!(["made-up"]);
+        assert!(validate_mainline_output(&result.to_string(),&context,"frozen").is_err());
+        result["positives"][0]["source_ids"]=serde_json::json!(["news:one"]);result["positives"][0]["evidence"]="盈利确定翻倍".into();
+        assert!(validate_mainline_output(&result.to_string(),&context,"frozen").is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires logged-in Claude Code and existing debug launcher; billed manual research smoke"]
+    async fn claude_mainline_summary_with_cited_recent_news() {
+        let root=std::env::temp_dir().join(format!("bull-mainline-claude-{}",uuid::Uuid::new_v4()));
+        let db=Database::open(root.clone()).unwrap();
+        let fingerprint=sha256(b"mainline-synthetic-protocol-check");
+        let context=serde_json::json!({"model_status":"unvalidated_hypothesis","strong":false,"news":[{"id":"news:protocol","title":"合成协议测试：研究尚未通过","body":"这是用于验证来源引用的合成数据，不描述真实公司或行情。","source":"synthetic test","received_at":chrono::Utc::now().to_rfc3339(),"published_at":null}],"limitations":["合成协议测试，无真实证券和买卖计划"]});
+        let response=summarize_mainline(&db,&fingerprint,context).await.unwrap();
+        assert_eq!(response["context_fingerprint"],fingerprint);
+        println!("{}",response);drop(db);std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore="billed Claude check using read-only StockDB and a saved real announcement; set BULL_REAL_RESEARCH_SOURCE and BULL_REAL_RESEARCH_OUT"]
+    async fn real_stock_model_and_announcement_explanation() {
+        let source=std::env::var("BULL_REAL_RESEARCH_SOURCE").expect("saved real announcement path");
+        let out=std::path::PathBuf::from(std::env::var("BULL_REAL_RESEARCH_OUT").expect("new output path"));
+        assert!(!out.exists(),"do not overwrite an existing real-check artifact");
+        let article:Value=serde_json::from_str(&std::fs::read_to_string(source).unwrap()).unwrap();
+        assert_eq!(article["success"],1);
+        assert_eq!(article["data"]["art_code"],"AN202610011830059731");
+        let body=article["data"]["notice_content"].as_str().unwrap().split_whitespace().collect::<Vec<_>>().join(" ");
+        let root=std::env::temp_dir().join(format!("bull-real-research-{}",uuid::Uuid::new_v4()));
+        let db=Database::open(root.clone()).unwrap();
+        db.set_setting("local_history_enabled","1").unwrap();
+        db.set_setting("local_history_url","http://127.0.0.1:7899").unwrap();
+        let timeout=std::env::var("BULL_REAL_RESEARCH_TIMEOUT").unwrap_or_else(|_|"180".into());
+        db.set_setting("agent_timeout_seconds",&timeout).unwrap();
+        db.archive_news(&serde_json::json!({"signal_id":"news:real-AN202610011830059731","signal_kind":"news","news_source":"东方财富公司公告详情正文","news_source_id":"AN202610011830059731","original_title":article["data"]["notice_title"],"original_body":body,"symbols":["300957"],"published_at":"2026-10-01T00:37:09+08:00","publication_precision":"second","source_received_at":now(),"url":"https://data.eastmoney.com/notices/detail/300957/AN202610011830059731.html","source_index_only":false})).unwrap();
+        let (mut analysis,bars)=crate::commands::analysis::analyze_stock_impl(&db,"sz300957",None).await.unwrap();
+        attach_research_context(&db,"sz300957",&mut analysis).unwrap();
+        let fingerprint=freeze_snapshot_with_history(&db,"sz300957",&analysis,&bars).unwrap();
+        let input=db.get_agent_snapshot(&fingerprint).unwrap().unwrap();
+        let context=&analysis.research_context.as_ref().unwrap()["model_research"];
+        assert_eq!(context["date_matches"],true);
+        assert!(context["models"].as_array().unwrap().iter().all(|m|m["score"].as_f64().is_some()));
+        assert_eq!(analysis.research_context.as_ref().unwrap()["recent_news"][0]["published_after_market_asof"],true);
+        assert_eq!(analysis.research_context.as_ref().unwrap()["financial_research"]["available"],true);
+        let result=analyze_question(&db,&fingerprint,Some("请先说两个多年研究模型对该股的真实意见，引用财务研究证据解释利润与现金流及修订链限制，再解释最新公告的业务影响与不足；说明新公告发生在行情截止日后，不能证明此前模型有效。用简单明确的话给观察条件与反证。")).await;
+        let artifact=serde_json::json!({"schema":"real-stock-research-check-v1","input":serde_json::from_str::<Value>(&input).unwrap(),"response":&result,"runs":db.agent_run_history(&fingerprint).unwrap(),"note":"真实股票本地行情与当日公告解释检查；保留调用失败，不证明策略有效，不产生订单。"});
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        std::fs::write(&out,serde_json::to_string_pretty(&artifact).unwrap()).unwrap();
+        println!("real research artifact: {}",out.display());
+        assert_eq!(result.status,"ready","{:?}",result.error);
+        assert!(result.claims.iter().any(|c|c.evidence.iter().any(|e|e.field=="research_status")));
+        assert!(result.claims.iter().any(|c|c.evidence.iter().any(|e|e.field.starts_with("news_"))));
+        assert!(result.claims.iter().any(|c|c.evidence.iter().any(|e|e.field.starts_with("financial_"))));
+        drop(db);std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn frozen_history_is_bounded_and_part_of_the_fingerprint() {
         let dir = RunDir::create("history-regression").unwrap();
         let db = Database::open(dir.path().to_path_buf()).unwrap();
@@ -2326,6 +2544,15 @@ mod tests {
         let valid = r#"{"schema_version":"agent-analysis-v2","context_fingerprint":"abc","conclusion":"bullish","summary":"当前价格接近均线，应关注趋势能否保持。","claims":[{"kind":"support","text":"价格可与均线对照。","evidence_fields":["close","ma20"]},{"kind":"risk","text":"跌破均线会削弱判断。","evidence_fields":["ma20"]}],"evidence_fields":["close","ma20"],"confidence":70,"invalidation_conditions":[{"field":"close","operator":"lt","reference_field":"ma20"}]}"#;
         let parsed = parse_output(valid, &input, "2026-09-18T00:00:00".into()).unwrap();
         assert_eq!(parsed.evidence[0].value, "10.4000");
+        let mut research=input.clone();
+        research.quantitative_analysis.research_context=Some(serde_json::json!({"model_research":{"run_id":"test","frozen_as_of":"2026-09-18","models":[]},"recent_news":[{"id":"news:test","title":"公告提示不确定性","body":"原文需继续核实","source":"测试","published_at":"2026-09-18","received_at":1}]}));
+        research.evidence=evidence_values(&research.quantitative_analysis);
+        assert!(parse_output(valid,&research,now()).unwrap_err().contains("研究准入状态"));
+        let mut bound:Value=serde_json::from_str(valid).unwrap();
+        bound["claims"][1]["evidence_fields"]=serde_json::json!(["research_status"]);
+        assert!(parse_output(&bound.to_string(),&research,now()).unwrap_err().contains("资讯证据"));
+        bound["claims"][0]["evidence_fields"]=serde_json::json!(["close","ma20","news_01"]);
+        assert!(parse_output(&bound.to_string(),&research,now()).is_ok());
         let invented = r#"{"schema_version":"agent-analysis-v2","context_fingerprint":"abc","conclusion":"bullish","evidence_fields":["target_price"],"confidence":90,"invalidation_conditions":[{"field":"total_score","operator":"lt","reference_field":"target_price"}]}"#;
         assert!(parse_output(invented, &input, now()).is_err());
         let wrong_snapshot = valid.replace("\"abc\"", "\"other\"");

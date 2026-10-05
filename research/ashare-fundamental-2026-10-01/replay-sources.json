@@ -1,0 +1,435 @@
+{
+  "schema": "financial-replay-trusted-sources-v1",
+  "model_id": "fundamental37_h20",
+  "source_run_id": "ashare-fundamental-2026-10-01-conservative-ablation-v1",
+  "files": {
+    "fundamental_study": {
+      "path": "research/ashare-fundamental-2026-10-01/fundamental_study.py",
+      "sha256": "227fc1d492f706e72620a51c6badc189d358cefabc9aa2f103068668b81828a2"
+    },
+    "fundamental_summary": {
+      "path": "research/ashare-fundamental-2026-10-01/summary.json",
+      "sha256": "c7000c26bab85d422e1fa206141bf84469663f88b487195cc1dc5f081b487447"
+    },
+    "financial_preregistered": {
+      "path": "research/ashare-fundamental-2026-10-01/preregistered.json",
+      "sha256": "bda7f41d3652f236276b67b0554dbd28b5543e0e8139df7d72f0171ed46382e9"
+    },
+    "current_stock_evidence": {
+      "path": "research/ashare-fundamental-2026-10-01/current-stock-evidence.json",
+      "sha256": "2f0cdf376e8a4768439d4b5e1b7d195a50dbe4d0bb47668ea0a74e02dcb956ff"
+    },
+    "research_summary": {
+      "path": "research/ashare-fundamental-2026-10-01/research-summary-with-neighbors.json",
+      "sha256": "2330e4e09d63816bdc3d11637144ea327c1904a737671c7c770ff66294cb49b5"
+    },
+    "final_manifest": {
+      "path": "research/ashare-fundamental-2026-10-01/final-manifest.json",
+      "sha256": "1092b560a2211275069042fec95b45048b54736f8bc3b62d644ce99bea4a9405"
+    },
+    "snapshot": {
+      "path": "research/ashare-open-2026-10-01/stockdb-live/exports/matrices.npz",
+      "sha256": "cf2865346a68a54f7747d46b5494e844495805053427101b62edae390900da06"
+    },
+    "metadata": {
+      "path": "research/ashare-open-2026-10-01/stockdb-live/exports/matrices-metadata.json",
+      "sha256": "7b07eea5df40a8c5c900e6face7bb69057907fecbdd341f38ceb7da376c96eb7"
+    },
+    "index": {
+      "path": "research/ashare-open-2026-10-01/online/index-sh-000300.ndjson",
+      "sha256": "41d9fe17388267583589419df5c3d825415694c0e23f780d51b2c9b044f0123a"
+    },
+    "model_study": {
+      "path": "research/ashare-models-2026-10-01/model_study.py",
+      "sha256": "0e4937b56b3b3b5dd34f75cb1e2f816ea98077dcbf2f67d5c214c88a20d7feda"
+    },
+    "rolling_models": {
+      "path": "research/ashare-open-2026-10-01/learning/rolling_models.py",
+      "sha256": "8753379fb56352f5d018166c3dd739d3f2ccd3cd759d07f731f7ede3f97c8ee9"
+    },
+    "absolute_models": {
+      "path": "research/ashare-open-2026-10-01/learning/absolute_models.py",
+      "sha256": "cdbbbdb97fb2624497138daefc083024df8c76c666549f2d2df76854218a2543"
+    },
+    "study": {
+      "path": "research/ashare-2026-10-01/study.py",
+      "sha256": "156aa6e67634604ec19abbb2433b6506a99e6078fa2fa9d24831f58636df9ff7"
+    },
+    "execution": {
+      "path": "research/ashare-open-2026-10-01/execution.py",
+      "sha256": "e785890884f41f665480834769ce46d7cccb27b7a95482582ebfbed11437696c"
+    },
+    "rules_execution": {
+      "path": "research/ashare-open-2026-10-01/rule-study/rules_execution.py",
+      "sha256": "61172c48eacecdf69234420153f229de0c633949777e5d62ec8549f0cf8a497b"
+    },
+    "execution_study": {
+      "path": "research/ashare-open-2026-10-01/execution_study.py",
+      "sha256": "6a4592de262fa7320dcb500ba0bdc8927e98b7aba2bc0eda229e6b48e537220f"
+    },
+    "research_cli": {
+      "path": "research/ashare-open-2026-10-01/research_cli.py",
+      "sha256": "c4e0a6251bb6a435e693d6c786e361ffd7f4a9c604ce723a4905c18a25382d30"
+    },
+    "action_overlay": {
+      "path": "research/ashare-open-2026-10-01/online/action-overlay.json",
+      "sha256": "dfb05f027915174554c6f900af4caf86e175f1f11860a65a5a7e80acd6f02940"
+    },
+    "fundamental37_h20_score": {
+      "path": "research/ashare-fundamental-2026-10-01/.cache/refit37_conservative_financial-scores.npy",
+      "sha256": "8224486d9e0b78711c6d0c196277562071c1e7b6abdbc56c5040859b0790694f"
+    },
+    "frozen22_score": {
+      "path": "research/ashare-models-2026-10-01/.cache/breadth22_h20_scores.npy",
+      "sha256": "558d4b952b6915e418d7c410c3f853709d08b61d3d6c89717e2b59d0c26b5544"
+    },
+    "frozen22_summary": {
+      "path": "research/ashare-models-2026-10-01/summary.json",
+      "sha256": "3bf389fcb8ec8ddbaa35a82ba3fceac15dfada627367a00731bd3d70c97751ad"
+    },
+    "income_manifest": {
+      "path": "research/ashare-fundamental-2026-10-01/fetch-manifest-final.json",
+      "sha256": "00cd61b7b790814715c595a65a99f56a60fd8d42d0e14975681a84ccf02327ff"
+    },
+    "income_initial_manifest": {
+      "path": "research/ashare-fundamental-2026-10-01/fetch-manifest.json",
+      "sha256": "ddfb341d7ac440793a4e4c42036030cca4ba4510c5f050d7125943585cefb2db"
+    },
+    "balance_manifest": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-manifest.json",
+      "sha256": "1f973fd23e50c3565773b6eec90218798dd892777339d221463c4802c884543d"
+    },
+    "fundamental37_h20_model2020": {
+      "path": "research/ashare-fundamental-2026-10-01/.cache/models/refit37_conservative_financial-2020.pkl",
+      "sha256": "c4308dc4e5ba65f5c111dd3940411741eff2f2df0ca0015d0a3d88120124f60f"
+    },
+    "fundamental37_h20_model2021": {
+      "path": "research/ashare-fundamental-2026-10-01/.cache/models/refit37_conservative_financial-2021.pkl",
+      "sha256": "e8718e13cb7eb8039d12db3c21f23ac5a026dc79ee431d5fbcf784c81327e9f9"
+    },
+    "fundamental37_h20_model2022": {
+      "path": "research/ashare-fundamental-2026-10-01/.cache/models/refit37_conservative_financial-2022.pkl",
+      "sha256": "587c8fb4a2ebe2642cd3da3f976e635f21c84d587b97e563e36a4aa82783dc58"
+    },
+    "fundamental37_h20_model2023": {
+      "path": "research/ashare-fundamental-2026-10-01/.cache/models/refit37_conservative_financial-2023.pkl",
+      "sha256": "2c672143cc46bff192cd690dccf79074e2f13c3750aff0c1c03ec5bb3f8b02a7"
+    },
+    "fundamental37_h20_model2024": {
+      "path": "research/ashare-fundamental-2026-10-01/.cache/models/refit37_conservative_financial-2024.pkl",
+      "sha256": "4a43b7b563cc04f07d273d835e9f43b0c7b1e473fde1fdae775b50cb3d692b64"
+    },
+    "fundamental37_h20_model2025": {
+      "path": "research/ashare-fundamental-2026-10-01/.cache/models/refit37_conservative_financial-2025.pkl",
+      "sha256": "5cd9655f91e880e48d185e9033a54ee861a17d7f4756c6b0c9052e3e8dbb9887"
+    },
+    "fundamental37_h20_model2026": {
+      "path": "research/ashare-fundamental-2026-10-01/.cache/models/refit37_conservative_financial-2026.pkl",
+      "sha256": "093ddbc1c0a9ad3ee54803344a553c8033374c11bef182aeca3f4b1cdca086c0"
+    },
+    "quarters/2017-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2017-03-31.ndjson",
+      "sha256": "b447c5a8c5d75313f8f58c3621bb37f3bed68203aea5587a54f950de11dc86d6"
+    },
+    "quarters/2017-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2017-06-30.ndjson",
+      "sha256": "a54b9e9a27fafd9c33359f25d1229a8684988f554196205e403937320e1d60af"
+    },
+    "quarters/2017-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2017-09-30.ndjson",
+      "sha256": "d2dbe71c7d25e5b12436a659bfe800d5af493a1d65c087b0ac1d3ea87754c6e0"
+    },
+    "quarters/2017-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2017-12-31.ndjson",
+      "sha256": "9e33a002473a7ae51059fcf50b587c35659f2fc5ad45dcfb6e884f8afa842038"
+    },
+    "quarters/2018-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2018-03-31.ndjson",
+      "sha256": "c9ea0a74319c95f7f2da6f000ad617d02ffa200f17da8e2495b7b14ac22c6458"
+    },
+    "quarters/2018-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2018-06-30.ndjson",
+      "sha256": "e5d987375f49d036ba73ae3399c6eeb8645d5dfdde92d911a2be6d36fb62e67f"
+    },
+    "quarters/2018-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2018-09-30.ndjson",
+      "sha256": "52db6f6498e4f98c704860f93bcd4d6c71ab2e0931df86d8766ebe31ee99a299"
+    },
+    "quarters/2018-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2018-12-31.ndjson",
+      "sha256": "83f4c2c6e486d3292d29e15bf70708a6f46de70feca079f2a0a4b2ecce038019"
+    },
+    "quarters/2019-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2019-03-31.ndjson",
+      "sha256": "184f9f614bd6ef5cb5ee46939f2f2c11ee78be111203768c26f662338da03391"
+    },
+    "quarters/2019-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2019-06-30.ndjson",
+      "sha256": "c70dceef217522874e696c05f4a740c8e726b86725a310eafe772046aa4b263f"
+    },
+    "quarters/2019-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2019-09-30.ndjson",
+      "sha256": "f5919dd6f507649d42f6f444e02044e66fd27086fbc63a077a483d9b4a0f6472"
+    },
+    "quarters/2019-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2019-12-31.ndjson",
+      "sha256": "fa1e5b0f65535bffd15e8aa22ea82af08d729af778e6889ab23561ab63b6289c"
+    },
+    "quarters/2020-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2020-03-31.ndjson",
+      "sha256": "c079b73326770fb800b835a25b56799425e273d9c3a25f16e0a7e4933b77fb5f"
+    },
+    "quarters/2020-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2020-06-30.ndjson",
+      "sha256": "a0460262a1d4cf54a21cf5b7f0fd75a2b9e00f8ca0335c6553c4fa32bb74e51c"
+    },
+    "quarters/2020-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2020-09-30.ndjson",
+      "sha256": "eac813525e29f4528addda50db9b6f47d482728852aa73bf2417cd3573c3c186"
+    },
+    "quarters/2020-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2020-12-31.ndjson",
+      "sha256": "2e1b88c206c4bb99bb55fde18ce0650c0f84b68d14dadfd3db72d292056f779a"
+    },
+    "quarters/2021-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2021-03-31.ndjson",
+      "sha256": "bc5120c256d0354f386b141ecc09657ffa56529a563277ea1b31f42469e1722b"
+    },
+    "quarters/2021-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2021-06-30.ndjson",
+      "sha256": "0463d0121beb5d594b62c58bc9ff694ca753dab9885e3f8e4e3bdf7423b298b7"
+    },
+    "quarters/2021-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2021-09-30.ndjson",
+      "sha256": "4a9aadaad36147ef237e00227b515654b97d20acdc38ea17fb867435b9964099"
+    },
+    "quarters/2021-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2021-12-31.ndjson",
+      "sha256": "59f01049310b7f4c080bcb82f7886ef63e5c0b2e5c826c17d637bd6c534c4f07"
+    },
+    "quarters/2022-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2022-03-31.ndjson",
+      "sha256": "855577a7fee264332821e542a11d5e17bb39cddc03ff681d8909069012dd497e"
+    },
+    "quarters/2022-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2022-06-30.ndjson",
+      "sha256": "6de319355483faf967543b9a101f37f0ac878d72cccd12623a4fcefbeb1369ca"
+    },
+    "quarters/2022-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2022-09-30.ndjson",
+      "sha256": "6fe3a9f0bec76782f42783f684f3ca9d0655417ad2021ce0979dea49b24fde40"
+    },
+    "quarters/2022-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2022-12-31.ndjson",
+      "sha256": "de7a4e834c4819e8bfa8ffddc25cf53215ddee70ae6c0b1121fd1992e495b520"
+    },
+    "quarters/2023-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2023-03-31.ndjson",
+      "sha256": "215d8d9978c59d4a1748ff6e35243550af6e295aa7effb6d9ec530c06bbcac43"
+    },
+    "quarters/2023-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2023-06-30.ndjson",
+      "sha256": "78a8789a4283c436ac120a789ec94ddce955d21bd6ba7eb5a04c58b065699871"
+    },
+    "quarters/2023-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2023-09-30.ndjson",
+      "sha256": "1c6360d4aa816b87f0ee197efcc7389357b4f0448487f19547b9fbb00c278e4f"
+    },
+    "quarters/2023-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2023-12-31.ndjson",
+      "sha256": "6f394e55eea4801cbb9e63e4974ce3a8654053952fb058ab720f3403e5803f12"
+    },
+    "quarters/2024-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2024-03-31.ndjson",
+      "sha256": "bbef83ee16197d1c095638e0b9716ac785b6d14b8cf0901eb00b5d11a41eeae6"
+    },
+    "quarters/2024-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2024-06-30.ndjson",
+      "sha256": "04967f901f23771df47aac3806d4d3c6d6bed9a34414b15823b561f05d0609bc"
+    },
+    "quarters/2024-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2024-09-30.ndjson",
+      "sha256": "dfad3dcbfca178e918912d01fddf53127f03dc05a7b6949673929d7c846bd750"
+    },
+    "quarters/2024-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2024-12-31.ndjson",
+      "sha256": "485a2dacc3c36a3b7ee7e71ace44494b2abc13ac47f7ad01181c6886f982849c"
+    },
+    "quarters/2025-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2025-03-31.ndjson",
+      "sha256": "09cd27a68c259f41f22e56eb17ba7c8dc4bd8b76d211b06387a3c3287de1d7ef"
+    },
+    "quarters/2025-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2025-06-30.ndjson",
+      "sha256": "cb44f761cddd8671020512f999032f631fe9fb6d129828a1bad69324eca4e702"
+    },
+    "quarters/2025-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2025-09-30.ndjson",
+      "sha256": "1e5c064852ac059c35658d101d9f92e827fe6e3a82d759fff088f7e06f1d6d34"
+    },
+    "quarters/2025-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2025-12-31.ndjson",
+      "sha256": "43f4be2911fda7fa20b639528c28e281d4bcd81eac36b9ab92e019804bcdbd8d"
+    },
+    "quarters/2026-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2026-03-31.ndjson",
+      "sha256": "b8dec52273d269d961571e7253c645590dbfb63a293a3af269bef76c0252e6a0"
+    },
+    "quarters/2026-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/quarters/2026-06-30.ndjson",
+      "sha256": "447862d18aa3d8f6c233d3c8f9d537ef93d188601a946815114a631923c3f84f"
+    },
+    "balance-quarters/2017-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2017-03-31.ndjson",
+      "sha256": "0e9015f498d8dae2002d6b13f23b09687ae92372b92bb7c6f0aecc7aaf7464c0"
+    },
+    "balance-quarters/2017-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2017-06-30.ndjson",
+      "sha256": "bd35925e562d72c4d0b6dc3a919ffe9de8b5ce076bfbde07874a1eaca1e3fa27"
+    },
+    "balance-quarters/2017-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2017-09-30.ndjson",
+      "sha256": "026aa82c100fd793b206d17d083b1ee31bec72585c4edba7daa691cc3b08095f"
+    },
+    "balance-quarters/2017-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2017-12-31.ndjson",
+      "sha256": "0ad443d59c3426dd79bdaedea7c051aa3896f3799dac62b60a3c76b694086830"
+    },
+    "balance-quarters/2018-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2018-03-31.ndjson",
+      "sha256": "2ddc7fe91b0c4b6fbfb1da55c29a97173853fa66bbdf2bcfebe8b4bcfb545497"
+    },
+    "balance-quarters/2018-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2018-06-30.ndjson",
+      "sha256": "fe3382c38cb2f58f9d434895806974d292cd2cfe81cacd3c3b3d39d406a895b3"
+    },
+    "balance-quarters/2018-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2018-09-30.ndjson",
+      "sha256": "3ba7fcd70c156edf9f8f9ecf7e85f9a7c14282aa1a6b0d62b470b60b46474587"
+    },
+    "balance-quarters/2018-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2018-12-31.ndjson",
+      "sha256": "d1e63f444d38c175c5ace99eadb6b2a1f42c7e0d77370e9276d63a32e1510204"
+    },
+    "balance-quarters/2019-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2019-03-31.ndjson",
+      "sha256": "562591a323b6a2eb2a9f5d8ff51d3eb22c8765e012c617b0dfc5e7aae5a1f185"
+    },
+    "balance-quarters/2019-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2019-06-30.ndjson",
+      "sha256": "6deec60a2e824a09a261120b5b8a05d0793d8d361dc1c641f3eda2a3450f9124"
+    },
+    "balance-quarters/2019-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2019-09-30.ndjson",
+      "sha256": "58f753f06f9eb23dfca74ca9fa26b865992e1400d85c9928dc41666dfcdbf578"
+    },
+    "balance-quarters/2019-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2019-12-31.ndjson",
+      "sha256": "51226d3c78c8ab39bc99f1f5fd9dca5abe3091ac88730c2acd0c284277caf6a5"
+    },
+    "balance-quarters/2020-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2020-03-31.ndjson",
+      "sha256": "4c2b8cac170fc4272a0d49295d05030407bb228361fcb164b040dbef9d121e84"
+    },
+    "balance-quarters/2020-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2020-06-30.ndjson",
+      "sha256": "e22142fc66d9372c2bbcd2b736fa5bcd27433f4e709e92568f26edcf64abba60"
+    },
+    "balance-quarters/2020-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2020-09-30.ndjson",
+      "sha256": "244c178f971e299d9113808987c3b0ac657cb90749ce141abb3b920032fe3ac1"
+    },
+    "balance-quarters/2020-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2020-12-31.ndjson",
+      "sha256": "2cd0d7ce7003705592b817aed3bdcde7098e4f7f6e09ed7352bac021692db019"
+    },
+    "balance-quarters/2021-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2021-03-31.ndjson",
+      "sha256": "6d69e15ad396f23f350ff309bcc86af959c4e9c4646e21079b52a119606d038c"
+    },
+    "balance-quarters/2021-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2021-06-30.ndjson",
+      "sha256": "b8f06a971cb5b9c877cb1ec863cebde237ba5d54313cd05acd5ab7d564d536fc"
+    },
+    "balance-quarters/2021-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2021-09-30.ndjson",
+      "sha256": "93e1e38b42033ccb7ddbff918deac62c5cbc7f68078324ffa19e4960f80bb8db"
+    },
+    "balance-quarters/2021-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2021-12-31.ndjson",
+      "sha256": "7d390dfa897a65f21315ab88c51142037d4c6ba4d1cb8a405be8ccde0a387707"
+    },
+    "balance-quarters/2022-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2022-03-31.ndjson",
+      "sha256": "818393c1a4e8d3784aaf3c6c453dd234a6f1a3fbe36bde10d863ebd6bd108f6c"
+    },
+    "balance-quarters/2022-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2022-06-30.ndjson",
+      "sha256": "efa7bbb5693d559ad70ddea676e53f78076cb3f0e5393443fd720532c09b7f60"
+    },
+    "balance-quarters/2022-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2022-09-30.ndjson",
+      "sha256": "48d436499f6849a5b1e3205d9f685be4e47dc980e6170da47343be3b9755fde5"
+    },
+    "balance-quarters/2022-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2022-12-31.ndjson",
+      "sha256": "ef25fd6b55501a39bec9e4173abebcae7b228268a92252b16874b698d30c3e14"
+    },
+    "balance-quarters/2023-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2023-03-31.ndjson",
+      "sha256": "2969a98ecc05dfd5330dccd2cd178cedddbaed0d62a7a1bd780e27aa1e915dac"
+    },
+    "balance-quarters/2023-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2023-06-30.ndjson",
+      "sha256": "aacf5d0c349b8c16ffc30da3b12478338dc0bbd1d62a066e897bc9d46400a5be"
+    },
+    "balance-quarters/2023-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2023-09-30.ndjson",
+      "sha256": "789a0d237eabc988ced16a2d609ffddd2d1d409fa0645a3e3d5143d0504448c9"
+    },
+    "balance-quarters/2023-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2023-12-31.ndjson",
+      "sha256": "7f0ac17341dedf9b39fca5f4c07ee8ca6001455b9653648e33cf42b5afd44169"
+    },
+    "balance-quarters/2024-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2024-03-31.ndjson",
+      "sha256": "2961ba36653f63b75bbc4bc154c5c07fb984135ff163e029e57fc07099ccc27a"
+    },
+    "balance-quarters/2024-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2024-06-30.ndjson",
+      "sha256": "428d36ef81d2125d3ffd7ac8e8efaa811993d0e102b1dc6a81a74a4b036cfdff"
+    },
+    "balance-quarters/2024-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2024-09-30.ndjson",
+      "sha256": "7a721945fd321b39a72ba7869137cc44dea6d6b023ce932c6f1d7753636e5f14"
+    },
+    "balance-quarters/2024-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2024-12-31.ndjson",
+      "sha256": "43b0d8701bdd4b3629fd0fa79b3e8d285fd3b40c1bc97b61170f5c2dcc461ed7"
+    },
+    "balance-quarters/2025-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2025-03-31.ndjson",
+      "sha256": "2fcddb1f11c438f088c23420fc3cab67c459ba8537974aeb248ab6d6ee24c632"
+    },
+    "balance-quarters/2025-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2025-06-30.ndjson",
+      "sha256": "a9f1e6cfb5947d4e58625cfef3114aed08d2a75f077c10fdc584d67e11f9298e"
+    },
+    "balance-quarters/2025-09-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2025-09-30.ndjson",
+      "sha256": "64caddae3d7fde7f8e95228c565e338afd2229cd20a019ae65a97a37d9fc9c9b"
+    },
+    "balance-quarters/2025-12-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2025-12-31.ndjson",
+      "sha256": "429403e5070f28b9ad0c9775f6688cde0a6caf213eb85c4510a2bc3c2135eccd"
+    },
+    "balance-quarters/2026-03-31.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2026-03-31.ndjson",
+      "sha256": "d27e3c071dbc8a4d37ce47d6cee3d171354cf07efe7cdf5ad18ba5c6f13881f6"
+    },
+    "balance-quarters/2026-06-30.ndjson": {
+      "path": "research/ashare-fundamental-2026-10-01/balance-quarters/2026-06-30.ndjson",
+      "sha256": "b3e13d2382b86820b7d054c848a064cf08689909559a44bfc3547d90a738ee73"
+    }
+  }
+}

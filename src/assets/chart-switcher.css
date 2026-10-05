@@ -23,9 +23,6 @@
 [data-style="classic"] .switcher-more { display: inline-flex; align-items: center; gap: 3px; }
 [data-style="classic"] .more-caret { font-size: 9px; line-height: 1; }
 
-[data-style="trading"] .chart-switcher,
-[data-style="trading"] .main-overlay-switcher,
-[data-style="trading"] .sub-indicator-switcher,
 [data-style="modern"] .chart-switcher,
 [data-style="modern"] .main-overlay-switcher,
 [data-style="modern"] .sub-indicator-switcher {
@@ -41,7 +38,6 @@
   overflow-x: auto;
 }
 
-[data-style="trading"] .switcher-tab,
 [data-style="modern"] .switcher-tab {
   display: inline-flex;
   align-items: center;
@@ -59,11 +55,7 @@
   transition: color var(--transition-fast), background var(--transition-fast);
 }
 
-[data-style="trading"] .switcher-tab:hover,
 [data-style="modern"] .switcher-tab:hover { color: var(--color-text-primary); background: var(--color-surface-hover); }
-[data-style="trading"] .switcher-tab.active,
 [data-style="modern"] .switcher-tab.active { background: var(--color-accent-dim); color: var(--color-accent); font-weight: 600; }
-[data-style="trading"] .switcher-more,
 [data-style="modern"] .switcher-more { gap: 3px; }
-[data-style="trading"] .more-caret,
 [data-style="modern"] .more-caret { font-size: 9px; line-height: 1; }

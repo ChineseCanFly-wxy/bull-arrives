@@ -9,15 +9,15 @@ pub(super) fn guard_execution(conn: &rusqlite::Connection, account: i64) -> Resu
     if !exists {
         return Ok(());
     }
-    let state: Option<String> = conn
+    let state: Option<(String,String)> = conn
         .query_row(
-            "SELECT state FROM research_experiments WHERE account_id=?1 OR id IN (SELECT experiment_id FROM research_daily_comparison WHERE account_id=?1)",
+            "SELECT e.state,v.status FROM research_experiments e JOIN strategy_versions v ON v.id=e.version_id WHERE e.account_id=?1 OR e.id IN (SELECT experiment_id FROM research_daily_comparison WHERE account_id=?1)",
             [account],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?,r.get(1)?)),
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    if state.is_some_and(|s| !matches!(s.as_str(), "observing" | "extended" | "adopted")) {
+    if state.is_some_and(|(s,v)| v=="retired"||!matches!(s.as_str(), "observing" | "extended" | "adopted")) {
         return Err("研究账户已暂停或结束，禁止继续写入交易".into());
     }
     Ok(())
@@ -323,6 +323,7 @@ impl Database {
             .map_err(|e| e.to_string())
     }
     pub fn link_experiment(&self, id: i64, account: i64, selection: &str) -> Result<(), String> {
+        self.require_current_research_version(id)?;
         let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         let changed=tx.execute("UPDATE research_experiments SET account_id=?2,state='observing',started_at=?3,selection_json=?4,last_message='已冻结选股与规则，等待本地日线推进' WHERE id=?1 AND account_id IS NULL AND state='candidate'",params![id,account,chrono::Utc::now().to_rfc3339(),selection]).map_err(|e|e.to_string())?;
@@ -340,6 +341,12 @@ impl Database {
         self.set_experiment_state_if(id, state, message, None)
     }
 
+    pub fn require_current_research_version(&self,id:i64)->Result<(),String>{
+        let conn=self.conn.lock().unwrap_or_else(|e|e.into_inner());
+        let status:String=conn.query_row("SELECT v.status FROM research_experiments e JOIN strategy_versions v ON v.id=e.version_id WHERE e.id=?1",[id],|r|r.get(0)).map_err(|_|"研究版本不存在")?;
+        if status=="retired"{return Err("该研究的旧市场模板已退役，不能启动、恢复或继续运行；历史与持仓保留".into());}Ok(())
+    }
+
     pub fn set_experiment_state_if(
         &self,
         id: i64,
@@ -347,6 +354,7 @@ impl Database {
         message: &str,
         expected: Option<&str>,
     ) -> Result<(), String> {
+        if matches!(state,"observing"|"extended"|"qualified"|"adopted") {self.require_current_research_version(id)?;}
         if !matches!(
             state,
             "observing" | "extended" | "qualified" | "adopted" | "paused" | "rejected"

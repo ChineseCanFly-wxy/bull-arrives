@@ -41,8 +41,7 @@ pub async fn run_stock_research(
 /// 支撑/压力位按**最终采用的规则**加权：趋势跟随看均线、均值回归看布林轨道、
 /// 放量突破看前 20 日高点与摆动高点（见 `quant::levels`）。
 ///
-/// 说明：日 K 分析是盘前/盘后也要用的能力，因此**不走** `DataSourceManager`
-/// 的交易时段门禁（`ensure_request_allowed`），直接走东财历史 K 线接口。
+/// 日 K 分析在盘前、盘后也可使用，直接读取历史 K 线接口。
 #[tauri::command]
 pub async fn analyze_stock(
     db: State<'_, Arc<Database>>,
@@ -50,11 +49,20 @@ pub async fn analyze_stock(
     rule: Option<String>,
 ) -> Result<StockAnalysis, String> {
     let (mut analysis, recent_klines) = analyze_stock_impl(&db, &symbol, rule.as_deref()).await?;
+    crate::agent::attach_research_context(&db, &symbol, &mut analysis)?;
     match crate::agent::freeze_snapshot_with_history(&db, &symbol, &analysis, &recent_klines) {
         Ok(fingerprint) => analysis.agent_context_fingerprint = Some(fingerprint),
         Err(error) => log::warn!("[agent] 冻结 {symbol} 量化快照失败：{error}"),
     }
     Ok(analysis)
+}
+
+/// Individual analysis and batch scoring share the same explicit/auto rule semantics.
+fn parse_rule_override(rule: Option<&str>) -> Result<Option<TradeRule>, String> {
+    rule.map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "auto")
+        .map(TradeRule::try_from_id)
+        .transpose()
 }
 
 pub(crate) async fn analyze_stock_impl(
@@ -79,11 +87,7 @@ pub(crate) async fn analyze_stock_impl(
     // 按市场状态自动匹配规则（纯计算，不额外拉数据）
     let rule_match = crate::quant::playbook::match_rule(&klines);
     // 用户显式指定了就尊重它；否则用自动匹配的结果
-    let manual = rule
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && *s != "auto")
-        .map(TradeRule::try_from_id)
-        .transpose()?;
+    let manual = parse_rule_override(rule)?;
     let rule = manual.unwrap_or_else(|| {
         rule_match
             .as_ref()
@@ -206,8 +210,8 @@ const BATCH_CONCURRENCY: usize = 5;
 ///
 /// 用途：筛选器结果表里的「入场」列要直接展示状态，而不是让用户逐只点开分析。
 ///
-/// `rule` 必须与当前策略配套（与 `analyze_stock` 同一套语义），
-/// 否则会出现「用超跌反弹策略选出来、却按趋势规则判断入场」的错配。
+/// 不传或传 auto 时按每只股票当前形态匹配；手动规则与单股分析使用相同语义。
+/// 只读取本地历史，不启动 AI，也不会逐只回退在线历史。
 #[tauri::command]
 pub async fn batch_stock_status(
     db: State<'_, Arc<Database>>,
@@ -217,14 +221,7 @@ pub async fn batch_stock_status(
     if symbols.is_empty() {
         return Ok(Vec::new());
     }
-    let rule = match rule
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        Some(value) => TradeRule::try_from_id(value)?,
-        None => TradeRule::TrendFollow,
-    };
+    let manual = parse_rule_override(rule.as_deref())?;
 
     // 去重：同一页里不该出现重复符号，真出现了也只算一次
     let mut seen = std::collections::HashSet::new();
@@ -242,7 +239,7 @@ pub async fn batch_stock_status(
         let db = db.inner().clone();
         set.spawn(async move {
             let _permit = sem.acquire_owned().await.expect("semaphore not closed");
-            let history = match kline::fetch_history(&db, &symbol, Some(250), false).await {
+            let history = match kline::fetch_history(&db, &symbol, None, false).await {
                 Ok(history) => history,
                 Err(e) => return StockStatusItem::failed(symbol, e),
             };
@@ -256,6 +253,11 @@ pub async fn batch_stock_status(
                     )
                 }
             };
+            let rule = manual.unwrap_or_else(|| {
+                crate::quant::playbook::match_rule(&klines)
+                    .map(|matched| matched.recommended)
+                    .unwrap_or(TradeRule::TrendFollow)
+            });
             let plan = crate::quant::playbook::plan(&klines, rule);
             StockStatusItem {
                 symbol,
@@ -282,4 +284,21 @@ pub async fn batch_stock_status(
         }
     }
     Ok(items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_rule_override;
+    use crate::quant::playbook::TradeRule;
+
+    #[test]
+    fn explicit_and_auto_rule_modes_are_shared_by_individual_and_batch_analysis() {
+        for rule in [None, Some(""), Some("  "), Some("auto"), Some(" auto ")] {
+            assert!(parse_rule_override(rule).unwrap().is_none());
+        }
+        for rule in [TradeRule::TrendFollow, TradeRule::MeanReversion, TradeRule::Breakout] {
+            assert_eq!(parse_rule_override(Some(rule.id())).unwrap(), Some(rule));
+        }
+        assert!(parse_rule_override(Some("retired_unknown_rule")).is_err());
+    }
 }

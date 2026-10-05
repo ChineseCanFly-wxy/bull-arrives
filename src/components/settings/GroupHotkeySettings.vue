@@ -152,7 +152,7 @@ p { color: var(--color-text-secondary); font-size: 12px; line-height: 1.6; }
   border-radius: var(--radius-sm);
   background: var(--color-surface-1);
   color: var(--color-text-primary);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 13px;
   cursor: pointer;
 }
@@ -164,7 +164,7 @@ p { color: var(--color-text-secondary); font-size: 12px; line-height: 1.6; }
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
 .hotkey-box:disabled { opacity: 0.6; cursor: wait; }
-.hotkey-box small { color: var(--color-text-tertiary); font-family: var(--font-sans); font-size: 9px; }
+.hotkey-box small { color: var(--color-text-tertiary); font-family: var(--font-sans); font-size: var(--text-xs); }
 .hotkey-box small.warn { color: var(--color-warning, #d03050); }
 .field-error { color: var(--color-warning) !important; margin-top: 8px; }
 </style>

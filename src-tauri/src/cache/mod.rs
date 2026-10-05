@@ -540,19 +540,6 @@ impl Scheduler {
         // re-entering a group therefore forces one fresh quote to rearm the rule.
         cache.sync_alert_scope(&codes);
 
-        // Respect the central request policy before every network path. When
-        // blocked, only current-group cache is emitted and alerts are not evaluated.
-        if let Err(reason) = manager.ensure_request_allowed() {
-            log::debug!("Quote refresh blocked by request policy: {}", reason);
-            let cached = cache.quotes_for_codes(&codes);
-            if !cached.is_empty() {
-                if let Err(error) = app_handle.emit("quotes-updated", &cached) {
-                    log::warn!("Failed to emit policy-blocked cached quotes: {}", error);
-                }
-            }
-            Self::fetch_and_emit_indices(manager, cache, app_handle).await;
-            return None;
-        }
         if codes.is_empty() {
             Self::fetch_and_emit_indices(manager, cache, app_handle).await;
             return None;
@@ -575,11 +562,8 @@ impl Scheduler {
                 // Snapshot prices before fetch for change detection
                 let prices_before = cache.get_price_snapshot();
 
-                if manager.ensure_request_allowed().is_err() {
-                    return None;
-                }
                 let response = source.fetch_realtime(&cn_codes, "CN").await;
-                if manager.revision() != revision || manager.ensure_request_allowed().is_err() {
+                if manager.revision() != revision {
                     manager.wakeup.notify_one();
                     return None;
                 }
@@ -675,21 +659,11 @@ impl Scheduler {
         {
             return;
         }
-        if let Err(reason) = manager.ensure_request_allowed() {
-            log::debug!("Index refresh blocked by request policy: {}", reason);
-            let cached = cache.get_indices();
-            if !cached.is_empty() {
-                if let Err(error) = app_handle.emit("indices-updated", &cached) {
-                    log::warn!("Failed to emit policy-blocked cached indices: {}", error);
-                }
-            }
-            return;
-        }
         if let Some(source) = manager.active_source() {
             let revision = manager.revision();
             match source.fetch_indices().await {
                 Ok(fresh) => {
-                    if manager.revision() != revision || manager.ensure_request_allowed().is_err() {
+                    if manager.revision() != revision {
                         manager.wakeup.notify_one();
                         return;
                     }

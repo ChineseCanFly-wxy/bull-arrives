@@ -44,7 +44,7 @@ const items = computed(() => [
   gap: 2px;
 }
 .summary-label {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary, #888);
 }
 .summary-value {

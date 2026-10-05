@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref, computed, onErrorCaptured } from 'vue';
 import { NConfigProvider, darkTheme, lightTheme, NMessageProvider, type GlobalThemeOverrides } from 'naive-ui';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { useSettingsStore, type MarketSessionInfo } from '@/stores/settings';
+import { useSettingsStore, SETTING_CHANGED_EVENT, type SettingChangedPayload, type MarketSessionInfo } from '@/stores/settings';
 import { useWatchlistStore } from '@/stores/watchlist';
 import { useQuoteStore } from '@/stores/quote';
 import { useUpdaterStore } from '@/stores/updater';
@@ -15,6 +15,7 @@ const settings = useSettingsStore();
 const watchlist = useWatchlistStore();
 const quote = useQuoteStore();
 let unlistenSession: UnlistenFn | null = null;
+let unlistenSettings: UnlistenFn | null = null;
 // Initialize updater event listeners early so backend events during
 // startup are not missed (Pinia stores are lazy-initialized).
 useUpdaterStore().initListeners();
@@ -45,19 +46,45 @@ onErrorCaptured((err, instance, info) => {
 // Match Naive UI controls to the selected brightness and visual style.
 const themeOverrides = computed<GlobalThemeOverrides>(() => {
   const isDark = settings.theme === 'dark';
-  const isModern = settings.visualStyle === 'modern';
-  const isTrading = settings.visualStyle === 'trading';
+  const isModern = settings.visualStyle !== 'classic';
+  if (settings.visualStyle === 'elegant') {
+    const tokens = getComputedStyle(document.documentElement);
+    const color = (name: string) => tokens.getPropertyValue('--color-' + name).trim();
+    const accent = color('accent');
+    return {
+      common: {
+        fontFamily: 'var(--font-sans)', fontFamilyMono: 'var(--font-numeric)',
+        fontSize: '14px', fontSizeSmall: '13px', fontSizeMedium: '14px', fontSizeLarge: '16px',
+        fontWeightStrong: '600', lineHeight: '1.7', heightSmall: '32px', heightMedium: '36px',
+        primaryColor: accent, primaryColorHover: color('focus-ring'), primaryColorPressed: accent,
+        primaryColorSuppl: accent, infoColor: accent, infoColorHover: color('focus-ring'),
+        infoColorPressed: accent, infoColorSuppl: accent,
+        textColor1: color('text-primary'), textColor2: color('text-primary'), textColor3: color('text-secondary'),
+        placeholderColor: color('text-tertiary'), bodyColor: color('surface-0'),
+        cardColor: color('surface-1'), modalColor: color('surface-1'), popoverColor: color('surface-1'),
+        inputColor: color('surface-1'), tableColor: color('surface-1'), tableHeaderColor: color('surface-2'),
+        tableColorHover: color('surface-hover'), hoverColor: color('surface-hover'),
+        borderColor: color('border-0'), dividerColor: color('border-0'), borderRadius: '6px', borderRadiusSmall: '4px',
+      },
+      Card: {
+        paddingSmall: '20px 24px', paddingMedium: '24px 28px',
+        titleFontSizeSmall: '20px', titleFontSizeMedium: '20px', titleFontWeight: '600', borderRadius: '8px',
+      },
+      DataTable: {
+        thPaddingSmall: '12px 16px', tdPaddingSmall: '10px 16px',
+        thPaddingMedium: '12px 16px', tdPaddingMedium: '10px 16px',
+        thColor: color('surface-2'), tdColor: color('surface-1'), tdColorHover: color('surface-hover'),
+        thTextColor: color('text-secondary'), tdTextColor: color('text-primary'), borderColor: color('border-0'),
+      },
+    };
+  }
   const accent = isModern ? (isDark ? '#81bcff' : '#1659b7')
-    : isTrading ? (isDark ? '#6dd2e0' : '#086f80')
     : (isDark ? '#58a6ff' : '#0969da');
   const border = isModern ? (isDark ? '#314159' : '#d8e1ed')
-    : isTrading ? (isDark ? '#254051' : '#c9d9df')
     : (isDark ? '#1e293b' : '#d0d7de');
   const hover = isModern ? (isDark ? '#acd4ff' : '#3276cf')
-    : isTrading ? (isDark ? '#a6eff3' : '#138296')
     : (isDark ? '#79b8ff' : '#2180e0');
   const pressed = isModern ? (isDark ? '#388bfd' : '#104890')
-    : isTrading ? (isDark ? '#40b1c1' : '#055264')
     : (isDark ? '#388bfd' : '#085bb8');
   return {
     common: {
@@ -71,13 +98,16 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
       infoColorSuppl: accent,
       borderColor: border,
       dividerColor: border,
-      borderRadius: isModern ? '11px' : isTrading ? '4px' : '6px',
+      borderRadius: isModern ? '11px' : '6px',
     },
   };
 });
 
 onMounted(async () => {
   try {
+    unlistenSettings = await listen<SettingChangedPayload>(SETTING_CHANGED_EVENT, ({ payload }) => {
+      settings.applyRemoteSetting(payload.key, payload.value);
+    });
     if (!await settings.fetchSettings()) throw new Error(settings.error || '加载设置失败');
     await settings.initStockDbListener();
     settings.applyTheme(settings.theme);
@@ -104,6 +134,7 @@ onUnmounted(() => {
   quote.stopListening();
   settings.stopStockDbListener();
   if (unlistenSession) unlistenSession();
+  unlistenSettings?.();
 });
 
 function handleRetry() {
@@ -113,7 +144,7 @@ function handleRetry() {
 </script>
 
 <template>
-  <NConfigProvider :theme="settings.theme === 'dark' ? darkTheme : lightTheme" :theme-overrides="themeOverrides">
+  <NConfigProvider :theme="settings.theme === 'dark' ? darkTheme : lightTheme" :theme-overrides="themeOverrides" :style="settings.visualStyle === 'elegant' ? { fontFamily: 'var(--font-sans)', lineHeight: 'var(--line-height-body)' } : undefined">
     <NMessageProvider>
       <AlertNotifications v-if="initReady" />
       <AppLayout

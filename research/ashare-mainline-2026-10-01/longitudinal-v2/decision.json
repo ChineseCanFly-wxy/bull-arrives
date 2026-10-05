@@ -1,0 +1,2256 @@
+{
+  "schema": "mainline-longitudinal-v2-decision",
+  "exploration": true,
+  "production_admission": false,
+  "as_of": "2026-09-30",
+  "recommendation": {
+    "mainline_stock_gate_as_mandatory_model_filter": false,
+    "replace_existing26_with_industry30": false,
+    "mainline_remains_separate_observation": true,
+    "retune_on_this_result": false
+  },
+  "common_context_coverage": {
+    "all_sessions": 2123,
+    "usable_sessions": 1770,
+    "minimum_required_indices": 24,
+    "by_year": {
+      "2018": {
+        "market_sessions": 243,
+        "usable_sessions": 178,
+        "minimum_available_indices": 0,
+        "maximum_available_indices": 28
+      },
+      "2019": {
+        "market_sessions": 244,
+        "usable_sessions": 244,
+        "minimum_available_indices": 28,
+        "maximum_available_indices": 28
+      },
+      "2020": {
+        "market_sessions": 243,
+        "usable_sessions": 243,
+        "minimum_available_indices": 28,
+        "maximum_available_indices": 28
+      },
+      "2021": {
+        "market_sessions": 243,
+        "usable_sessions": 144,
+        "minimum_available_indices": 1,
+        "maximum_available_indices": 28
+      },
+      "2022": {
+        "market_sessions": 242,
+        "usable_sessions": 119,
+        "minimum_available_indices": 0,
+        "maximum_available_indices": 31
+      },
+      "2023": {
+        "market_sessions": 242,
+        "usable_sessions": 176,
+        "minimum_available_indices": 0,
+        "maximum_available_indices": 31
+      },
+      "2024": {
+        "market_sessions": 242,
+        "usable_sessions": 242,
+        "minimum_available_indices": 31,
+        "maximum_available_indices": 31
+      },
+      "2025": {
+        "market_sessions": 243,
+        "usable_sessions": 243,
+        "minimum_available_indices": 31,
+        "maximum_available_indices": 31
+      },
+      "2026": {
+        "market_sessions": 181,
+        "usable_sessions": 181,
+        "minimum_available_indices": 31,
+        "maximum_available_indices": 31
+      }
+    },
+    "current31_not_historical_version_certified": true,
+    "no_stock_industry_mapping": true
+  },
+  "experiments": [
+    {
+      "id": "frozen22_full",
+      "train": {
+        "net_return_pct": 22.762,
+        "max_drawdown_pct": 20.164,
+        "return_over_drawdown": 1.129,
+        "completed_holding_cycles": 335,
+        "open_positions": 10,
+        "win_rate_pct": 47.46,
+        "mean_cycle_net_pct": 1.0441,
+        "median_cycle_net_pct": -0.4487,
+        "profit_factor": 1.178,
+        "mean_holding_sessions": 18.64,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 2,
+        "max_overdue_sessions": 650,
+        "annualized_sharpe_descriptive": 0.476,
+        "exposure_mean_pct": 62.531,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 1055.883,
+        "blocked_exit_sessions": 19,
+        "blocked_entries": 1,
+        "corporate_events": 21,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 3,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 7,
+        "suspended_marks": 6
+      },
+      "validation": {
+        "net_return_pct": 25.437,
+        "max_drawdown_pct": 29.198,
+        "return_over_drawdown": 0.871,
+        "completed_holding_cycles": 248,
+        "open_positions": 10,
+        "win_rate_pct": 48.39,
+        "mean_cycle_net_pct": 1.8092,
+        "median_cycle_net_pct": -0.0791,
+        "profit_factor": 1.301,
+        "mean_holding_sessions": 18.23,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 371,
+        "annualized_sharpe_descriptive": 0.587,
+        "exposure_mean_pct": 68.604,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 1327.968,
+        "blocked_exit_sessions": 20,
+        "blocked_entries": 0,
+        "corporate_events": 15,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 1,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 20,
+        "suspended_marks": 18
+      },
+      "test": {
+        "net_return_pct": 30.947,
+        "max_drawdown_pct": 21.905,
+        "return_over_drawdown": 1.413,
+        "completed_holding_cycles": 198,
+        "open_positions": 10,
+        "win_rate_pct": 51.52,
+        "mean_cycle_net_pct": 1.4708,
+        "median_cycle_net_pct": 0.2756,
+        "profit_factor": 1.282,
+        "mean_holding_sessions": 19.16,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 2,
+        "max_overdue_sessions": 281,
+        "annualized_sharpe_descriptive": 0.925,
+        "exposure_mean_pct": 66.726,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 581.32,
+        "blocked_exit_sessions": 20,
+        "blocked_entries": 1,
+        "corporate_events": 12,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 2,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 26,
+        "suspended_marks": 16
+      },
+      "double_cost_test": {
+        "net_return_pct": 26.537,
+        "max_drawdown_pct": 22.016,
+        "return_over_drawdown": 1.205,
+        "completed_holding_cycles": 197,
+        "open_positions": 10,
+        "win_rate_pct": 49.75,
+        "mean_cycle_net_pct": 1.2052,
+        "median_cycle_net_pct": -0.0861,
+        "profit_factor": 1.218,
+        "mean_holding_sessions": 19.2,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 2,
+        "max_overdue_sessions": 281,
+        "annualized_sharpe_descriptive": 0.817,
+        "exposure_mean_pct": 66.572,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 665.864,
+        "blocked_exit_sessions": 21,
+        "blocked_entries": 1,
+        "corporate_events": 13,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 2,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 27,
+        "suspended_marks": 16
+      },
+      "stock_concentration": {
+        "top5_stocks_share_positive_profit_pct": 28.94632907202197,
+        "top10_stocks_share_positive_profit_pct": 40.29008027266215,
+        "unclosed_pnl_cny": 13303.987000000001,
+        "unclosed_pnl_divided_net_pnl_pct": 42.98983671636871
+      },
+      "test_completed_cycles": 198,
+      "test_unique_stock_codes": 188,
+      "by_signal_state": {
+        "stock_market_breadth": {
+          "weak": {
+            "closed_cycles": 76,
+            "distinct_stock_codes": 73,
+            "net_pnl_cny": 5789.974,
+            "mean_cycle_pct": 1.466138157894737,
+            "win_rate_pct": 51.31578947368421,
+            "cycle_pct_q10": -15.641845,
+            "cycle_pct_median": 0.636135,
+            "mean_hold_sessions": 19.407894736842106,
+            "overdue_cycles": 1
+          },
+          "middle": {
+            "closed_cycles": 43,
+            "distinct_stock_codes": 42,
+            "net_pnl_cny": -3272.583,
+            "mean_cycle_pct": -0.26924069767441844,
+            "win_rate_pct": 46.51162790697674,
+            "cycle_pct_q10": -12.473182,
+            "cycle_pct_median": -0.5215,
+            "mean_hold_sessions": 18.27906976744186,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 79,
+            "distinct_stock_codes": 77,
+            "net_pnl_cny": 15125.443000000001,
+            "mean_cycle_pct": 2.4223060759493666,
+            "win_rate_pct": 54.43037974683544,
+            "cycle_pct_q10": -8.064712,
+            "cycle_pct_median": 1.83217,
+            "mean_hold_sessions": 19.40506329113924,
+            "overdue_cycles": 0
+          }
+        },
+        "global_industry_trend_width": {
+          "weak": {
+            "closed_cycles": 115,
+            "distinct_stock_codes": 112,
+            "net_pnl_cny": 16571.356000000003,
+            "mean_cycle_pct": 2.173976347826087,
+            "win_rate_pct": 57.391304347826086,
+            "cycle_pct_q10": -13.853768,
+            "cycle_pct_median": 1.84187,
+            "mean_hold_sessions": 19.556521739130435,
+            "overdue_cycles": 1
+          },
+          "middle": {
+            "closed_cycles": 59,
+            "distinct_stock_codes": 59,
+            "net_pnl_cny": -3611.154,
+            "mean_cycle_pct": -0.41451135593220345,
+            "win_rate_pct": 44.06779661016949,
+            "cycle_pct_q10": -10.552221999999999,
+            "cycle_pct_median": -1.16674,
+            "mean_hold_sessions": 18.203389830508474,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 24,
+            "distinct_stock_codes": 24,
+            "net_pnl_cny": 4682.632,
+            "mean_cycle_pct": 2.735842499999999,
+            "win_rate_pct": 41.66666666666667,
+            "cycle_pct_q10": -7.558952,
+            "cycle_pct_median": -1.0524149999999999,
+            "mean_hold_sessions": 19.625,
+            "overdue_cycles": 0
+          }
+        }
+      },
+      "annual_independent_reset": {
+        "2020": {
+          "net_return_pct": 0.462,
+          "max_drawdown_pct": 13.332,
+          "win_rate_pct": 43.7,
+          "mean_cycle_net_pct": 0.6793,
+          "exposure_mean_pct": 66.238
+        },
+        "2021": {
+          "net_return_pct": 25.301,
+          "max_drawdown_pct": 15.23,
+          "win_rate_pct": 54.13,
+          "mean_cycle_net_pct": 2.3533,
+          "exposure_mean_pct": 65.577
+        },
+        "2022": {
+          "net_return_pct": -9.078,
+          "max_drawdown_pct": 24.294,
+          "win_rate_pct": 40.77,
+          "mean_cycle_net_pct": -0.9948,
+          "exposure_mean_pct": 63.342
+        },
+        "2023": {
+          "net_return_pct": 10.722,
+          "max_drawdown_pct": 15.266,
+          "win_rate_pct": 48.33,
+          "mean_cycle_net_pct": 1.3667,
+          "exposure_mean_pct": 68.287
+        },
+        "2024": {
+          "net_return_pct": 9.579,
+          "max_drawdown_pct": 28.084,
+          "win_rate_pct": 46.38,
+          "mean_cycle_net_pct": 2.049,
+          "exposure_mean_pct": 73.838
+        },
+        "2025": {
+          "net_return_pct": 19.051,
+          "max_drawdown_pct": 10.87,
+          "win_rate_pct": 51.69,
+          "mean_cycle_net_pct": 2.0183,
+          "exposure_mean_pct": 67.952
+        },
+        "2026": {
+          "net_return_pct": 9.822,
+          "max_drawdown_pct": 25.936,
+          "win_rate_pct": 44.79,
+          "mean_cycle_net_pct": 0.7263,
+          "exposure_mean_pct": 69.662
+        }
+      }
+    },
+    {
+      "id": "frozen26_full",
+      "train": {
+        "net_return_pct": 11.798,
+        "max_drawdown_pct": 33.104,
+        "return_over_drawdown": 0.356,
+        "completed_holding_cycles": 336,
+        "open_positions": 10,
+        "win_rate_pct": 47.62,
+        "mean_cycle_net_pct": 1.0094,
+        "median_cycle_net_pct": -0.6369,
+        "profit_factor": 1.119,
+        "mean_holding_sessions": 18.66,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 2,
+        "max_overdue_sessions": 354,
+        "annualized_sharpe_descriptive": 0.302,
+        "exposure_mean_pct": 62.266,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 2850.617,
+        "blocked_exit_sessions": 2,
+        "blocked_entries": 0,
+        "corporate_events": 25,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 3,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 1,
+        "suspended_marks": 1
+      },
+      "validation": {
+        "net_return_pct": 12.583,
+        "max_drawdown_pct": 34.497,
+        "return_over_drawdown": 0.365,
+        "completed_holding_cycles": 258,
+        "open_positions": 10,
+        "win_rate_pct": 43.41,
+        "mean_cycle_net_pct": 0.6348,
+        "median_cycle_net_pct": -1.9285,
+        "profit_factor": 1.093,
+        "mean_holding_sessions": 18.19,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 135,
+        "annualized_sharpe_descriptive": 0.36,
+        "exposure_mean_pct": 69.131,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 612.496,
+        "blocked_exit_sessions": 1,
+        "blocked_entries": 0,
+        "corporate_events": 9,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 1,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 0,
+        "suspended_marks": 0
+      },
+      "test": {
+        "net_return_pct": 57.991,
+        "max_drawdown_pct": 20.45,
+        "return_over_drawdown": 2.836,
+        "completed_holding_cycles": 191,
+        "open_positions": 10,
+        "win_rate_pct": 53.93,
+        "mean_cycle_net_pct": 2.8924,
+        "median_cycle_net_pct": 0.9791,
+        "profit_factor": 1.624,
+        "mean_holding_sessions": 19.19,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 0,
+        "max_overdue_sessions": 3,
+        "annualized_sharpe_descriptive": 1.396,
+        "exposure_mean_pct": 63.563,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 992.48,
+        "blocked_exit_sessions": 7,
+        "blocked_entries": 3,
+        "corporate_events": 8,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 1,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 0,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 9,
+        "suspended_marks": 2
+      },
+      "double_cost_test": {
+        "net_return_pct": 51.281,
+        "max_drawdown_pct": 21.418,
+        "return_over_drawdown": 2.394,
+        "completed_holding_cycles": 192,
+        "open_positions": 10,
+        "win_rate_pct": 53.12,
+        "mean_cycle_net_pct": 2.5792,
+        "median_cycle_net_pct": 0.8288,
+        "profit_factor": 1.521,
+        "mean_holding_sessions": 19.13,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 0,
+        "max_overdue_sessions": 3,
+        "annualized_sharpe_descriptive": 1.269,
+        "exposure_mean_pct": 63.958,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 992.48,
+        "blocked_exit_sessions": 7,
+        "blocked_entries": 3,
+        "corporate_events": 8,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 1,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 0,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 9,
+        "suspended_marks": 2
+      },
+      "stock_concentration": {
+        "top5_stocks_share_positive_profit_pct": 21.507264670120684,
+        "top10_stocks_share_positive_profit_pct": 37.58418278937523,
+        "unclosed_pnl_cny": 16393.813000000002,
+        "unclosed_pnl_divided_net_pnl_pct": 28.269434219170602
+      },
+      "test_completed_cycles": 191,
+      "test_unique_stock_codes": 177,
+      "by_signal_state": {
+        "stock_market_breadth": {
+          "weak": {
+            "closed_cycles": 87,
+            "distinct_stock_codes": 81,
+            "net_pnl_cny": 12810.839999999998,
+            "mean_cycle_pct": 2.6289372413793104,
+            "win_rate_pct": 51.724137931034484,
+            "cycle_pct_q10": -15.644248,
+            "cycle_pct_median": 1.21201,
+            "mean_hold_sessions": 19.436781609195403,
+            "overdue_cycles": 1
+          },
+          "strong": {
+            "closed_cycles": 80,
+            "distinct_stock_codes": 79,
+            "net_pnl_cny": 21616.563000000002,
+            "mean_cycle_pct": 3.1323037499999997,
+            "win_rate_pct": 56.25,
+            "cycle_pct_q10": -7.744747,
+            "cycle_pct_median": 1.0767149999999999,
+            "mean_hold_sessions": 18.675,
+            "overdue_cycles": 0
+          },
+          "middle": {
+            "closed_cycles": 24,
+            "distinct_stock_codes": 23,
+            "net_pnl_cny": 7170.081999999999,
+            "mean_cycle_pct": 3.0476425,
+            "win_rate_pct": 54.166666666666664,
+            "cycle_pct_q10": -4.275214,
+            "cycle_pct_median": 0.579275,
+            "mean_hold_sessions": 20.0,
+            "overdue_cycles": 0
+          }
+        },
+        "global_industry_trend_width": {
+          "weak": {
+            "closed_cycles": 134,
+            "distinct_stock_codes": 124,
+            "net_pnl_cny": 25823.145999999997,
+            "mean_cycle_pct": 2.81217552238806,
+            "win_rate_pct": 56.71641791044776,
+            "cycle_pct_q10": -13.928261000000001,
+            "cycle_pct_median": 1.49488,
+            "mean_hold_sessions": 19.35820895522388,
+            "overdue_cycles": 1
+          },
+          "middle": {
+            "closed_cycles": 28,
+            "distinct_stock_codes": 28,
+            "net_pnl_cny": 10434.049,
+            "mean_cycle_pct": 3.9632800000000006,
+            "win_rate_pct": 50.0,
+            "cycle_pct_q10": -6.830755,
+            "cycle_pct_median": 0.21052499999999996,
+            "mean_hold_sessions": 18.785714285714285,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 29,
+            "distinct_stock_codes": 29,
+            "net_pnl_cny": 5340.290000000001,
+            "mean_cycle_pct": 2.229031034482759,
+            "win_rate_pct": 44.827586206896555,
+            "cycle_pct_q10": -6.987653999999999,
+            "cycle_pct_median": -0.53327,
+            "mean_hold_sessions": 18.79310344827586,
+            "overdue_cycles": 0
+          }
+        }
+      },
+      "annual_independent_reset": {
+        "2020": {
+          "net_return_pct": 41.661,
+          "max_drawdown_pct": 12.639,
+          "win_rate_pct": 54.17,
+          "mean_cycle_net_pct": 3.593,
+          "exposure_mean_pct": 67.08
+        },
+        "2021": {
+          "net_return_pct": 10.066,
+          "max_drawdown_pct": 7.148,
+          "win_rate_pct": 55.43,
+          "mean_cycle_net_pct": 2.0942,
+          "exposure_mean_pct": 55.887
+        },
+        "2022": {
+          "net_return_pct": -9.872,
+          "max_drawdown_pct": 21.546,
+          "win_rate_pct": 40.3,
+          "mean_cycle_net_pct": -0.3983,
+          "exposure_mean_pct": 66.51
+        },
+        "2023": {
+          "net_return_pct": 9.984,
+          "max_drawdown_pct": 9.273,
+          "win_rate_pct": 45.97,
+          "mean_cycle_net_pct": 0.7723,
+          "exposure_mean_pct": 67.577
+        },
+        "2024": {
+          "net_return_pct": -1.138,
+          "max_drawdown_pct": 32.865,
+          "win_rate_pct": 38.35,
+          "mean_cycle_net_pct": -0.1387,
+          "exposure_mean_pct": 69.814
+        },
+        "2025": {
+          "net_return_pct": 27.297,
+          "max_drawdown_pct": 5.944,
+          "win_rate_pct": 58.49,
+          "mean_cycle_net_pct": 3.3514,
+          "exposure_mean_pct": 59.312
+        },
+        "2026": {
+          "net_return_pct": 22.221,
+          "max_drawdown_pct": 20.695,
+          "win_rate_pct": 50.6,
+          "mean_cycle_net_pct": 2.4717,
+          "exposure_mean_pct": 66.23
+        }
+      }
+    },
+    {
+      "id": "frozen22_common",
+      "train": {
+        "net_return_pct": 1.554,
+        "max_drawdown_pct": 20.164,
+        "return_over_drawdown": 0.077,
+        "completed_holding_cycles": 247,
+        "open_positions": 10,
+        "win_rate_pct": 43.72,
+        "mean_cycle_net_pct": 0.142,
+        "median_cycle_net_pct": -1.1344,
+        "profit_factor": 1.018,
+        "mean_holding_sessions": 18.44,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 2,
+        "max_overdue_sessions": 650,
+        "annualized_sharpe_descriptive": 0.11,
+        "exposure_mean_pct": 46.185,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 766.443,
+        "blocked_exit_sessions": 13,
+        "blocked_entries": 1,
+        "corporate_events": 18,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 3,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 2,
+        "suspended_marks": 1
+      },
+      "validation": {
+        "net_return_pct": 27.791,
+        "max_drawdown_pct": 35.063,
+        "return_over_drawdown": 0.793,
+        "completed_holding_cycles": 221,
+        "open_positions": 10,
+        "win_rate_pct": 49.77,
+        "mean_cycle_net_pct": 2.0907,
+        "median_cycle_net_pct": -0.044,
+        "profit_factor": 1.392,
+        "mean_holding_sessions": 18.24,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 371,
+        "annualized_sharpe_descriptive": 0.632,
+        "exposure_mean_pct": 61.805,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 1174.0,
+        "blocked_exit_sessions": 20,
+        "blocked_entries": 0,
+        "corporate_events": 13,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 1,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 20,
+        "suspended_marks": 18
+      },
+      "test": {
+        "net_return_pct": 30.947,
+        "max_drawdown_pct": 21.905,
+        "return_over_drawdown": 1.413,
+        "completed_holding_cycles": 198,
+        "open_positions": 10,
+        "win_rate_pct": 51.52,
+        "mean_cycle_net_pct": 1.4708,
+        "median_cycle_net_pct": 0.2756,
+        "profit_factor": 1.282,
+        "mean_holding_sessions": 19.16,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 2,
+        "max_overdue_sessions": 281,
+        "annualized_sharpe_descriptive": 0.925,
+        "exposure_mean_pct": 66.726,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 581.32,
+        "blocked_exit_sessions": 20,
+        "blocked_entries": 1,
+        "corporate_events": 12,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 2,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 26,
+        "suspended_marks": 16
+      },
+      "double_cost_test": {
+        "net_return_pct": 26.537,
+        "max_drawdown_pct": 22.016,
+        "return_over_drawdown": 1.205,
+        "completed_holding_cycles": 197,
+        "open_positions": 10,
+        "win_rate_pct": 49.75,
+        "mean_cycle_net_pct": 1.2052,
+        "median_cycle_net_pct": -0.0861,
+        "profit_factor": 1.218,
+        "mean_holding_sessions": 19.2,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 2,
+        "max_overdue_sessions": 281,
+        "annualized_sharpe_descriptive": 0.817,
+        "exposure_mean_pct": 66.572,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 665.864,
+        "blocked_exit_sessions": 21,
+        "blocked_entries": 1,
+        "corporate_events": 13,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 2,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 27,
+        "suspended_marks": 16
+      },
+      "stock_concentration": {
+        "top5_stocks_share_positive_profit_pct": 28.94632907202197,
+        "top10_stocks_share_positive_profit_pct": 40.29008027266215,
+        "unclosed_pnl_cny": 13303.987000000001,
+        "unclosed_pnl_divided_net_pnl_pct": 42.98983671636871
+      },
+      "test_completed_cycles": 198,
+      "test_unique_stock_codes": 188,
+      "by_signal_state": {
+        "stock_market_breadth": {
+          "weak": {
+            "closed_cycles": 76,
+            "distinct_stock_codes": 73,
+            "net_pnl_cny": 5789.974,
+            "mean_cycle_pct": 1.466138157894737,
+            "win_rate_pct": 51.31578947368421,
+            "cycle_pct_q10": -15.641845,
+            "cycle_pct_median": 0.636135,
+            "mean_hold_sessions": 19.407894736842106,
+            "overdue_cycles": 1
+          },
+          "middle": {
+            "closed_cycles": 43,
+            "distinct_stock_codes": 42,
+            "net_pnl_cny": -3272.583,
+            "mean_cycle_pct": -0.26924069767441844,
+            "win_rate_pct": 46.51162790697674,
+            "cycle_pct_q10": -12.473182,
+            "cycle_pct_median": -0.5215,
+            "mean_hold_sessions": 18.27906976744186,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 79,
+            "distinct_stock_codes": 77,
+            "net_pnl_cny": 15125.443000000001,
+            "mean_cycle_pct": 2.4223060759493666,
+            "win_rate_pct": 54.43037974683544,
+            "cycle_pct_q10": -8.064712,
+            "cycle_pct_median": 1.83217,
+            "mean_hold_sessions": 19.40506329113924,
+            "overdue_cycles": 0
+          }
+        },
+        "global_industry_trend_width": {
+          "weak": {
+            "closed_cycles": 115,
+            "distinct_stock_codes": 112,
+            "net_pnl_cny": 16571.356000000003,
+            "mean_cycle_pct": 2.173976347826087,
+            "win_rate_pct": 57.391304347826086,
+            "cycle_pct_q10": -13.853768,
+            "cycle_pct_median": 1.84187,
+            "mean_hold_sessions": 19.556521739130435,
+            "overdue_cycles": 1
+          },
+          "middle": {
+            "closed_cycles": 59,
+            "distinct_stock_codes": 59,
+            "net_pnl_cny": -3611.154,
+            "mean_cycle_pct": -0.41451135593220345,
+            "win_rate_pct": 44.06779661016949,
+            "cycle_pct_q10": -10.552221999999999,
+            "cycle_pct_median": -1.16674,
+            "mean_hold_sessions": 18.203389830508474,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 24,
+            "distinct_stock_codes": 24,
+            "net_pnl_cny": 4682.632,
+            "mean_cycle_pct": 2.735842499999999,
+            "win_rate_pct": 41.66666666666667,
+            "cycle_pct_q10": -7.558952,
+            "cycle_pct_median": -1.0524149999999999,
+            "mean_hold_sessions": 19.625,
+            "overdue_cycles": 0
+          }
+        }
+      },
+      "annual_independent_reset": {
+        "2020": {
+          "net_return_pct": 0.462,
+          "max_drawdown_pct": 13.332,
+          "win_rate_pct": 43.7,
+          "mean_cycle_net_pct": 0.6793,
+          "exposure_mean_pct": 66.238
+        },
+        "2021": {
+          "net_return_pct": 11.539,
+          "max_drawdown_pct": 15.23,
+          "win_rate_pct": 51.28,
+          "mean_cycle_net_pct": 1.6313,
+          "exposure_mean_pct": 44.807
+        },
+        "2022": {
+          "net_return_pct": -13.085,
+          "max_drawdown_pct": 20.795,
+          "win_rate_pct": 36.92,
+          "mean_cycle_net_pct": -3.2416,
+          "exposure_mean_pct": 31.631
+        },
+        "2023": {
+          "net_return_pct": 4.028,
+          "max_drawdown_pct": 13.882,
+          "win_rate_pct": 47.87,
+          "mean_cycle_net_pct": 0.5323,
+          "exposure_mean_pct": 54.261
+        },
+        "2024": {
+          "net_return_pct": 9.579,
+          "max_drawdown_pct": 28.084,
+          "win_rate_pct": 46.38,
+          "mean_cycle_net_pct": 2.049,
+          "exposure_mean_pct": 73.838
+        },
+        "2025": {
+          "net_return_pct": 19.051,
+          "max_drawdown_pct": 10.87,
+          "win_rate_pct": 51.69,
+          "mean_cycle_net_pct": 2.0183,
+          "exposure_mean_pct": 67.952
+        },
+        "2026": {
+          "net_return_pct": 9.822,
+          "max_drawdown_pct": 25.936,
+          "win_rate_pct": 44.79,
+          "mean_cycle_net_pct": 0.7263,
+          "exposure_mean_pct": 69.662
+        }
+      }
+    },
+    {
+      "id": "frozen26_common",
+      "train": {
+        "net_return_pct": 12.994,
+        "max_drawdown_pct": 25.484,
+        "return_over_drawdown": 0.51,
+        "completed_holding_cycles": 240,
+        "open_positions": 10,
+        "win_rate_pct": 47.92,
+        "mean_cycle_net_pct": 1.2748,
+        "median_cycle_net_pct": -0.42,
+        "profit_factor": 1.192,
+        "mean_holding_sessions": 18.83,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 2,
+        "max_overdue_sessions": 354,
+        "annualized_sharpe_descriptive": 0.355,
+        "exposure_mean_pct": 45.273,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 2340.977,
+        "blocked_exit_sessions": 2,
+        "blocked_entries": 0,
+        "corporate_events": 20,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 3,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 1,
+        "suspended_marks": 1
+      },
+      "validation": {
+        "net_return_pct": 19.375,
+        "max_drawdown_pct": 32.549,
+        "return_over_drawdown": 0.595,
+        "completed_holding_cycles": 228,
+        "open_positions": 10,
+        "win_rate_pct": 46.05,
+        "mean_cycle_net_pct": 1.269,
+        "median_cycle_net_pct": -1.6016,
+        "profit_factor": 1.176,
+        "mean_holding_sessions": 18.17,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 135,
+        "annualized_sharpe_descriptive": 0.475,
+        "exposure_mean_pct": 61.298,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 767.696,
+        "blocked_exit_sessions": 1,
+        "blocked_entries": 0,
+        "corporate_events": 10,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 1,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 0,
+        "suspended_marks": 0
+      },
+      "test": {
+        "net_return_pct": 57.991,
+        "max_drawdown_pct": 20.45,
+        "return_over_drawdown": 2.836,
+        "completed_holding_cycles": 191,
+        "open_positions": 10,
+        "win_rate_pct": 53.93,
+        "mean_cycle_net_pct": 2.8924,
+        "median_cycle_net_pct": 0.9791,
+        "profit_factor": 1.624,
+        "mean_holding_sessions": 19.19,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 0,
+        "max_overdue_sessions": 3,
+        "annualized_sharpe_descriptive": 1.396,
+        "exposure_mean_pct": 63.563,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 992.48,
+        "blocked_exit_sessions": 7,
+        "blocked_entries": 3,
+        "corporate_events": 8,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 1,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 0,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 9,
+        "suspended_marks": 2
+      },
+      "double_cost_test": {
+        "net_return_pct": 51.281,
+        "max_drawdown_pct": 21.418,
+        "return_over_drawdown": 2.394,
+        "completed_holding_cycles": 192,
+        "open_positions": 10,
+        "win_rate_pct": 53.12,
+        "mean_cycle_net_pct": 2.5792,
+        "median_cycle_net_pct": 0.8288,
+        "profit_factor": 1.521,
+        "mean_holding_sessions": 19.13,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 0,
+        "max_overdue_sessions": 3,
+        "annualized_sharpe_descriptive": 1.269,
+        "exposure_mean_pct": 63.958,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 992.48,
+        "blocked_exit_sessions": 7,
+        "blocked_entries": 3,
+        "corporate_events": 8,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 1,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 0,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 9,
+        "suspended_marks": 2
+      },
+      "stock_concentration": {
+        "top5_stocks_share_positive_profit_pct": 21.507264670120684,
+        "top10_stocks_share_positive_profit_pct": 37.58418278937523,
+        "unclosed_pnl_cny": 16393.813000000002,
+        "unclosed_pnl_divided_net_pnl_pct": 28.269434219170602
+      },
+      "test_completed_cycles": 191,
+      "test_unique_stock_codes": 177,
+      "by_signal_state": {
+        "stock_market_breadth": {
+          "weak": {
+            "closed_cycles": 87,
+            "distinct_stock_codes": 81,
+            "net_pnl_cny": 12810.839999999998,
+            "mean_cycle_pct": 2.6289372413793104,
+            "win_rate_pct": 51.724137931034484,
+            "cycle_pct_q10": -15.644248,
+            "cycle_pct_median": 1.21201,
+            "mean_hold_sessions": 19.436781609195403,
+            "overdue_cycles": 1
+          },
+          "strong": {
+            "closed_cycles": 80,
+            "distinct_stock_codes": 79,
+            "net_pnl_cny": 21616.563000000002,
+            "mean_cycle_pct": 3.1323037499999997,
+            "win_rate_pct": 56.25,
+            "cycle_pct_q10": -7.744747,
+            "cycle_pct_median": 1.0767149999999999,
+            "mean_hold_sessions": 18.675,
+            "overdue_cycles": 0
+          },
+          "middle": {
+            "closed_cycles": 24,
+            "distinct_stock_codes": 23,
+            "net_pnl_cny": 7170.081999999999,
+            "mean_cycle_pct": 3.0476425,
+            "win_rate_pct": 54.166666666666664,
+            "cycle_pct_q10": -4.275214,
+            "cycle_pct_median": 0.579275,
+            "mean_hold_sessions": 20.0,
+            "overdue_cycles": 0
+          }
+        },
+        "global_industry_trend_width": {
+          "weak": {
+            "closed_cycles": 134,
+            "distinct_stock_codes": 124,
+            "net_pnl_cny": 25823.145999999997,
+            "mean_cycle_pct": 2.81217552238806,
+            "win_rate_pct": 56.71641791044776,
+            "cycle_pct_q10": -13.928261000000001,
+            "cycle_pct_median": 1.49488,
+            "mean_hold_sessions": 19.35820895522388,
+            "overdue_cycles": 1
+          },
+          "middle": {
+            "closed_cycles": 28,
+            "distinct_stock_codes": 28,
+            "net_pnl_cny": 10434.049,
+            "mean_cycle_pct": 3.9632800000000006,
+            "win_rate_pct": 50.0,
+            "cycle_pct_q10": -6.830755,
+            "cycle_pct_median": 0.21052499999999996,
+            "mean_hold_sessions": 18.785714285714285,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 29,
+            "distinct_stock_codes": 29,
+            "net_pnl_cny": 5340.290000000001,
+            "mean_cycle_pct": 2.229031034482759,
+            "win_rate_pct": 44.827586206896555,
+            "cycle_pct_q10": -6.987653999999999,
+            "cycle_pct_median": -0.53327,
+            "mean_hold_sessions": 18.79310344827586,
+            "overdue_cycles": 0
+          }
+        }
+      },
+      "annual_independent_reset": {
+        "2020": {
+          "net_return_pct": 41.661,
+          "max_drawdown_pct": 12.639,
+          "win_rate_pct": 54.17,
+          "mean_cycle_net_pct": 3.593,
+          "exposure_mean_pct": 67.08
+        },
+        "2021": {
+          "net_return_pct": 12.876,
+          "max_drawdown_pct": 7.148,
+          "win_rate_pct": 58.33,
+          "mean_cycle_net_pct": 3.4772,
+          "exposure_mean_pct": 36.435
+        },
+        "2022": {
+          "net_return_pct": -18.267,
+          "max_drawdown_pct": 20.005,
+          "win_rate_pct": 29.03,
+          "mean_cycle_net_pct": -3.776,
+          "exposure_mean_pct": 32.083
+        },
+        "2023": {
+          "net_return_pct": 13.691,
+          "max_drawdown_pct": 8.397,
+          "win_rate_pct": 50.54,
+          "mean_cycle_net_pct": 1.1847,
+          "exposure_mean_pct": 51.865
+        },
+        "2024": {
+          "net_return_pct": -1.138,
+          "max_drawdown_pct": 32.865,
+          "win_rate_pct": 38.35,
+          "mean_cycle_net_pct": -0.1387,
+          "exposure_mean_pct": 69.814
+        },
+        "2025": {
+          "net_return_pct": 27.297,
+          "max_drawdown_pct": 5.944,
+          "win_rate_pct": 58.49,
+          "mean_cycle_net_pct": 3.3514,
+          "exposure_mean_pct": 59.312
+        },
+        "2026": {
+          "net_return_pct": 22.221,
+          "max_drawdown_pct": 20.695,
+          "win_rate_pct": 50.6,
+          "mean_cycle_net_pct": 2.4717,
+          "exposure_mean_pct": 66.23
+        }
+      }
+    },
+    {
+      "id": "frozen22_common_stockmainline",
+      "train": {
+        "net_return_pct": -11.569,
+        "max_drawdown_pct": 23.753,
+        "return_over_drawdown": -0.487,
+        "completed_holding_cycles": 236,
+        "open_positions": 10,
+        "win_rate_pct": 42.37,
+        "mean_cycle_net_pct": -0.6414,
+        "median_cycle_net_pct": -2.4926,
+        "profit_factor": 0.884,
+        "mean_holding_sessions": 18.07,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 2,
+        "max_overdue_sessions": 641,
+        "annualized_sharpe_descriptive": -0.22,
+        "exposure_mean_pct": 45.909,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 1680.224,
+        "blocked_exit_sessions": 7,
+        "blocked_entries": 0,
+        "corporate_events": 21,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 5,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 0,
+        "suspended_marks": 0
+      },
+      "validation": {
+        "net_return_pct": 19.787,
+        "max_drawdown_pct": 29.229,
+        "return_over_drawdown": 0.677,
+        "completed_holding_cycles": 214,
+        "open_positions": 5,
+        "win_rate_pct": 45.33,
+        "mean_cycle_net_pct": 1.2812,
+        "median_cycle_net_pct": -1.0006,
+        "profit_factor": 1.246,
+        "mean_holding_sessions": 18.61,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 120,
+        "annualized_sharpe_descriptive": 0.561,
+        "exposure_mean_pct": 58.481,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 1038.064,
+        "blocked_exit_sessions": 1,
+        "blocked_entries": 0,
+        "corporate_events": 13,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 1,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 0,
+        "suspended_marks": 0
+      },
+      "test": {
+        "net_return_pct": 18.464,
+        "max_drawdown_pct": 25.349,
+        "return_over_drawdown": 0.728,
+        "completed_holding_cycles": 191,
+        "open_positions": 10,
+        "win_rate_pct": 50.79,
+        "mean_cycle_net_pct": 1.1924,
+        "median_cycle_net_pct": 0.1025,
+        "profit_factor": 1.119,
+        "mean_holding_sessions": 18.7,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 2,
+        "max_overdue_sessions": 324,
+        "annualized_sharpe_descriptive": 0.614,
+        "exposure_mean_pct": 66.894,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 2119.456,
+        "blocked_exit_sessions": 0,
+        "blocked_entries": 0,
+        "corporate_events": 19,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 3,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 0,
+        "suspended_marks": 0
+      },
+      "double_cost_test": {
+        "net_return_pct": 7.173,
+        "max_drawdown_pct": 26.686,
+        "return_over_drawdown": 0.269,
+        "completed_holding_cycles": 208,
+        "open_positions": 10,
+        "win_rate_pct": 47.12,
+        "mean_cycle_net_pct": 0.8686,
+        "median_cycle_net_pct": -0.2233,
+        "profit_factor": 1.096,
+        "mean_holding_sessions": 18.67,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 67,
+        "annualized_sharpe_descriptive": 0.325,
+        "exposure_mean_pct": 65.945,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 1975.68,
+        "blocked_exit_sessions": 0,
+        "blocked_entries": 0,
+        "corporate_events": 17,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 1,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 0,
+        "suspended_marks": 0
+      },
+      "stock_concentration": {
+        "top5_stocks_share_positive_profit_pct": 28.81823730861458,
+        "top10_stocks_share_positive_profit_pct": 42.57783239725182,
+        "unclosed_pnl_cny": 9440.579999999998,
+        "unclosed_pnl_divided_net_pnl_pct": 51.13089112320765
+      },
+      "test_completed_cycles": 191,
+      "test_unique_stock_codes": 184,
+      "by_signal_state": {
+        "stock_market_breadth": {
+          "weak": {
+            "closed_cycles": 62,
+            "distinct_stock_codes": 62,
+            "net_pnl_cny": -1697.7480000000032,
+            "mean_cycle_pct": 0.3459029032258069,
+            "win_rate_pct": 53.2258064516129,
+            "cycle_pct_q10": -14.465916,
+            "cycle_pct_median": 0.69384,
+            "mean_hold_sessions": 18.887096774193548,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 83,
+            "distinct_stock_codes": 82,
+            "net_pnl_cny": 18586.125999999997,
+            "mean_cycle_pct": 3.279899036144579,
+            "win_rate_pct": 50.602409638554214,
+            "cycle_pct_q10": -9.837889999999998,
+            "cycle_pct_median": 0.10252,
+            "mean_hold_sessions": 19.048192771084338,
+            "overdue_cycles": 0
+          },
+          "middle": {
+            "closed_cycles": 46,
+            "distinct_stock_codes": 45,
+            "net_pnl_cny": -7865.4069999999965,
+            "mean_cycle_pct": -1.4332893478260869,
+            "win_rate_pct": 47.82608695652174,
+            "cycle_pct_q10": -12.318905,
+            "cycle_pct_median": -1.41316,
+            "mean_hold_sessions": 17.82608695652174,
+            "overdue_cycles": 0
+          }
+        },
+        "global_industry_trend_width": {
+          "weak": {
+            "closed_cycles": 109,
+            "distinct_stock_codes": 107,
+            "net_pnl_cny": 13940.970000000001,
+            "mean_cycle_pct": 2.4352923853211013,
+            "win_rate_pct": 55.96330275229357,
+            "cycle_pct_q10": -12.073894,
+            "cycle_pct_median": 1.01158,
+            "mean_hold_sessions": 18.779816513761467,
+            "overdue_cycles": 0
+          },
+          "middle": {
+            "closed_cycles": 52,
+            "distinct_stock_codes": 51,
+            "net_pnl_cny": -4303.951999999999,
+            "mean_cycle_pct": -0.6180026923076926,
+            "win_rate_pct": 40.38461538461539,
+            "cycle_pct_q10": -11.651432,
+            "cycle_pct_median": -1.9955600000000002,
+            "mean_hold_sessions": 17.826923076923077,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 30,
+            "distinct_stock_codes": 30,
+            "net_pnl_cny": -614.0470000000004,
+            "mean_cycle_pct": -0.1854813333333335,
+            "win_rate_pct": 50.0,
+            "cycle_pct_q10": -8.200121,
+            "cycle_pct_median": 0.12315499999999999,
+            "mean_hold_sessions": 19.933333333333334,
+            "overdue_cycles": 0
+          }
+        }
+      },
+      "annual_independent_reset": {
+        "2020": {
+          "net_return_pct": 0.801,
+          "max_drawdown_pct": 20.019,
+          "win_rate_pct": 45.05,
+          "mean_cycle_net_pct": -0.3436,
+          "exposure_mean_pct": 61.384
+        },
+        "2021": {
+          "net_return_pct": 14.696,
+          "max_drawdown_pct": 11.506,
+          "win_rate_pct": 51.85,
+          "mean_cycle_net_pct": 2.3479,
+          "exposure_mean_pct": 45.6
+        },
+        "2022": {
+          "net_return_pct": -16.827,
+          "max_drawdown_pct": 22.06,
+          "win_rate_pct": 36.76,
+          "mean_cycle_net_pct": -3.7708,
+          "exposure_mean_pct": 36.091
+        },
+        "2023": {
+          "net_return_pct": -2.382,
+          "max_drawdown_pct": 15.092,
+          "win_rate_pct": 41.86,
+          "mean_cycle_net_pct": -0.9497,
+          "exposure_mean_pct": 48.668
+        },
+        "2024": {
+          "net_return_pct": 25.914,
+          "max_drawdown_pct": 22.039,
+          "win_rate_pct": 48.0,
+          "mean_cycle_net_pct": 2.5297,
+          "exposure_mean_pct": 69.664
+        },
+        "2025": {
+          "net_return_pct": 41.729,
+          "max_drawdown_pct": 6.337,
+          "win_rate_pct": 61.68,
+          "mean_cycle_net_pct": 4.5461,
+          "exposure_mean_pct": 62.773
+        },
+        "2026": {
+          "net_return_pct": -9.544,
+          "max_drawdown_pct": 24.275,
+          "win_rate_pct": 43.18,
+          "mean_cycle_net_pct": -1.2815,
+          "exposure_mean_pct": 63.39
+        }
+      }
+    },
+    {
+      "id": "frozen26_common_stockmainline",
+      "train": {
+        "net_return_pct": 37.798,
+        "max_drawdown_pct": 18.539,
+        "return_over_drawdown": 2.039,
+        "completed_holding_cycles": 217,
+        "open_positions": 10,
+        "win_rate_pct": 48.85,
+        "mean_cycle_net_pct": 2.2633,
+        "median_cycle_net_pct": -0.3325,
+        "profit_factor": 1.359,
+        "mean_holding_sessions": 18.91,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 634,
+        "annualized_sharpe_descriptive": 0.758,
+        "exposure_mean_pct": 41.437,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 624.736,
+        "blocked_exit_sessions": 13,
+        "blocked_entries": 0,
+        "corporate_events": 14,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 1,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 12,
+        "suspended_marks": 10
+      },
+      "validation": {
+        "net_return_pct": 16.6,
+        "max_drawdown_pct": 17.121,
+        "return_over_drawdown": 0.97,
+        "completed_holding_cycles": 179,
+        "open_positions": 10,
+        "win_rate_pct": 49.72,
+        "mean_cycle_net_pct": 1.2104,
+        "median_cycle_net_pct": -0.7654,
+        "profit_factor": 1.301,
+        "mean_holding_sessions": 18.75,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 4,
+        "max_overdue_sessions": 150,
+        "annualized_sharpe_descriptive": 0.554,
+        "exposure_mean_pct": 52.393,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 1753.376,
+        "blocked_exit_sessions": 0,
+        "blocked_entries": 0,
+        "corporate_events": 20,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 4,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 0,
+        "suspended_marks": 0
+      },
+      "test": {
+        "net_return_pct": 9.812,
+        "max_drawdown_pct": 28.051,
+        "return_over_drawdown": 0.35,
+        "completed_holding_cycles": 186,
+        "open_positions": 10,
+        "win_rate_pct": 46.77,
+        "mean_cycle_net_pct": 0.7461,
+        "median_cycle_net_pct": -0.9335,
+        "profit_factor": 1.127,
+        "mean_holding_sessions": 18.67,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 64,
+        "annualized_sharpe_descriptive": 0.413,
+        "exposure_mean_pct": 59.369,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 1472.08,
+        "blocked_exit_sessions": 5,
+        "blocked_entries": 0,
+        "corporate_events": 16,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 1,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 6,
+        "suspended_marks": 5
+      },
+      "double_cost_test": {
+        "net_return_pct": 11.009,
+        "max_drawdown_pct": 28.447,
+        "return_over_drawdown": 0.387,
+        "completed_holding_cycles": 188,
+        "open_positions": 10,
+        "win_rate_pct": 45.21,
+        "mean_cycle_net_pct": 0.9252,
+        "median_cycle_net_pct": -1.0915,
+        "profit_factor": 1.135,
+        "mean_holding_sessions": 18.58,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 64,
+        "annualized_sharpe_descriptive": 0.451,
+        "exposure_mean_pct": 59.728,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 1451.48,
+        "blocked_exit_sessions": 15,
+        "blocked_entries": 0,
+        "corporate_events": 16,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 1,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 16,
+        "suspended_marks": 15
+      },
+      "stock_concentration": {
+        "top5_stocks_share_positive_profit_pct": 20.871208190567376,
+        "top10_stocks_share_positive_profit_pct": 36.5784445946933,
+        "unclosed_pnl_cny": 1167.35,
+        "unclosed_pnl_divided_net_pnl_pct": 11.897637086570107
+      },
+      "test_completed_cycles": 186,
+      "test_unique_stock_codes": 178,
+      "by_signal_state": {
+        "stock_market_breadth": {
+          "weak": {
+            "closed_cycles": 81,
+            "distinct_stock_codes": 79,
+            "net_pnl_cny": -18134.986,
+            "mean_cycle_pct": -2.19548987654321,
+            "win_rate_pct": 40.74074074074074,
+            "cycle_pct_q10": -15.80184,
+            "cycle_pct_median": -2.57459,
+            "mean_hold_sessions": 18.135802469135804,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 76,
+            "distinct_stock_codes": 76,
+            "net_pnl_cny": 20594.513999999996,
+            "mean_cycle_pct": 3.4645593421052623,
+            "win_rate_pct": 57.89473684210527,
+            "cycle_pct_q10": -8.326744999999999,
+            "cycle_pct_median": 1.26789,
+            "mean_hold_sessions": 18.855263157894736,
+            "overdue_cycles": 0
+          },
+          "middle": {
+            "closed_cycles": 29,
+            "distinct_stock_codes": 29,
+            "net_pnl_cny": 6184.733000000001,
+            "mean_cycle_pct": 1.8382120689655173,
+            "win_rate_pct": 34.48275862068966,
+            "cycle_pct_q10": -7.605352,
+            "cycle_pct_median": -3.0469,
+            "mean_hold_sessions": 19.689655172413794,
+            "overdue_cycles": 0
+          }
+        },
+        "global_industry_trend_width": {
+          "weak": {
+            "closed_cycles": 131,
+            "distinct_stock_codes": 126,
+            "net_pnl_cny": -3917.0409999999974,
+            "mean_cycle_pct": -0.07491106870228953,
+            "win_rate_pct": 43.51145038167939,
+            "cycle_pct_q10": -13.47845,
+            "cycle_pct_median": -2.07932,
+            "mean_hold_sessions": 18.519083969465647,
+            "overdue_cycles": 0
+          },
+          "middle": {
+            "closed_cycles": 24,
+            "distinct_stock_codes": 24,
+            "net_pnl_cny": 2582.66,
+            "mean_cycle_pct": 1.2163120833333334,
+            "win_rate_pct": 66.66666666666666,
+            "cycle_pct_q10": -5.72079,
+            "cycle_pct_median": 1.0623,
+            "mean_hold_sessions": 18.666666666666668,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 31,
+            "distinct_stock_codes": 31,
+            "net_pnl_cny": 9978.642,
+            "mean_cycle_pct": 3.851672258064515,
+            "win_rate_pct": 45.16129032258064,
+            "cycle_pct_q10": -7.11231,
+            "cycle_pct_median": -0.29276,
+            "mean_hold_sessions": 19.322580645161292,
+            "overdue_cycles": 0
+          }
+        }
+      },
+      "annual_independent_reset": {
+        "2020": {
+          "net_return_pct": 48.034,
+          "max_drawdown_pct": 10.699,
+          "win_rate_pct": 59.6,
+          "mean_cycle_net_pct": 4.6206,
+          "exposure_mean_pct": 57.588
+        },
+        "2021": {
+          "net_return_pct": 22.376,
+          "max_drawdown_pct": 9.036,
+          "win_rate_pct": 48.33,
+          "mean_cycle_net_pct": 5.4034,
+          "exposure_mean_pct": 34.152
+        },
+        "2022": {
+          "net_return_pct": -15.164,
+          "max_drawdown_pct": 21.775,
+          "win_rate_pct": 35.0,
+          "mean_cycle_net_pct": -3.548,
+          "exposure_mean_pct": 32.872
+        },
+        "2023": {
+          "net_return_pct": 1.258,
+          "max_drawdown_pct": 9.535,
+          "win_rate_pct": 48.91,
+          "mean_cycle_net_pct": -0.4119,
+          "exposure_mean_pct": 51.002
+        },
+        "2024": {
+          "net_return_pct": 10.409,
+          "max_drawdown_pct": 15.948,
+          "win_rate_pct": 46.74,
+          "mean_cycle_net_pct": 1.9007,
+          "exposure_mean_pct": 54.964
+        },
+        "2025": {
+          "net_return_pct": 27.554,
+          "max_drawdown_pct": 5.587,
+          "win_rate_pct": 58.65,
+          "mean_cycle_net_pct": 3.5111,
+          "exposure_mean_pct": 56.816
+        },
+        "2026": {
+          "net_return_pct": -12.417,
+          "max_drawdown_pct": 24.425,
+          "win_rate_pct": 32.0,
+          "mean_cycle_net_pct": -2.6151,
+          "exposure_mean_pct": 55.021
+        }
+      }
+    },
+    {
+      "id": "refit26_common",
+      "train": {
+        "net_return_pct": 8.329,
+        "max_drawdown_pct": 28.842,
+        "return_over_drawdown": 0.289,
+        "completed_holding_cycles": 245,
+        "open_positions": 10,
+        "win_rate_pct": 48.57,
+        "mean_cycle_net_pct": 0.8863,
+        "median_cycle_net_pct": -0.4053,
+        "profit_factor": 1.114,
+        "mean_holding_sessions": 18.92,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 2,
+        "max_overdue_sessions": 354,
+        "annualized_sharpe_descriptive": 0.254,
+        "exposure_mean_pct": 45.65,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 2340.977,
+        "blocked_exit_sessions": 2,
+        "blocked_entries": 0,
+        "corporate_events": 20,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 3,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 1,
+        "suspended_marks": 1
+      },
+      "validation": {
+        "net_return_pct": -9.374,
+        "max_drawdown_pct": 40.267,
+        "return_over_drawdown": -0.233,
+        "completed_holding_cycles": 212,
+        "open_positions": 10,
+        "win_rate_pct": 43.4,
+        "mean_cycle_net_pct": -0.0144,
+        "median_cycle_net_pct": -3.1963,
+        "profit_factor": 0.935,
+        "mean_holding_sessions": 18.58,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 361,
+        "annualized_sharpe_descriptive": -0.074,
+        "exposure_mean_pct": 58.24,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 907.2,
+        "blocked_exit_sessions": 11,
+        "blocked_entries": 0,
+        "corporate_events": 16,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 1,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 11,
+        "suspended_marks": 11
+      },
+      "test": {
+        "net_return_pct": 41.716,
+        "max_drawdown_pct": 21.844,
+        "return_over_drawdown": 1.91,
+        "completed_holding_cycles": 185,
+        "open_positions": 10,
+        "win_rate_pct": 51.89,
+        "mean_cycle_net_pct": 2.3269,
+        "median_cycle_net_pct": 0.78,
+        "profit_factor": 1.469,
+        "mean_holding_sessions": 19.2,
+        "overdue_cycles": 2,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 302,
+        "annualized_sharpe_descriptive": 1.12,
+        "exposure_mean_pct": 64.885,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 850.12,
+        "blocked_exit_sessions": 6,
+        "blocked_entries": 3,
+        "corporate_events": 11,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 1,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 8,
+        "suspended_marks": 3
+      },
+      "double_cost_test": {
+        "net_return_pct": 28.485,
+        "max_drawdown_pct": 21.865,
+        "return_over_drawdown": 1.303,
+        "completed_holding_cycles": 186,
+        "open_positions": 10,
+        "win_rate_pct": 50.54,
+        "mean_cycle_net_pct": 1.8943,
+        "median_cycle_net_pct": 0.2119,
+        "profit_factor": 1.365,
+        "mean_holding_sessions": 19.2,
+        "overdue_cycles": 2,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 302,
+        "annualized_sharpe_descriptive": 0.834,
+        "exposure_mean_pct": 64.908,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 776.576,
+        "blocked_exit_sessions": 6,
+        "blocked_entries": 3,
+        "corporate_events": 11,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 1,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 8,
+        "suspended_marks": 3
+      },
+      "stock_concentration": {
+        "top5_stocks_share_positive_profit_pct": 22.403212911372368,
+        "top10_stocks_share_positive_profit_pct": 38.17968520238587,
+        "unclosed_pnl_cny": 10762.457,
+        "unclosed_pnl_divided_net_pnl_pct": 25.799308623709553
+      },
+      "test_completed_cycles": 185,
+      "test_unique_stock_codes": 170,
+      "by_signal_state": {
+        "stock_market_breadth": {
+          "weak": {
+            "closed_cycles": 87,
+            "distinct_stock_codes": 81,
+            "net_pnl_cny": 10398.575999999997,
+            "mean_cycle_pct": 2.0022603448275866,
+            "win_rate_pct": 54.02298850574713,
+            "cycle_pct_q10": -15.78262,
+            "cycle_pct_median": 1.11041,
+            "mean_hold_sessions": 19.436781609195403,
+            "overdue_cycles": 2
+          },
+          "middle": {
+            "closed_cycles": 26,
+            "distinct_stock_codes": 25,
+            "net_pnl_cny": 10060.269999999999,
+            "mean_cycle_pct": 4.084621153846154,
+            "win_rate_pct": 57.692307692307686,
+            "cycle_pct_q10": -9.65184,
+            "cycle_pct_median": 0.920905,
+            "mean_hold_sessions": 19.384615384615383,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 72,
+            "distinct_stock_codes": 69,
+            "net_pnl_cny": 10494.756000000001,
+            "mean_cycle_pct": 2.0843241666666668,
+            "win_rate_pct": 47.22222222222222,
+            "cycle_pct_q10": -8.520972,
+            "cycle_pct_median": -0.10980999999999999,
+            "mean_hold_sessions": 18.84722222222222,
+            "overdue_cycles": 0
+          }
+        },
+        "global_industry_trend_width": {
+          "weak": {
+            "closed_cycles": 117,
+            "distinct_stock_codes": 113,
+            "net_pnl_cny": 21360.062,
+            "mean_cycle_pct": 2.6812081196581192,
+            "win_rate_pct": 54.700854700854705,
+            "cycle_pct_q10": -13.682368,
+            "cycle_pct_median": 1.41298,
+            "mean_hold_sessions": 19.384615384615383,
+            "overdue_cycles": 2
+          },
+          "middle": {
+            "closed_cycles": 46,
+            "distinct_stock_codes": 46,
+            "net_pnl_cny": 12340.418000000001,
+            "mean_cycle_pct": 2.9393391304347825,
+            "win_rate_pct": 52.17391304347826,
+            "cycle_pct_q10": -7.83192,
+            "cycle_pct_median": 0.7969550000000001,
+            "mean_hold_sessions": 18.82608695652174,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 22,
+            "distinct_stock_codes": 22,
+            "net_pnl_cny": -2746.8779999999997,
+            "mean_cycle_pct": -0.8383095454545455,
+            "win_rate_pct": 36.36363636363637,
+            "cycle_pct_q10": -7.123436000000001,
+            "cycle_pct_median": -3.22609,
+            "mean_hold_sessions": 19.0,
+            "overdue_cycles": 0
+          }
+        }
+      },
+      "annual_independent_reset": {
+        "2020": {
+          "net_return_pct": 41.661,
+          "max_drawdown_pct": 12.639,
+          "win_rate_pct": 54.17,
+          "mean_cycle_net_pct": 3.593,
+          "exposure_mean_pct": 67.08
+        },
+        "2021": {
+          "net_return_pct": 12.876,
+          "max_drawdown_pct": 7.148,
+          "win_rate_pct": 58.33,
+          "mean_cycle_net_pct": 3.4772,
+          "exposure_mean_pct": 36.435
+        },
+        "2022": {
+          "net_return_pct": -26.971,
+          "max_drawdown_pct": 27.562,
+          "win_rate_pct": 27.54,
+          "mean_cycle_net_pct": -6.3166,
+          "exposure_mean_pct": 32.568
+        },
+        "2023": {
+          "net_return_pct": 4.591,
+          "max_drawdown_pct": 17.518,
+          "win_rate_pct": 43.18,
+          "mean_cycle_net_pct": 1.0459,
+          "exposure_mean_pct": 49.983
+        },
+        "2024": {
+          "net_return_pct": -11.842,
+          "max_drawdown_pct": 31.359,
+          "win_rate_pct": 45.26,
+          "mean_cycle_net_pct": -0.6042,
+          "exposure_mean_pct": 72.367
+        },
+        "2025": {
+          "net_return_pct": 24.449,
+          "max_drawdown_pct": 7.723,
+          "win_rate_pct": 57.28,
+          "mean_cycle_net_pct": 2.8996,
+          "exposure_mean_pct": 61.784
+        },
+        "2026": {
+          "net_return_pct": 19.423,
+          "max_drawdown_pct": 21.06,
+          "win_rate_pct": 50.57,
+          "mean_cycle_net_pct": 2.7248,
+          "exposure_mean_pct": 68.745
+        }
+      }
+    },
+    {
+      "id": "refit30_industrycontext",
+      "train": {
+        "net_return_pct": 6.22,
+        "max_drawdown_pct": 19.97,
+        "return_over_drawdown": 0.311,
+        "completed_holding_cycles": 206,
+        "open_positions": 10,
+        "win_rate_pct": 47.57,
+        "mean_cycle_net_pct": 0.6981,
+        "median_cycle_net_pct": -0.4758,
+        "profit_factor": 1.111,
+        "mean_holding_sessions": 18.86,
+        "overdue_cycles": 1,
+        "overdue_open_positions": 4,
+        "max_overdue_sessions": 606,
+        "annualized_sharpe_descriptive": 0.215,
+        "exposure_mean_pct": 42.014,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 2783.481,
+        "blocked_exit_sessions": 12,
+        "blocked_entries": 0,
+        "corporate_events": 24,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 5,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 6,
+        "suspended_marks": 6
+      },
+      "validation": {
+        "net_return_pct": -11.802,
+        "max_drawdown_pct": 38.072,
+        "return_over_drawdown": -0.31,
+        "completed_holding_cycles": 219,
+        "open_positions": 10,
+        "win_rate_pct": 40.18,
+        "mean_cycle_net_pct": -0.7561,
+        "median_cycle_net_pct": -3.1725,
+        "profit_factor": 0.863,
+        "mean_holding_sessions": 18.38,
+        "overdue_cycles": 0,
+        "overdue_open_positions": 1,
+        "max_overdue_sessions": 369,
+        "annualized_sharpe_descriptive": -0.169,
+        "exposure_mean_pct": 60.896,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 1064.088,
+        "blocked_exit_sessions": 0,
+        "blocked_entries": 0,
+        "corporate_events": 20,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 0,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 2,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 0,
+        "suspended_marks": 0
+      },
+      "test": {
+        "net_return_pct": 21.242,
+        "max_drawdown_pct": 22.063,
+        "return_over_drawdown": 0.963,
+        "completed_holding_cycles": 183,
+        "open_positions": 10,
+        "win_rate_pct": 49.73,
+        "mean_cycle_net_pct": 1.7877,
+        "median_cycle_net_pct": -0.3774,
+        "profit_factor": 1.332,
+        "mean_holding_sessions": 18.77,
+        "overdue_cycles": 2,
+        "overdue_open_positions": 0,
+        "max_overdue_sessions": 3,
+        "annualized_sharpe_descriptive": 0.697,
+        "exposure_mean_pct": 59.279,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 1005.36,
+        "blocked_exit_sessions": 21,
+        "blocked_entries": 0,
+        "corporate_events": 9,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 1,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 0,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 25,
+        "suspended_marks": 4
+      },
+      "double_cost_test": {
+        "net_return_pct": 16.281,
+        "max_drawdown_pct": 22.573,
+        "return_over_drawdown": 0.721,
+        "completed_holding_cycles": 184,
+        "open_positions": 10,
+        "win_rate_pct": 47.83,
+        "mean_cycle_net_pct": 1.4996,
+        "median_cycle_net_pct": -0.4864,
+        "profit_factor": 1.263,
+        "mean_holding_sessions": 18.7,
+        "overdue_cycles": 2,
+        "overdue_open_positions": 0,
+        "max_overdue_sessions": 3,
+        "annualized_sharpe_descriptive": 0.562,
+        "exposure_mean_pct": 59.258,
+        "stale_open_positions": 0,
+        "dividend_receivable_cny": 986.16,
+        "blocked_exit_sessions": 21,
+        "blocked_entries": 0,
+        "corporate_events": 9,
+        "verified_cash_payments": 0,
+        "verified_share_releases": 1,
+        "model_edge_exit_requests": 0,
+        "bonus_share_events_without_listing_date": 0,
+        "company_action_formula_mismatches_held": 0,
+        "st_in_position": 26,
+        "suspended_marks": 4
+      },
+      "stock_concentration": {
+        "top5_stocks_share_positive_profit_pct": 21.592019740498817,
+        "top10_stocks_share_positive_profit_pct": 36.28339119705424,
+        "unclosed_pnl_cny": -1073.9900000000002,
+        "unclosed_pnl_divided_net_pnl_pct": -5.0560866938819755
+      },
+      "test_completed_cycles": 183,
+      "test_unique_stock_codes": 176,
+      "by_signal_state": {
+        "stock_market_breadth": {
+          "weak": {
+            "closed_cycles": 84,
+            "distinct_stock_codes": 83,
+            "net_pnl_cny": 17893.093,
+            "mean_cycle_pct": 3.106507261904762,
+            "win_rate_pct": 50.0,
+            "cycle_pct_q10": -15.107102,
+            "cycle_pct_median": -0.17126999999999998,
+            "mean_hold_sessions": 19.44047619047619,
+            "overdue_cycles": 2
+          },
+          "strong": {
+            "closed_cycles": 72,
+            "distinct_stock_codes": 70,
+            "net_pnl_cny": 13414.694,
+            "mean_cycle_pct": 2.2456706944444442,
+            "win_rate_pct": 61.111111111111114,
+            "cycle_pct_q10": -7.54348,
+            "cycle_pct_median": 1.3588,
+            "mean_hold_sessions": 18.63888888888889,
+            "overdue_cycles": 0
+          },
+          "middle": {
+            "closed_cycles": 27,
+            "distinct_stock_codes": 27,
+            "net_pnl_cny": -8992.276,
+            "mean_cycle_pct": -3.5368362962962965,
+            "win_rate_pct": 18.51851851851852,
+            "cycle_pct_q10": -9.976773999999999,
+            "cycle_pct_median": -4.7853,
+            "mean_hold_sessions": 17.0,
+            "overdue_cycles": 0
+          }
+        },
+        "global_industry_trend_width": {
+          "weak": {
+            "closed_cycles": 120,
+            "distinct_stock_codes": 118,
+            "net_pnl_cny": 34271.943999999996,
+            "mean_cycle_pct": 3.827034416666667,
+            "win_rate_pct": 58.333333333333336,
+            "cycle_pct_q10": -13.953486999999999,
+            "cycle_pct_median": 2.7001749999999998,
+            "mean_hold_sessions": 19.541666666666668,
+            "overdue_cycles": 2
+          },
+          "middle": {
+            "closed_cycles": 26,
+            "distinct_stock_codes": 26,
+            "net_pnl_cny": -8711.618999999999,
+            "mean_cycle_pct": -3.5462311538461537,
+            "win_rate_pct": 23.076923076923077,
+            "cycle_pct_q10": -10.036985,
+            "cycle_pct_median": -2.476355,
+            "mean_hold_sessions": 17.307692307692307,
+            "overdue_cycles": 0
+          },
+          "strong": {
+            "closed_cycles": 37,
+            "distinct_stock_codes": 37,
+            "net_pnl_cny": -3244.8139999999994,
+            "mean_cycle_pct": -1.0784270270270273,
+            "win_rate_pct": 40.54054054054054,
+            "cycle_pct_q10": -7.752098,
+            "cycle_pct_median": -0.81205,
+            "mean_hold_sessions": 17.27027027027027,
+            "overdue_cycles": 0
+          }
+        }
+      },
+      "annual_independent_reset": {
+        "2020": {
+          "net_return_pct": 15.985,
+          "max_drawdown_pct": 12.811,
+          "win_rate_pct": 56.6,
+          "mean_cycle_net_pct": 2.6271,
+          "exposure_mean_pct": 61.37
+        },
+        "2021": {
+          "net_return_pct": 9.785,
+          "max_drawdown_pct": 12.326,
+          "win_rate_pct": 48.57,
+          "mean_cycle_net_pct": 2.2197,
+          "exposure_mean_pct": 39.225
+        },
+        "2022": {
+          "net_return_pct": -17.752,
+          "max_drawdown_pct": 24.307,
+          "win_rate_pct": 33.33,
+          "mean_cycle_net_pct": -4.5322,
+          "exposure_mean_pct": 33.5
+        },
+        "2023": {
+          "net_return_pct": -9.964,
+          "max_drawdown_pct": 17.983,
+          "win_rate_pct": 38.71,
+          "mean_cycle_net_pct": -2.0391,
+          "exposure_mean_pct": 52.484
+        },
+        "2024": {
+          "net_return_pct": -17.139,
+          "max_drawdown_pct": 29.593,
+          "win_rate_pct": 39.85,
+          "mean_cycle_net_pct": -1.1997,
+          "exposure_mean_pct": 71.449
+        },
+        "2025": {
+          "net_return_pct": 17.366,
+          "max_drawdown_pct": 9.937,
+          "win_rate_pct": 48.91,
+          "mean_cycle_net_pct": 1.6468,
+          "exposure_mean_pct": 55.511
+        },
+        "2026": {
+          "net_return_pct": -6.013,
+          "max_drawdown_pct": 22.786,
+          "win_rate_pct": 43.21,
+          "mean_cycle_net_pct": -0.133,
+          "exposure_mean_pct": 59.942
+        }
+      }
+    }
+  ],
+  "comparisons": {
+    "industry_context_extra_vs_same_training26": {
+      "train": {
+        "net_return_difference_pp": -2.109000000000001,
+        "max_drawdown_difference_pp": -8.872
+      },
+      "validation": {
+        "net_return_difference_pp": -2.427999999999999,
+        "max_drawdown_difference_pp": -2.1950000000000003
+      },
+      "test": {
+        "net_return_difference_pp": -20.474,
+        "max_drawdown_difference_pp": 0.21899999999999764
+      }
+    },
+    "samecoverage_refit_vs_frozen26": {
+      "train": {
+        "net_return_difference_pp": -4.664999999999999,
+        "max_drawdown_difference_pp": 3.357999999999997
+      },
+      "validation": {
+        "net_return_difference_pp": -28.749000000000002,
+        "max_drawdown_difference_pp": 7.7180000000000035
+      },
+      "test": {
+        "net_return_difference_pp": -16.275,
+        "max_drawdown_difference_pp": 1.394000000000002
+      }
+    },
+    "mainline_gate_on22": {
+      "train": {
+        "net_return_difference_pp": -13.123000000000001,
+        "max_drawdown_difference_pp": 3.5889999999999986
+      },
+      "validation": {
+        "net_return_difference_pp": -8.004000000000001,
+        "max_drawdown_difference_pp": -5.834000000000003
+      },
+      "test": {
+        "net_return_difference_pp": -12.483,
+        "max_drawdown_difference_pp": 3.443999999999999
+      }
+    },
+    "mainline_gate_on26": {
+      "train": {
+        "net_return_difference_pp": 24.804000000000002,
+        "max_drawdown_difference_pp": -6.945
+      },
+      "validation": {
+        "net_return_difference_pp": -2.7749999999999986,
+        "max_drawdown_difference_pp": -15.428
+      },
+      "test": {
+        "net_return_difference_pp": -48.179,
+        "max_drawdown_difference_pp": 7.600999999999999
+      }
+    },
+    "missing_context_gate_on22": {
+      "train": {
+        "net_return_difference_pp": -21.208000000000002,
+        "max_drawdown_difference_pp": 0.0
+      },
+      "validation": {
+        "net_return_difference_pp": 2.353999999999999,
+        "max_drawdown_difference_pp": 5.865000000000002
+      },
+      "test": {
+        "net_return_difference_pp": 0.0,
+        "max_drawdown_difference_pp": 0.0
+      }
+    },
+    "missing_context_gate_on26": {
+      "train": {
+        "net_return_difference_pp": 1.1959999999999997,
+        "max_drawdown_difference_pp": -7.619999999999997
+      },
+      "validation": {
+        "net_return_difference_pp": 6.792,
+        "max_drawdown_difference_pp": -1.9480000000000004
+      },
+      "test": {
+        "net_return_difference_pp": 0.0,
+        "max_drawdown_difference_pp": 0.0
+      }
+    }
+  },
+  "neutral_baselines": {
+    "refit26_common": {
+      "train": {
+        "seed_returns": [
+          7.18,
+          0.498,
+          6.114
+        ],
+        "median_return_pct": 6.114,
+        "model_return_pct": 8.329
+      },
+      "validation": {
+        "seed_returns": [
+          -9.615,
+          4.425,
+          -13.578
+        ],
+        "median_return_pct": -9.615,
+        "model_return_pct": -9.374
+      },
+      "test": {
+        "seed_returns": [
+          4.257,
+          52.243,
+          25.089
+        ],
+        "median_return_pct": 25.089,
+        "model_return_pct": 41.716
+      }
+    },
+    "refit30_industrycontext": {
+      "train": {
+        "seed_returns": [
+          -0.789,
+          -0.529,
+          -10.658
+        ],
+        "median_return_pct": -0.789,
+        "model_return_pct": 6.22
+      },
+      "validation": {
+        "seed_returns": [
+          6.532,
+          15.695,
+          4.124
+        ],
+        "median_return_pct": 6.532,
+        "model_return_pct": -11.802
+      },
+      "test": {
+        "seed_returns": [
+          24.907,
+          56.948,
+          25.87
+        ],
+        "median_return_pct": 25.87,
+        "model_return_pct": 21.242
+      }
+    }
+  },
+  "checks": {
+    "new_model_fits": 14,
+    "saved_ledgers": 112,
+    "buy_orders_checked": 18271,
+    "nonnegative_cash_all": true,
+    "max_PnL_reconcile_cny": 0.0096,
+    "ST_or_BJ_buy_orders": 0,
+    "same_training_day_sample_hash26and30": true,
+    "all_new_training_label_endpoints_before_year": true,
+    "actual_industry_context_prefix_and_future_perturbation_invariant": true,
+    "actual2024new_model_predictions_future_industry_perturbation_invariant": true,
+    "frozen_full_baseline_metrics_exact_reproduced": [
+      "frozen22_full:train",
+      "frozen22_full:validation",
+      "frozen22_full:test",
+      "frozen26_full:train",
+      "frozen26_full:validation",
+      "frozen26_full:test"
+    ],
+    "all_source_SHA_unchanged": true,
+    "elapsed_seconds": 102.395,
+    "no_stock_current_industry_history_backfill": true,
+    "historical_industry_version_certified": false
+  },
+  "limitations": [
+    "Already seen later history; retrospective exploration",
+    "No current or historical stock-industry mapping used",
+    "SW historical classification/index version not PIT-certified",
+    "20-session labels do not meet15-session preference",
+    "Open-only fill proxy; actual company-action dates/ST information/retirement liquidation incomplete",
+    "Annual resets cannot be compounded as one account",
+    "Three same-path neutral seeds are descriptive, not significance"
+  ]
+}

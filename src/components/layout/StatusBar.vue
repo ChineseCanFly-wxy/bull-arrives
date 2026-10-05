@@ -88,7 +88,6 @@ async function openRepository() {
 .sb-github:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 .sb-github svg { flex: 0 0 auto; }
 .sb-check-btn.sb-up-to-date { color: #3fb950; }
-html[data-style="trading"] .sb-check-btn.sb-up-to-date,
 html[data-style="modern"] .sb-check-btn.sb-up-to-date { color: var(--color-accent); }
 .sb-copyright { color: var(--color-text-tertiary); line-height: 1; }
 @media (max-width: 680px) {

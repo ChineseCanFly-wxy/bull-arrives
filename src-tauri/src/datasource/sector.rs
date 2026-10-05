@@ -115,6 +115,7 @@ pub struct SectorMember {
     pub market_cap: Option<f64>,
     pub pe: Option<f64>,
     pub pb: Option<f64>,
+    pub quoted_at_unix: Option<i64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -273,7 +274,7 @@ fn quote_time(rows: &[serde_json::Value]) -> String {
         .filter_map(|time| chrono::DateTime::from_timestamp(time as i64, 0))
         .max()
         .map(|time| {
-            time.with_timezone(&chrono::Local)
+            time.with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap())
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string()
         })
@@ -392,6 +393,7 @@ fn parse_member(row: &serde_json::Value) -> Option<SectorMember> {
     let name = text_at(row, &["f14"])?;
     Some(SectorMember {
         market: market_for_stock_code(&code).to_owned(),
+        quoted_at_unix: number_at(row, &["f124"]).filter(|t|t.is_finite()).map(|t|t as i64),
         code,
         name,
         price: number_at(row, &["f2"]),
@@ -828,6 +830,15 @@ pub async fn fetch_member_codes(
     Ok(value)
 }
 
+/// 主线研究必须拿全分页与行情时点，不能把单页或代码集合当完整覆盖。
+pub async fn fetch_research_members(kind: SectorKind, sector_code: &str) -> Result<SectorMemberPage, String> {
+    let code = sector_code.trim().to_uppercase();
+    if !valid_sector_code(&code) { return Err("板块代码格式无效".into()); }
+    let result = fetch_all_members(&code).await.map_err(|e| e.to_string())?;
+    Ok(SectorMemberPage { kind, sector_code: code, page: 1, page_size: result.total as u32,
+        total: result.total, items: result.items, as_of: result.as_of, source: result.source, stale: false })
+}
+
 /// 取齐全部成分后计算派生数量；缺页或重复时拒绝返回局部统计。
 pub async fn fetch_limit_up_stats(sector_code: &str) -> Result<SectorLimitUpStats, String> {
     let sector_code = sector_code.trim().to_uppercase();
@@ -867,7 +878,7 @@ fn parse_kline(line: &str) -> Option<SectorKline> {
         return None;
     }
     let parse = |index: usize| values.get(index)?.parse::<f64>().ok();
-    Some(SectorKline {
+    let bar=SectorKline {
         date: values[0].to_owned(),
         open: parse(1)?,
         close: parse(2)?,
@@ -877,84 +888,192 @@ fn parse_kline(line: &str) -> Option<SectorKline> {
         amount: parse(6)?,
         change_pct: parse(8),
         turnover_rate: parse(10),
+    };
+    if chrono::NaiveDate::parse_from_str(&bar.date,"%Y-%m-%d").is_err()
+        || [bar.open,bar.high,bar.low,bar.close].iter().any(|v|!v.is_finite()||*v<=0.0)
+        || bar.high<bar.open.max(bar.close)||bar.low>bar.open.min(bar.close)||bar.low>bar.high
+        || !bar.volume.is_finite()||bar.volume<0.0||!bar.amount.is_finite()||bar.amount<0.0{return None;}
+    Some(bar)
+}
+
+fn parse_history_payload(
+    sector_code: &str,
+    period: &str,
+    host: &str,
+    value: &serde_json::Value,
+) -> Result<SectorHistory, String> {
+    if value["data"].is_null() {
+        return Err(format!("90.{sector_code} 官方没有返回原始日线（data=null）"));
+    }
+    if value["rc"].as_i64() != Some(0)
+        || value["data"]["code"].as_str() != Some(sector_code)
+        || value["data"]["market"].as_u64() != Some(90)
+    {
+        return Err(format!("板块 K 线未返回同一 90.{sector_code} 身份，不能替代或猜测映射"));
+    }
+    let rows = value.pointer("/data/klines").and_then(serde_json::Value::as_array)
+        .filter(|rows| !rows.is_empty()).ok_or("板块 K 线接口没有返回原始行情")?;
+    let items = rows.iter().map(|row| row.as_str().and_then(parse_kline)
+        .ok_or("板块 K 线包含无效日期或 OHLC，拒绝丢行后继续计算".to_owned()))
+        .collect::<Result<Vec<_>, _>>()?;
+    if items.windows(2).any(|r| r[0].date >= r[1].date) {
+        return Err("板块 K 线包含重复或倒序日期".into());
+    }
+    Ok(SectorHistory {
+        sector_code: sector_code.into(), period: period.into(),
+        as_of: items.last().unwrap().date.clone(), items,
+        source: format!("{} · 90.BK · unadjusted", host.trim_start_matches("https://")),
     })
 }
 
-pub async fn fetch_history(sector_code: &str, period: &str) -> Result<SectorHistory, String> {
-    let sector_code = sector_code.trim().to_uppercase();
-    if !valid_sector_code(&sector_code) {
-        return Err("板块代码格式无效".into());
+fn validate_required_sessions(required_dates: &[String]) -> Result<(), String> {
+    if required_dates.is_empty()
+        || required_dates.iter().any(|date| date.len() != 10
+            || chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err())
+        || required_dates.windows(2).any(|dates| dates[0] >= dates[1])
+    {
+        return Err("必需交易日必须是非空、严格升序的 YYYY-MM-DD 真实指数日期".into());
     }
-    let klt = match period {
-        "daily" => "101",
-        "weekly" => "102",
-        "monthly" => "103",
-        _ => return Err("板块 K 线周期必须是 daily / weekly / monthly".into()),
-    };
-    let params = [
-        ("secid", format!("90.{sector_code}")),
-        ("fields1", "f1,f2,f3,f4,f5,f6".to_owned()),
-        (
-            "fields2",
-            "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61".to_owned(),
-        ),
-        ("klt", klt.to_owned()),
-        ("fqt", "0".to_owned()),
-        ("end", "20500101".to_owned()),
-        ("lmt", "180".to_owned()),
+    Ok(())
+}
+
+fn missing_sessions<'a>(history: &SectorHistory, required_dates: &'a [String]) -> Vec<&'a str> {
+    required_dates.iter().filter(|date| history.items.binary_search_by(|bar| bar.date.cmp(date)).is_err())
+        .map(String::as_str).collect()
+}
+
+fn session_gap_error(history: &SectorHistory, required_dates: &[String], missing: &[&str]) -> String {
+    let first = &history.items.first().unwrap().date;
+    let short = if first > &required_dates[0] { "；当前官方可用历史短于必需窗口（short-history，未证实板块成立日）" } else { "" };
+    format!("{} 缺少真实交易日 {} 等共 {} 日，覆盖 {}/{}（{}..{}）；{} 返回 {} 根原始行情（{}..{}）{}",
+        history.sector_code, missing[0], missing.len(), required_dates.len() - missing.len(), required_dates.len(),
+        required_dates.first().unwrap(), required_dates.last().unwrap(), history.source,
+        history.items.len(), first, history.as_of, short)
+}
+
+fn complete_session_history(mut history: SectorHistory, required_dates: &[String]) -> Result<SectorHistory, String> {
+    let missing = missing_sessions(&history, required_dates);
+    if !missing.is_empty() { return Err(session_gap_error(&history, required_dates, &missing)); }
+    // 换用单个完整窗口，避免把重叠价格不一致的源拼成一条历史。
+    history.items.retain(|bar| bar.date >= required_dates[0] && bar.date <= *required_dates.last().unwrap());
+    history.as_of = required_dates.last().unwrap().clone();
+    Ok(history)
+}
+
+pub async fn fetch_history(sector_code: &str, period: &str) -> Result<SectorHistory, String> {
+    fetch_history_inner(sector_code, period, &[]).await
+}
+
+/// 主线传入沪深300最后66根真实日线日期。缺交易日时继续官方网关和日期窗口；不填价、不映射SW。
+/// 普通图表仍调用 fetch_history；本接口只返回覆盖完整必需日且不晚于截止日的原始BK日线。
+pub async fn fetch_history_for_sessions(code: &str, required_dates: &[String]) -> Result<SectorHistory, String> {
+    validate_required_sessions(required_dates)?;
+    fetch_history_inner(code, "daily", required_dates).await
+}
+
+async fn request_history_window(
+    sector_code: &str, period: &str, host: &str, window: usize,
+    required_dates: &[String], timeout: Duration,
+) -> Result<SectorHistory, (String, bool)> {
+    let klt = match period { "daily" => "101", "weekly" => "102", _ => "103" };
+    let end = if window == 0 { "20500101".into() } else { required_dates.last().unwrap().replace('-', "") };
+    let lmt = if window == 2 { "1000" } else { "180" };
+    let beg = if window == 1 { required_dates[0].replace('-', "") } else { "0".into() };
+    let provenance = format!("{} · end={end} lmt={lmt} beg={beg}", host.trim_start_matches("https://"));
+    if timeout.is_zero() { return Err((format!("{provenance}：官方兜底48秒预算用尽"), false)); }
+    let mut query = vec![
+        ("secid", format!("90.{sector_code}")), ("fields1", "f1,f2,f3,f4,f5,f6".into()),
+        ("fields2", "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61".into()),
+        ("klt", klt.to_owned()), ("fqt", "0".into()), ("end", end), ("lmt", lmt.into()),
     ];
-    let mut last_error = "板块 K 线接口没有返回有效数据".to_string();
-    for host in KLINE_HOSTS {
-        let url = format!("{host}/api/qt/stock/kline/get");
-        let response =
-            with_browser_headers(universe_client().get(&url), "https://quote.eastmoney.com/")
-                .query(&params)
-                .timeout(REQUEST_TIMEOUT)
-                .send()
-                .await;
-        let response = match response {
-            Ok(response) if response.status().is_success() => response,
-            Ok(response) => {
-                last_error = format!("板块 K 线接口 HTTP {}", response.status());
-                continue;
+    if window > 0 {
+        // 官方 quotekchart 的全量参数；1000根上限足以核验66日，避免无限请求。
+        query.extend([("beg", beg), ("ut", "fa5fd1943c7b386f172d6893dbfba10b".into()), ("smplmt", "1000000".into())]);
+    }
+    // bool标记传输是否可用：断连/超时/HTTP失败不再对该主机重复参数窗口。
+    let response = with_browser_headers(universe_client().get(format!("{host}/api/qt/stock/kline/get")),
+        "https://quote.eastmoney.com/").query(&query).timeout(timeout).send().await
+        .map_err(|error| (format!("{provenance}：板块 K 线请求失败：{error}"), false))?;
+    let response = response.error_for_status()
+        .map_err(|error| (format!("{provenance}：板块 K 线 HTTP失败：{error}"), false))?;
+    let value: serde_json::Value = response.json().await
+        .map_err(|error| (format!("{provenance}：板块 K 线解析失败：{error}"), !error.is_timeout()))?;
+    let mut history = parse_history_payload(sector_code, period, host, &value)
+        .map_err(|error| (format!("{provenance}：{error}"), true))?;
+    if !required_dates.is_empty() { history.source = format!("{provenance} · 90.{sector_code} · unadjusted"); }
+    Ok(history)
+}
+
+async fn fetch_history_inner(sector_code: &str, period: &str, required_dates: &[String]) -> Result<SectorHistory, String> {
+    let sector_code = sector_code.trim().to_uppercase();
+    if !valid_sector_code(&sector_code) { return Err("板块代码格式无效".into()); }
+    if !matches!(period, "daily" | "weekly" | "monthly") {
+        return Err("板块 K 线周期必须是 daily / weekly / monthly".into());
+    }
+    let mut last_error = "板块 K 线接口没有返回有效数据".to_owned();
+    if required_dates.is_empty() {
+        // 普通日/周/月图表保留原网关顺序、180根窗口及成功即返回。
+        for host in KLINE_HOSTS {
+            match request_history_window(&sector_code, period, host, 0, &[], REQUEST_TIMEOUT).await {
+                Ok(history) => return Ok(history), Err((error, _)) => last_error = error,
             }
-            Err(error) => {
-                last_error = format!("板块 K 线请求失败：{error}");
-                continue;
+        }
+        return Err(last_error);
+    }
+    // 先用本机实测可连通的官方网关；首请求完整时无额外HTTP。
+    // 缺口后最多4条并发，每主机至多3窗口；48秒内归还具体诊断给命令层50秒总timeout。
+    let deadline = Instant::now() + Duration::from_secs(48);
+    let fetch = |index: usize, window: usize| {
+        let code = sector_code.clone(); let dates = required_dates.to_vec(); let period = period.to_owned();
+        async move {
+            let timeout = deadline.saturating_duration_since(Instant::now()).min(REQUEST_TIMEOUT);
+            let result = request_history_window(&code, &period, KLINE_HOSTS[index], window, &dates, timeout).await;
+            (index, window, result)
+        }
+    };
+    let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(fetch(1, 0));
+    let mut attempts = vec![format!("{}#0", KLINE_HOSTS[1])];
+    let mut fallback_started = false;
+    let mut best_gap: Option<(usize, String)> = None;
+    let mut data_error = None;
+    while !tasks.is_empty() {
+        let result = tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), tasks.join_next()).await;
+        let result = match result {
+            Ok(Some(result)) => result.map_err(|error| format!("板块日线兜底任务失败：{error}"))?,
+            Ok(None) => break,
+            Err(_) => { last_error = "官方兜底48秒预算用尽，剩余请求已取消".into(); break; }
+        };
+        let (index, window, result) = result;
+        let reachable = match result {
+            Ok(history) => {
+                let missing_count = missing_sessions(&history, required_dates).len();
+                match complete_session_history(history, required_dates) {
+                    Ok(history) => return Ok(history),
+                    Err(error) => {
+                        if best_gap.as_ref().is_none_or(|(count, _)| missing_count < *count) { best_gap = Some((missing_count, error)); }
+                    }
+                }
+                true
+            }
+            Err((error, reachable)) => {
+                if reachable { data_error = Some(error.clone()); }
+                last_error = error; reachable
             }
         };
-        let value: serde_json::Value = match response.json().await {
-            Ok(value) => value,
-            Err(error) => {
-                last_error = format!("板块 K 线解析失败：{error}");
-                continue;
+        if !fallback_started {
+            for other in [0, 2, 3] {
+                tasks.spawn(fetch(other, 0)); attempts.push(format!("{}#0", KLINE_HOSTS[other]));
             }
-        };
-        let items: Vec<_> = value
-            .pointer("/data/klines")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(serde_json::Value::as_str)
-            .filter_map(parse_kline)
-            .collect();
-        if !items.is_empty() {
-            return Ok(SectorHistory {
-                sector_code,
-                period: period.to_owned(),
-                as_of: items
-                    .last()
-                    .map(|item| item.date.clone())
-                    .unwrap_or_default(),
-                items,
-                source: format!(
-                    "{} · 90.BK · unadjusted",
-                    host.trim_start_matches("https://")
-                ),
-            });
+            fallback_started = true;
+        }
+        if reachable && window < 2 {
+            tasks.spawn(fetch(index, window + 1)); attempts.push(format!("{}#{}", KLINE_HOSTS[index], window + 1));
         }
     }
-    Err(last_error)
+    // JoinSet在返回/外层取消时中止剩余HTTP，不在后台继续探测或启动任何服务。
+    Err(format!("板块 {sector_code} 官方日线兜底失败：{}；已尝试 {}（#0原180根/#1限定日期/#2宽1000根）；末次接口错误：{last_error}",
+        best_gap.map(|(_, error)| error).or(data_error).unwrap_or_else(|| format!("没有获得同一BK身份的原始OHLC，无法核验 {} 个真实交易日", required_dates.len())), attempts.join(" / ")))
 }
 
 async fn fetch_rotation_kind(kind: SectorKind) -> Result<QuotePage<SectorSummary>, String> {
@@ -1133,6 +1252,137 @@ mod tests {
         assert_eq!(parsed.change_pct_10d, Some(10.4));
         assert_eq!(parsed.main_net_inflow, Some(1_200_000_000.0));
         assert_eq!(parsed.main_net_ratio, Some(5.6));
+    }
+
+    #[test]
+    fn daily_session_fallback_rejects_gap_stale_identity_and_broken_rows() {
+        let dates = ["2026-06-30", "2026-07-01", "2026-07-02"].map(str::to_owned);
+        assert!(validate_required_sessions(&dates).is_ok());
+        for invalid in [vec![], vec!["2026-6-30".into()], vec!["2026-02-30".into()],
+            vec![dates[1].clone(), dates[0].clone()], vec![dates[0].clone(); 2]] {
+            assert!(validate_required_sessions(&invalid).is_err());
+        }
+        let row = |date: &str| format!("{date},100,102,103,99,10,1000,4,2,2,1");
+        let payload = |days: &[&str]| json!({"rc":0,"data":{"code":"BK1305","market":90,
+            "klines":days.iter().map(|date| row(date)).collect::<Vec<_>>()}});
+        let parse = |value: &serde_json::Value| parse_history_payload("BK1305", "daily", "https://push2test.eastmoney.com", value);
+        let gap = parse(&payload(&["2026-06-30", "2026-07-02"])).unwrap();
+        assert_eq!(missing_sessions(&gap, &dates), ["2026-07-01"]);
+        let error = complete_session_history(gap.clone(), &dates).unwrap_err();
+        assert!(error.contains("2026-07-01") && error.contains("2/3"));
+        let stale = parse(&payload(&["2026-06-30", "2026-07-01"])).unwrap();
+        assert!(complete_session_history(stale.clone(), &dates).unwrap_err().contains("2026-07-02"));
+        let full_payload = payload(&["2026-06-29", "2026-06-30", "2026-07-01", "2026-07-02", "2026-07-03"]);
+        let full = parse(&full_payload).unwrap();
+        let accepted = [gap, stale, full.clone()].into_iter()
+            .find_map(|history| complete_session_history(history, &dates).ok()).unwrap();
+        assert_eq!(accepted.items.iter().map(|bar| &bar.date).collect::<Vec<_>>(), dates.iter().collect::<Vec<_>>());
+        assert_eq!(accepted.as_of, "2026-07-02");
+        for bar in &accepted.items {
+            let raw = full.items.iter().find(|raw| raw.date == bar.date).unwrap();
+            assert_eq!([bar.open, bar.close, bar.high, bar.low, bar.volume, bar.amount],
+                [raw.open, raw.close, raw.high, raw.low, raw.volume, raw.amount]);
+        }
+        for (field, value) in [("code", json!("BK1656")), ("code", json!("SW801150")), ("market", json!(1))] {
+            let mut wrong = full_payload.clone(); wrong["data"][field] = value;
+            assert!(parse(&wrong).is_err());
+        }
+        for rows in [vec![row("2026-07-01"), row("2026-06-30")], vec![row("2026-06-30"); 2],
+            vec!["2026-06-30,100,102,101,99,10,1000".into()], vec!["2026-06-30,NaN,102,103,99,10,1000".into()]] {
+            let mut bad = full_payload.clone(); bad["data"]["klines"] = json!(rows);
+            assert!(parse(&bad).is_err());
+        }
+        let short = parse(&payload(&["2026-07-01", "2026-07-02"])).unwrap();
+        assert!(complete_session_history(short, &dates).unwrap_err().contains("short-history"));
+        // 普通周/月线仍保留完整原始窗口，不裁成主线日期集合。
+        for period in ["weekly", "monthly"] {
+            let history = parse_history_payload("BK1305", period, "https://push2test.eastmoney.com", &full_payload).unwrap();
+            assert_eq!(history.period, period); assert_eq!(history.items.len(), 5); assert_eq!(history.as_of, "2026-07-03");
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "read-only official HTTP; requires the saved 17-failure discovery under target/mainline-check/sector-gap"]
+    async fn live_daily_session_fallback_checks_all_17_failed_boards() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/mainline-check/sector-gap");
+        let baseline: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join("baseline-discovery.json")).unwrap()).unwrap();
+        let day = baseline["as_of"].as_str().unwrap();
+        let response = with_browser_headers(universe_client().get("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"), "https://gu.qq.com")
+            .query(&[("param", format!("sh000300,day,,{day},100,qfq"))]).timeout(REQUEST_TIMEOUT)
+            .send().await.unwrap().error_for_status().unwrap();
+        let benchmark: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(benchmark["code"], 0);
+        let index_rows = benchmark.pointer("/data/sh000300/day").and_then(serde_json::Value::as_array).unwrap();
+        let mut dates = Vec::new();
+        for row in index_rows {
+            let date = row[0].as_str().unwrap();
+            let prices: Vec<f64> = (1..5).map(|i| row[i].as_str().unwrap().parse().unwrap()).collect();
+            assert!(prices.iter().all(|v| v.is_finite() && *v > 0.0));
+            assert!(prices[2] >= prices[0].max(prices[1]) && prices[3] <= prices[0].min(prices[1]));
+            if date <= day { dates.push(date.to_owned()); }
+        }
+        assert!(dates.len() >= 66); assert_eq!(dates.last().unwrap(), day);
+        validate_required_sessions(&dates).unwrap();
+        let required = dates[dates.len()-66..].to_vec();
+        let saved: Vec<String> = serde_json::from_slice(&std::fs::read(root.join("required-dates.json")).unwrap()).unwrap();
+        assert_eq!(required, saved, "live HS300 sessions must equal the saved real 66-day window");
+        std::fs::write(root.join("live-benchmark.json"), serde_json::to_vec_pretty(&benchmark).unwrap()).unwrap();
+        let control_before = fetch_history("BK1340", "daily").await.unwrap();
+        let control = fetch_history_for_sessions("BK1340", &required).await.unwrap();
+        assert!(missing_sessions(&control, &required).is_empty());
+        for bar in &control.items {
+            let raw = control_before.items.iter().find(|raw| raw.date == bar.date).unwrap();
+            assert_eq!([bar.open, bar.close, bar.high, bar.low, bar.volume, bar.amount],
+                [raw.open, raw.close, raw.high, raw.low, raw.volume, raw.amount]);
+        }
+        let mut ui_periods = Vec::new();
+        for (period, klt) in [("weekly", "102"), ("monthly", "103")] {
+            let history = fetch_history("BK1340", period).await.unwrap();
+            let host = history.source.split(" · ").next().unwrap();
+            let raw: serde_json::Value = with_browser_headers(universe_client().get(format!("https://{host}/api/qt/stock/kline/get")), "https://quote.eastmoney.com/")
+                .query(&[("secid", "90.BK1340"), ("fields1", "f1,f2,f3,f4,f5,f6"),
+                    ("fields2", "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"), ("klt", klt), ("fqt", "0"), ("end", "20500101"), ("lmt", "180")])
+                .timeout(REQUEST_TIMEOUT).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+            let legacy_items: Vec<_> = raw["data"]["klines"].as_array().unwrap().iter()
+                .filter_map(serde_json::Value::as_str).filter_map(parse_kline).collect();
+            assert_eq!(serde_json::to_value(&history.items).unwrap(), serde_json::to_value(legacy_items).unwrap());
+            std::fs::write(root.join(format!("live-{period}-raw.json")), serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
+            ui_periods.push(history);
+        }
+        let failed = baseline["failed"].as_array().unwrap(); assert_eq!(failed.len(), 17);
+        let mut tasks = tokio::task::JoinSet::new();
+        let gate = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+        for row in failed {
+            let row = row.clone(); let required = required.clone(); let gate = gate.clone();
+            tasks.spawn(async move {
+                let _permit = gate.acquire_owned().await.unwrap();
+                let code = row["code"].as_str().unwrap();
+                let before = match fetch_history(code, "daily").await {
+                    Ok(history) => json!({"history":history,"missing_dates":missing_sessions(&history, &required)}),
+                    Err(error) => json!({"error":error}),
+                };
+                let after = match fetch_history_for_sessions(code, &required).await {
+                    Ok(history) => {
+                        assert_eq!(history.sector_code, code); assert_eq!(history.as_of, *required.last().unwrap());
+                        assert!(missing_sessions(&history, &required).is_empty());
+                        json!({"ok":true,"history":history})
+                    },
+                    Err(error) => json!({"ok":false,"error":error}),
+                };
+                json!({"code":code,"name":row["name"],"original_reason":row["reason"],"before":before,"after":after})
+            });
+        }
+        let mut results = Vec::new();
+        while let Some(result) = tasks.join_next().await { results.push(result.unwrap()); }
+        results.sort_by(|a,b| a["code"].as_str().cmp(&b["code"].as_str()));
+        let recovered = results.iter().filter(|row| row["after"]["ok"] == true).count();
+        let report = json!({"observed_at":chrono::Utc::now().to_rfc3339(),"source":"read-only official Eastmoney raw BK OHLC; actual Tencent sh000300 daily sessions",
+            "required_dates":required,"required_count":66,"recovered":recovered,"unresolved":17-recovered,"control":control,"ui_periods":ui_periods,"results":results});
+        std::fs::write(root.join("live-17-results.json"), serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+        println!("official BK gap check: recovered {recovered}/17; control BK1340 covers all 66 real sessions; {}..{}; report={}",
+            required[0], required.last().unwrap(), root.join("live-17-results.json").display());
+        // Unavailable true prices are an expected live observation, not permission to lower the strategy window.
+        assert_eq!(report["results"].as_array().unwrap().len(), 17);
     }
 
     #[test]

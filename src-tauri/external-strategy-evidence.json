@@ -1,0 +1,221 @@
+{
+  "schema": "external-strategy-study-evidence-v1",
+  "as_of": "2026-09-30",
+  "research_date": "2026-10-03",
+  "production_admission": false,
+  "new_usable_models": 0,
+  "sources": {
+    "tsp_commit": "d00a94ea94a2c85e8b6b92967f10d4209af482ae",
+    "tsp_summary_sha256": "4449fa6edcd48863913f4d69bb4ba0b1d319159345b718c549ce6474c76a84bb",
+    "sequence_summary_sha256": "7148ce2660e5eae38df96253ae0299bd9b03585e2babb77a7e9f5135cdbe1e71",
+    "sequence_posthoc_summary_sha256": "c7f698131625d80fc68d68aafa7be3f9d5d23e227393451510abc148d70adf23",
+    "verification_sha256": "99ec7d7fbe9b992a2e17edf74d05268dff780d1d13d42650c3b29448f5058893",
+    "matrix_sha256": "cf2865346a68a54f7747d46b5494e844495805053427101b62edae390900da06"
+  },
+  "studies": [
+    {
+      "title": "TSP公开技术规则对照",
+      "status": "25条默认规则未通过跨年检验",
+      "as_of": "2026-09-30",
+      "new_usable_models": 0,
+      "cash_accounts": 704,
+      "native_matcher_accounts": 100,
+      "message": "原源码25条默认规则已真实测试，默认连续账户和2023—2024段均为负；另做费用、期限、排序与原撮合对照。25条规则不是25个有效模型。下表为代表规则，非年化。",
+      "comparisons": [
+        {
+          "name": "新低反转",
+          "holding_days": 15,
+          "net_return_pct": -11.793,
+          "max_drawdown_pct": 32.987,
+          "validation_return_pct": -4.339,
+          "tail_return_pct": 14.784,
+          "double_cost_return_pct": -33.681,
+          "cycles": 847,
+          "unique_stocks": 736,
+          "status": "原默认未通过"
+        },
+        {
+          "name": "超跌反转",
+          "holding_days": 15,
+          "net_return_pct": -14.267,
+          "max_drawdown_pct": 26.942,
+          "validation_return_pct": -9.785,
+          "tail_return_pct": -10.165,
+          "double_cost_return_pct": -30.666,
+          "cycles": 617,
+          "unique_stocks": 530,
+          "status": "原默认未通过"
+        },
+        {
+          "name": "平台整理突破",
+          "holding_days": 15,
+          "net_return_pct": -64.699,
+          "max_drawdown_pct": 70.934,
+          "validation_return_pct": -50.689,
+          "tail_return_pct": -34.701,
+          "double_cost_return_pct": -76.224,
+          "cycles": 1187,
+          "unique_stocks": 1023,
+          "status": "原默认未通过"
+        },
+        {
+          "name": "趋势突破",
+          "holding_days": 20,
+          "net_return_pct": -94.219,
+          "max_drawdown_pct": 94.792,
+          "validation_return_pct": -78.684,
+          "tail_return_pct": -62.886,
+          "double_cost_return_pct": -94.345,
+          "cycles": 912,
+          "unique_stocks": 779,
+          "status": "原默认未通过"
+        }
+      ],
+      "limitations": [
+        "5427只历史代码，2018—2019预热，账户2020至2026-09-30；按日排ST与北交所",
+        "费用、T+1、涨跌停、现金与公司行动沿用本项目审计口径；原撮合另算，不能混成相同收益口径",
+        "默认及追加结果都保留；无新增模型准入或买入提醒",
+        "所有历史已见；未认证权益仍为应收/锁股，最后报价不等于可立即兑现"
+      ]
+    },
+    {
+      "title": "多日序列形态与退出研究",
+      "status": "3种新机制完成；新增可用模型0",
+      "as_of": "2026-09-30",
+      "new_usable_models": 0,
+      "cash_accounts": 192,
+      "native_matcher_accounts": 0,
+      "message": "突破回踩、恐慌二次探底、放量后缩量守位，分别跑10/15/20日主账户及对照147次，另追加退出检查45次。恐慌20日纯期限累计+56.123%，但2023—2024为−0.626%，三种同信号散列中两组更高；保留线索，不转成买入模型。",
+      "comparisons": [
+        {
+          "name": "突破后回踩再确认",
+          "holding_days": 10,
+          "net_return_pct": -65.278,
+          "max_drawdown_pct": 69.589,
+          "validation_return_pct": -29.344,
+          "tail_return_pct": 21.143,
+          "double_cost_return_pct": -73.329,
+          "cycles": 1370,
+          "unique_stocks": 1113,
+          "status": "未通过跨年检验"
+        },
+        {
+          "name": "突破后回踩再确认",
+          "holding_days": 15,
+          "net_return_pct": -57.021,
+          "max_drawdown_pct": 65.582,
+          "validation_return_pct": -33.984,
+          "tail_return_pct": -4.243,
+          "double_cost_return_pct": -71.057,
+          "cycles": 964,
+          "unique_stocks": 837,
+          "status": "未通过跨年检验"
+        },
+        {
+          "name": "突破后回踩再确认",
+          "holding_days": 20,
+          "net_return_pct": -53.193,
+          "max_drawdown_pct": 64.597,
+          "validation_return_pct": -19.282,
+          "tail_return_pct": 10.466,
+          "double_cost_return_pct": -69.645,
+          "cycles": 853,
+          "unique_stocks": 763,
+          "status": "未通过跨年检验"
+        },
+        {
+          "name": "恐慌后二次探底确认",
+          "holding_days": 10,
+          "net_return_pct": -17.361,
+          "max_drawdown_pct": 27.127,
+          "validation_return_pct": -14.491,
+          "tail_return_pct": -10.457,
+          "double_cost_return_pct": -29.376,
+          "cycles": 545,
+          "unique_stocks": 510,
+          "status": "未通过跨年检验"
+        },
+        {
+          "name": "恐慌后二次探底确认",
+          "holding_days": 15,
+          "net_return_pct": -3.483,
+          "max_drawdown_pct": 20.693,
+          "validation_return_pct": -6.709,
+          "tail_return_pct": -4.879,
+          "double_cost_return_pct": -14.559,
+          "cycles": 461,
+          "unique_stocks": 438,
+          "status": "未通过跨年检验"
+        },
+        {
+          "name": "恐慌后二次探底确认",
+          "holding_days": 20,
+          "net_return_pct": 11.629,
+          "max_drawdown_pct": 27.949,
+          "validation_return_pct": -4.959,
+          "tail_return_pct": 2.662,
+          "double_cost_return_pct": -1.61,
+          "cycles": 402,
+          "unique_stocks": 386,
+          "status": "未通过跨年检验"
+        },
+        {
+          "name": "放量后缩量守位再启动",
+          "holding_days": 10,
+          "net_return_pct": -65.633,
+          "max_drawdown_pct": 67.951,
+          "validation_return_pct": -12.837,
+          "tail_return_pct": -8.651,
+          "double_cost_return_pct": -78.266,
+          "cycles": 1110,
+          "unique_stocks": 941,
+          "status": "未通过跨年检验"
+        },
+        {
+          "name": "放量后缩量守位再启动",
+          "holding_days": 15,
+          "net_return_pct": -45.107,
+          "max_drawdown_pct": 54.131,
+          "validation_return_pct": -11.51,
+          "tail_return_pct": -9.198,
+          "double_cost_return_pct": -62.293,
+          "cycles": 750,
+          "unique_stocks": 678,
+          "status": "未通过跨年检验"
+        },
+        {
+          "name": "放量后缩量守位再启动",
+          "holding_days": 20,
+          "net_return_pct": -30.385,
+          "max_drawdown_pct": 40.338,
+          "validation_return_pct": -6.32,
+          "tail_return_pct": -8.065,
+          "double_cost_return_pct": -46.311,
+          "cycles": 478,
+          "unique_stocks": 457,
+          "status": "未通过跨年检验"
+        },
+        {
+          "name": "恐慌二次探底 · 纯期限（事后探索）",
+          "holding_days": 20,
+          "net_return_pct": 56.123,
+          "max_drawdown_pct": 19.586,
+          "validation_return_pct": -0.626,
+          "tail_return_pct": 19.41,
+          "double_cost_return_pct": 41.454,
+          "cycles": 416,
+          "unique_stocks": 396,
+          "status": "未通过；排序未超过2/3对照"
+        }
+      ],
+      "limitations": [
+        "比较表是连续累计、重置历史分段与连续双费收益；均非年化或上涨概率",
+        "追加纯期限为见到阳性结果后的事后探索；不能冒充新样本外",
+        "151个真实信号独立窗口核对；192份账户核验、5份完整账本重放一致；实验共享行情，不能当独立样本",
+        "10/15/20日主支撑退出均未通过；支撑排序也没有证明优于同信号对照",
+        "模型注册和观察权限保持原冻结身份；这张卡只展示研究证据",
+        "未认证现金支付及送转上市日持续影响槽位和估值，实际超期保留"
+      ]
+    }
+  ]
+}

@@ -4,10 +4,64 @@ use crate::datasource::history::{self, LocalHistoryConfig};
 use crate::datasource::market_clock::MarketSession;
 use crate::datasource::DataSourceManager;
 use crate::db::Database;
+use crate::stockdb::StockDbManager;
 use crate::PortableMode;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::State;
+
+fn validate_visual_style(value: &str) -> Result<(), String> {
+    if matches!(value, "classic" | "modern" | "elegant") { Ok(()) }
+    else { Err("界面风格只能为 classic、modern 或 elegant".into()) }
+}
+
+fn validate_manual_news_and_provider_setting(key: &str, value: &str) -> Result<(), String> {
+    if key == "news_notification_mode" && value != "direct" {
+        return Err("资讯只支持原文直接通知；AI 解读请手动点击".into());
+    }
+    if matches!(key, "quote_schedule" | "quote_schedule_enabled") {
+        return Err("行情时间限制已移除；行情自动按市场状态调整刷新频率".into());
+    }
+    if matches!(key, "news_ai_daily_limit" | "news_ai_keywords") {
+        return Err("资讯自动 AI 解读设置已移除".into());
+    }
+    if key == "agent_provider" && value != "claude" {
+        return Err("本项目仅支持 Claude Code".into());
+    }
+    if key.starts_with("agent_codex_") {
+        return Err("Codex 设置已移除；请使用 Claude Code".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod manual_news_setting_tests {
+    use super::validate_manual_news_and_provider_setting as validate;
+
+    #[test]
+    fn visual_style_accepts_saved_elegant_and_rejects_unknown_values() {
+        for style in ["classic", "modern", "elegant"] { assert!(super::validate_visual_style(style).is_ok()); }
+        for style in ["", "trading", "ELEGANT", "unknown"] { assert!(super::validate_visual_style(style).is_err()); }
+    }
+
+    #[test]
+    fn rejects_removed_auto_modes_and_codex_without_restricting_manual_claude() {
+        assert!(validate("news_notification_mode", "direct").is_ok());
+        for mode in ["ai", "hybrid", "unexpected"] {
+            assert!(validate("news_notification_mode", mode).is_err());
+        }
+        assert!(validate("quote_schedule_enabled", "1").is_err());
+        assert!(validate("quote_schedule_enabled", "0").is_err());
+        assert!(validate("quote_schedule", "not-json").is_err());
+        assert!(validate("news_ai_daily_limit", "0").is_err());
+        assert!(validate("news_ai_keywords", "").is_err());
+        assert!(validate("agent_provider", "claude").is_ok());
+        assert!(validate("agent_provider", "codex").is_err());
+        assert!(validate("agent_codex_model", "").is_err());
+        assert!(validate("agent_claude_path", "").is_ok());
+        assert!(validate("agent_budget_usd", "10.00").is_ok());
+    }
+}
 
 fn validate_local_history_url(value: &str) -> Result<String, String> {
     let mut url = reqwest::Url::parse(value.trim()).map_err(|_| "本地历史服务地址格式无效")?;
@@ -166,19 +220,10 @@ pub fn get_settings(db: State<'_, Arc<Database>>) -> Result<HashMap<String, Stri
 #[tauri::command]
 pub fn set_setting(
     db: State<'_, Arc<Database>>,
-    manager: State<'_, Arc<DataSourceManager>>,
+    stockdb: State<'_, Arc<StockDbManager>>,
     key: String,
     value: String,
 ) -> Result<(), String> {
-    let policy = if key == "quote_schedule" {
-        Some(
-            crate::datasource::market_policy::MarketRequestPolicy::from_quote_schedule_json(Some(
-                &value,
-            ))?,
-        )
-    } else {
-        None
-    };
     if matches!(
         key.as_str(),
         "local_history_enabled"
@@ -188,12 +233,13 @@ pub fn set_setting(
     ) {
         return Err("本地 stockdb 配置必须通过专用设置操作修改".into());
     }
-    if key == "alerts_enabled" && value != "0" && value != "1" {
-        return Err("提醒总开关只能为 0 或 1".into());
+    if matches!(key.as_str(), "alerts_enabled" | "research_notifications_enabled") && value != "0" && value != "1" {
+        return Err("提醒开关只能为 0 或 1".into());
     }
-    if key == "quote_schedule_enabled" && value != "0" && value != "1" {
-        return Err("行情时间限制开关只能为 0 或 1".into());
-    }
+    if key==crate::stockdb_schedule::RECORD_KEY{return Err("更新进度由后台任务维护，不能手动覆盖".into());}
+    if key=="research_data_alerts_enabled"{return Err("缺行情提醒已移除；更新连续5次失败会自动提示".into());}
+    if key=="local_history_auto_update_enabled" && !matches!(value.as_str(),"0"|"1"){return Err("自动更新开关只能为0或1".into());}
+    if key=="local_history_auto_update_time"{crate::stockdb_schedule::validate_time(&value)?;}
     // AI / 量化智能相关开关同样只允许 0/1，避免前端写入其它值后判断语义含糊。
     if (key == "ai_enabled"
         || key == "ai_monitor_enabled"
@@ -204,18 +250,7 @@ pub fn set_setting(
     {
         return Err("开关值只能为 0 或 1".into());
     }
-    if key == "news_notification_mode" && !matches!(value.as_str(), "direct" | "hybrid") {
-        return Err("资讯通知方式只能为 direct 或 hybrid".into());
-    }
-    if key == "news_ai_daily_limit" && !value.parse::<u32>().is_ok_and(|limit| limit <= 20) {
-        return Err("自动 AI 解读每日上限须为 0–20 条".into());
-    }
-    if key == "news_ai_keywords" {
-        let words = value.split([',', '，']).map(str::trim).filter(|word| !word.is_empty()).collect::<Vec<_>>();
-        if words.len() > 10 || words.iter().any(|word| !(2..=20).contains(&word.chars().count()) || word.chars().any(char::is_control)) {
-            return Err("关注词最多 10 个，每个 2–20 字，使用逗号分隔".into());
-        }
-    }
+    validate_manual_news_and_provider_setting(&key, &value)?;
     let value = if key == "local_history_url" {
         validate_local_history_url(&value)?
     } else if key == "local_history_engine_dir" && !value.trim().is_empty() {
@@ -227,24 +262,10 @@ pub fn set_setting(
     } else {
         value
     };
-    let policy_on_enable = if key == "quote_schedule_enabled" && value == "1" {
-        let schedule = db
-            .get_setting("quote_schedule")
-            .map_err(|e| e.to_string())?;
-        Some(
-            crate::datasource::market_policy::MarketRequestPolicy::from_quote_schedule_json(
-                schedule.as_deref(),
-            )?,
-        )
-    } else {
-        None
-    };
     if key == "theme" && !matches!(value.as_str(), "light" | "dark") {
         return Err("明暗模式只能为 light 或 dark".into());
     }
-    if key == "visual_style" && !matches!(value.as_str(), "classic" | "trading" | "modern") {
-        return Err("界面风格只能为 classic、trading 或 modern".into());
-    }
+    if key == "visual_style" { validate_visual_style(&value)?; }
     if key == "ticker_display_mode" && value != "carousel" && value != "fixed" {
         return Err("悬浮窗展示方式只能为 carousel 或 fixed".into());
     }
@@ -287,6 +308,12 @@ pub fn set_setting(
     } else {
         value
     };
+    if key=="universe_preset" && !matches!(value.as_str(),"all"|"custom") {
+        return Err("旧市场策略已退役，筛选条件只允许基础池或手动条件".into());
+    }
+    if key == "local_history_url" {
+        return stockdb.set_service_url(&value);
+    }
     db.set_setting(&key, &value).map_err(|e| e.to_string())?;
     // 每次重新开启先建立当前资讯水位，避免停用期间积压内容集中弹出。
     if key == "news_notifications_enabled" && value == "1" {
@@ -294,15 +321,6 @@ pub fn set_setting(
             .map_err(|e| e.to_string())?;
         db.set_setting("news_announcement_initialized", "0")
             .map_err(|e| e.to_string())?;
-    }
-    if let Some(policy) = policy {
-        manager.set_request_policy(policy);
-    }
-    if let Some(policy) = policy_on_enable {
-        manager.set_request_policy(policy);
-    }
-    if key == "quote_schedule_enabled" {
-        manager.set_request_policy_enabled(value == "1");
     }
     Ok(())
 }

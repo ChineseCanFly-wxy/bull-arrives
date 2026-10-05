@@ -6,6 +6,11 @@ pub mod monitor;
 pub mod quote;
 pub mod rank;
 pub mod research;
+pub mod mainline;
+pub mod research_evidence;
+pub mod research_jobs;
+pub mod research_search;
+pub mod research_extensions;
 pub mod sector;
 pub mod settings;
 pub mod simulation;
@@ -16,3 +21,5 @@ pub mod universe;
 pub mod updater;
 pub mod watchlist;
 pub mod window;
+
+pub mod model_follow;

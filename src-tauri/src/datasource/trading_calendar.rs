@@ -374,6 +374,8 @@ mod tests {
     /// 快照是进程级状态，全部场景放在同一个测试里顺序验证，避免并行互相覆盖。
     #[test]
     fn market_evidence_drives_the_calendar() {
+        let previous=read(|snapshot|snapshot.cloned());
+        write(|snapshot|*snapshot=None);
         // ① 同步前：回退到交易所公告日历，2026 年内仍可用。
         assert_eq!(
             is_trading_day_at(utc(2026, 9, 21, 2, 0), date("2026-09-21")),
@@ -460,6 +462,7 @@ mod tests {
             now - chrono::Duration::hours(REFRESH_HOURS + 1),
         );
         assert!(needs_sync(now));
+        write(|snapshot|*snapshot=previous);
     }
 }
 

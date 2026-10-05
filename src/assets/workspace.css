@@ -1,27 +1,52 @@
-/* Shared chrome for the two new styles; the original UI remains unchanged. */
-:is([data-style="trading"], [data-style="modern"]) .n-modal.n-card,
-:is([data-style="trading"], [data-style="modern"]) .n-modal.n-dialog {
+/* Consistent window bounds, spacing and focus for both supported appearances. */
+.n-modal.n-card,
+.n-modal.n-dialog {
   border: 1px solid var(--color-border-0);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
-  max-height: calc(100dvh - 20px);
+  max-height: calc(100dvh - 24px);
+  max-width: calc(100vw - 24px);
 }
 
-:is([data-style="trading"], [data-style="modern"]) .n-modal.n-card .n-card-header,
-:is([data-style="trading"], [data-style="modern"]) .n-modal.n-dialog .n-dialog__title {
+.n-modal.n-card .n-card-header,
+.n-modal.n-dialog .n-dialog__title {
   color: var(--color-text-primary);
+  flex-shrink: 0;
 }
 
-:is([data-style="trading"], [data-style="modern"]) .n-modal.n-card .n-card-content,
-:is([data-style="trading"], [data-style="modern"]) .n-modal.n-dialog .n-dialog__content {
+.n-modal.n-card .n-card__content,
+.n-modal.n-dialog .n-dialog__content {
   min-width: 0;
   min-height: 0;
 }
 
-:is([data-style="trading"], [data-style="modern"]) .n-modal.n-card .n-card__footer {
+.n-modal.n-card .n-card__footer {
   border-top: 1px solid var(--color-border-0);
 }
 
 @media (max-width: 680px) {
-  :is([data-style="trading"], [data-style="modern"]) .n-modal.n-card .n-card__content { padding-inline: var(--space-3); }
+  .n-modal.n-card .n-card__content { padding-inline: var(--space-3); }
+}
+
+/* Reserve the loading icon column without changing button text or theme. */
+.n-button.refresh-button {
+  display: inline-grid;
+  grid-template-columns: var(--n-icon-size) auto;
+  column-gap: 6px;
+}
+
+.n-button.refresh-button::before {
+  content: "";
+  grid-area: 1 / 1;
+  inline-size: var(--n-icon-size);
+  block-size: var(--n-icon-size);
+}
+
+.n-button.refresh-button > .n-button__icon {
+  grid-area: 1 / 1;
+  margin: 0;
+}
+
+.n-button.refresh-button > .n-button__content {
+  grid-area: 1 / 2;
 }

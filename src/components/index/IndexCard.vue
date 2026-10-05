@@ -55,7 +55,6 @@ const isUp = computed(() => props.index.change_pct >= 0);
   flex: 1 0 144px;
   min-width: 144px;
   height: calc(var(--index-bar-height) - 16px);
-  max-width: 260px;
   flex-shrink: 0;
   cursor: pointer;
   /* Only transition border/shadow on selection; background transitions on hover
@@ -106,6 +105,31 @@ html[data-style="classic"] .index-card { flex: 1 0 0; min-width: 0; max-width: n
   font-size: var(--text-xs);
   font-family: var(--font-mono);
   line-height: 1.2;
+}
+
+html[data-appearance="elegant"] .index-card {
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 156px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-1);
+  border-radius: var(--radius-sm);
+  border-inline-start: 3px solid var(--color-up);
+}
+html[data-appearance="elegant"] .card-down { border-inline-start-color: var(--color-down); }
+html[data-appearance="elegant"] .index-card:hover { background: var(--color-surface-hover); }
+html[data-appearance="elegant"] .index-name { font-size: 14px; }
+html[data-appearance="elegant"] .index-price {
+  color: var(--color-text-primary);
+  font: 500 30px/1.15 var(--font-numeric, var(--font-mono));
+  letter-spacing: -.03em;
+}
+html[data-appearance="elegant"] .index-change-row {
+  width: 100%;
+  justify-content: space-between;
+  margin-top: auto;
+  gap: var(--space-2);
+  font: 400 13px/1.3 var(--font-numeric, var(--font-mono));
 }
 
 .up { color: var(--color-up); }

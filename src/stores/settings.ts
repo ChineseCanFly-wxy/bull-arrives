@@ -11,6 +11,8 @@ import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 /// writing it to SQLite alone is invisible to the other window.
 export const SETTING_CHANGED_EVENT = 'setting-changed';
 
+export type VisualStyle = 'classic' | 'modern' | 'elegant';
+
 export interface SettingChangedPayload {
   key: string;
   value: string;
@@ -46,6 +48,7 @@ export interface StockDbStatus {
   message: string;
   lastError: string | null;
   candidates: StockDbCandidate[];
+  autoUpdate?: { enabled: boolean; time: string; timezone: string; state: string; message: string; lastSuccessDay: string | null; lastSuccessAt: string | null; lastAttemptAt: string | null; lastError: string | null; dataAsOf: string | null; failures: number };
 }
 
 const STOCKDB_STATUS_EVENT = 'stockdb-status-changed';
@@ -55,7 +58,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const datasources = ref<[string, string][]>([]);
   const activeDatasource = ref('tencent');
   const theme = ref<'dark' | 'light'>('light');
-  const visualStyle = ref<'classic' | 'trading' | 'modern'>('classic');
+  const visualStyle = ref<VisualStyle>('classic');
   const autoLaunch = ref(false);
   const isPortable = ref(false);
   const tickerHotkey = ref('Alt+Q');
@@ -64,10 +67,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const tickerTextColor = ref('#9AA5B1');
   const tickerDisplayMode = ref<'carousel' | 'fixed'>('carousel');
   const tickerPageSize = ref(2);
-  const quoteScheduleEnabled = ref(false);
   const alertsEnabled = ref(true);
+  const researchNotificationsEnabled = ref(true);
   const newsNotificationsEnabled = ref(false);
-  const newsNotificationMode = ref<'direct' | 'hybrid'>('direct');
   const notificationDesktopAlways = ref(false);
   /// AI / 量化智能总开关。关闭后所有「自动运行」的智能功能一并停止，
   /// 手动点击触发的分析/推荐榜不受它约束。
@@ -75,6 +77,8 @@ export const useSettingsStore = defineStore('settings', () => {
   /// 智能监控（ATR 自动止损/止盈），受 aiEnabled 约束。
   const aiMonitorEnabled = ref(true);
   const localHistoryEnabled = ref(false);
+  const localHistoryAutoUpdateEnabled = ref(true);
+  const localHistoryAutoUpdateTime = ref('09:00');
   const localHistoryUrl = ref('http://127.0.0.1:7899');
   const localHistoryEngineDir = ref('');
   const localHistoryEnginePath = ref('');
@@ -123,7 +127,7 @@ export const useSettingsStore = defineStore('settings', () => {
         applyTheme(value === 'dark' ? 'dark' : 'light');
         break;
       case 'visual_style':
-        applyVisualStyle(value === 'modern' || value === 'trading' ? value : 'classic');
+        applyVisualStyle(value === 'elegant' ? 'elegant' : value === 'modern' || value === 'trading' ? 'modern' : 'classic');
         break;
       case 'ticker_hotkey':
         tickerHotkey.value = value || 'Alt+Q';
@@ -143,17 +147,14 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'ticker_page_size':
         tickerPageSize.value = clampTickerPageSize(parseInt(value, 10));
         break;
-      case 'quote_schedule_enabled':
-        quoteScheduleEnabled.value = value === '1';
-        break;
       case 'alerts_enabled':
         alertsEnabled.value = value !== '0';
         break;
+      case 'research_notifications_enabled':
+        researchNotificationsEnabled.value = value !== '0';
+        break;
       case 'news_notifications_enabled':
         newsNotificationsEnabled.value = value === '1';
-        break;
-      case 'news_notification_mode':
-        newsNotificationMode.value = value === 'hybrid' || value === 'ai' ? 'hybrid' : 'direct';
         break;
       case 'notification_desktop_always':
         notificationDesktopAlways.value = value === '1';
@@ -163,6 +164,12 @@ export const useSettingsStore = defineStore('settings', () => {
         break;
       case 'ai_monitor_enabled':
         aiMonitorEnabled.value = value !== '0';
+        break;
+      case 'local_history_auto_update_enabled':
+        localHistoryAutoUpdateEnabled.value = value !== '0';
+        break;
+      case 'local_history_auto_update_time':
+        localHistoryAutoUpdateTime.value = value || '09:00';
         break;
       case 'local_history_enabled':
         localHistoryEnabled.value = value === '1';
@@ -224,10 +231,9 @@ export const useSettingsStore = defineStore('settings', () => {
       applySettingLocally('ticker_text_color', settings.value['ticker_text_color'] || '#9AA5B1');
       applySettingLocally('ticker_display_mode', settings.value['ticker_display_mode'] || 'carousel');
       applySettingLocally('ticker_page_size', settings.value['ticker_page_size'] || '2');
-      applySettingLocally('quote_schedule_enabled', settings.value['quote_schedule_enabled'] ?? '0');
       applySettingLocally('alerts_enabled', settings.value['alerts_enabled'] ?? '1');
+      applySettingLocally('research_notifications_enabled', settings.value['research_notifications_enabled'] ?? settings.value['alerts_enabled'] ?? '1');
       applySettingLocally('news_notifications_enabled', settings.value['news_notifications_enabled'] ?? '0');
-      applySettingLocally('news_notification_mode', settings.value['news_notification_mode'] ?? 'direct');
       applySettingLocally('notification_desktop_always', settings.value['notification_desktop_always'] ?? '0');
       applySettingLocally('ai_enabled', settings.value['ai_enabled'] ?? '1');
       applySettingLocally('ai_monitor_enabled', settings.value['ai_monitor_enabled'] ?? '1');
@@ -327,19 +333,22 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function applyTheme(t: 'dark' | 'light') {
-    theme.value = t;
     document.documentElement.setAttribute('data-theme', t);
+    theme.value = t;
     // NOTE: does NOT broadcast — setSetting()/toggleTheme() own the broadcast.
     // If applyTheme emitted, the ticker's listener would call applyTheme again,
     // creating an infinite event loop between windows.
   }
 
-  function applyVisualStyle(style: 'classic' | 'trading' | 'modern') {
+  function applyVisualStyle(style: VisualStyle) {
+    const root = document.documentElement;
+    root.setAttribute('data-style', style === 'elegant' ? 'modern' : style);
+    if (style === 'elegant') root.setAttribute('data-appearance', 'elegant');
+    else root.removeAttribute('data-appearance');
     visualStyle.value = style;
-    document.documentElement.setAttribute('data-style', style);
   }
 
-  async function setVisualStyle(style: 'classic' | 'trading' | 'modern') {
+  async function setVisualStyle(style: VisualStyle) {
     return setSetting('visual_style', style);
   }
 
@@ -498,9 +507,9 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     settings, datasources, activeDatasource, theme, visualStyle, autoLaunch, isPortable,
     tickerHotkey, tickerOpacity, tickerSingleColor, tickerTextColor, tickerDisplayMode, tickerPageSize,
-    quoteScheduleEnabled, alertsEnabled, newsNotificationsEnabled, newsNotificationMode, notificationDesktopAlways,
+    alertsEnabled, researchNotificationsEnabled, newsNotificationsEnabled, notificationDesktopAlways,
     aiEnabled, aiMonitorEnabled, localHistoryEnabled, localHistoryUrl, localHistoryEngineDir,
-    localHistoryEnginePath, localHistoryUpdaterPath, stockDbStatus,
+    localHistoryEnginePath, localHistoryUpdaterPath, localHistoryAutoUpdateEnabled, localHistoryAutoUpdateTime, stockDbStatus,
     refreshInterval, marketSession, error,
     fetchSettings, setSetting, switchDatasource, toggleTheme, toggleAutoLaunch,
     applyTheme, applyVisualStyle, setVisualStyle, applyRemoteSetting, setTickerHotkey, setTickerOpacity,

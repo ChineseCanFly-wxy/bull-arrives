@@ -13,7 +13,15 @@ const profile = mkdtempSync(path.join(target, 'news-ui-check-'));
 const edge = process.env.NEWS_TEST_BROWSER || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 const body = '事实：利润预亏\n观点：盈利压力偏利空，实际影响仍需核实\n方向：利空，影响：中\n行业：制造业（推测）；股票：600001\n依据：利润预亏';
 const entry = { id: 'news-check', signal_id: 'news-check', signal_kind: 'news', title: '★自选 测试自选', body, received_at: Date.now(), history_version: 0, agent_summary: true, news_mode: 'ai', news_source: '测试', original_title: '<img src=x onerror=alert(1)>利润预亏' };
-const directEntry = { ...entry, id: 'news-manual', signal_id: 'news:manual', agent_summary: false, news_mode: 'hybrid', body: '原文', original_title: '公司利润预亏' };
+const targetRow={kind:'industry',sector_code:'SW801080',sector_name:'电子',as_of:'2026-09-30',fingerprint:'f'.repeat(64),match_basis:'structured_symbol'};
+const directEntry = { ...entry, id: 'news-manual', signal_id: 'news:manual', agent_summary: false, news_mode: 'hybrid', body: '原文', original_title: '公司利润预亏',related_mainlines:[targetRow],published_at:'2026-09-30T07:20:00Z',source_received_at:'2026-09-30T07:21:00Z' };
+const researchEntry={id:'persisted-research',signal_id:'mainline:SW801080:2026-09-30',signal_kind:'research',title:'历史主线观察',body:'只保存通知当时的证据',received_at:'2026-09-30T07:25:00Z',history_version:0,...targetRow};
+const modelEvent={kind:'model_research_observation',run_id:42,as_of:'2026-09-30',historical_catchup:true,signals:[{symbol:'<img src=x onerror=window.__modelNoticeXss=true>',score:.0123,threshold:0,as_of:'2026-09-30',close:10,cash_reference_quantity:100,cash_reference_eligible:true,reason:'冻结观察，下一开盘未知'}],message:'只保存通知时模型观察'};
+const modelEntry={id:'persisted-model',signal_kind:'research',title:'模型观察更新',body:'没有自动交易',received_at:Date.now(),history_version:0,model_snapshot:modelEvent};
+const conditionEvent={schema:'model-condition-event-v1',event_key:'condition-saved-1',event:'conditions_confirmed',symbol:'sz002672',model_name:'广度模型',model_id:'breadth22_h20',preset:'model_confirm',as_of:'2026-09-29',checked_at:'2026-09-30T02:10:00Z',production_admission:false,message:'<img src=x onerror=window.__conditionNoticeXss=true>模型和分钟新确认',evidence:{candidate:{score:.0123,threshold:0,close:10},model_group:{as_of:'2026-09-29',model_sha256:'a'.repeat(64)},intraday_snapshot:{state:'confirmed',checked_at:'2026-09-30T02:10:00Z'}}};
+const conditionEntry={id:'persisted-condition',signal_kind:'research',title:'组合条件新成立',body:'查看触发时证据',received_at:Date.now(),history_version:0,condition_event:conditionEvent,condition_events:[conditionEvent]};
+const intradayEntry={id:'persisted-intraday',signal_kind:'research',title:'分钟形态确认',body:'形态观察未盈利准入',received_at:Date.now(),history_version:0,intraday_snapshot:{schema:'ashare-intraday-observation-v1',symbol:'sz002672',frozen_as_of:'2026-09-29',as_of:'2026-09-30',checked_at:'2026-09-30T02:10:00Z',message:'<img src=x onerror=window.__intradayNoticeXss=true>确认仅研究',state:'confirmed',execution_plan:{initial:'40%研究仓位',reduce_weakness:'T+1不可当天卖'}}};
+const frozenSnapshot={kind:'industry',sector_code:'SW801080',sector_name:'电子',as_of:'2026-09-30',member_as_of:'2026-09-30',sector_source:'官方发行人',member_source:'当前发布者名单',total_members:10,excluded_members:0,covered_members:9,missing_members:[{symbol:'sh600000',reason:'缺少行情'}],complete:false,strong:false,status:'留存不完整，不提醒',metrics:{},leaders:[],news:[],limitations:['主线只是辅助观察，不是准入'],fingerprint:targetRow.fingerprint,content_sha256:'a'.repeat(64),generated_at:'2026-09-30T07:25:00Z'};
 const mock = `
 const handlers = new Map();
 const rows = ${JSON.stringify([entry, directEntry])};
@@ -24,7 +32,10 @@ export async function invoke(command, args) {
   if(command === 'get_notification_history') return {version:0,entries:rows};
   if(command === 'get_news_archive') return rows;
   if(command === 'get_daily_briefs') return briefs;
-  if(command === 'get_news_ai_usage') return {day:'2026-09-27',used:1,limit:3};
+  if(command === 'get_model_condition_event') return ${JSON.stringify(conditionEvent)};
+  if(command === 'get_mainline_alert_history') return ${JSON.stringify([researchEntry,modelEntry,intradayEntry,conditionEntry])};
+  if(command === 'get_sector_mainline')return ${JSON.stringify(frozenSnapshot)};
+  if(command === 'get_mainline_watchlist')return [];
   if(command === 'analyze_archived_news') { const found=rows.find(row=>row.signal_id===args.signalId); found.agent_summary=true; found.body=${JSON.stringify(body)}; emit('news-analysis-updated',found); return found; }
   if(command === 'set_setting' || command === 'dismiss_desktop_toast' || command === 'view_desktop_toast') return;
   if(command === 'desktop_toast_ready') { setTimeout(() => emit('desktop-toast-show', {id:'long-toast',title:'很长的资讯标题'.repeat(20),body:${JSON.stringify(body.repeat(12))}}),0); return; }
@@ -33,12 +44,13 @@ export async function invoke(command, args) {
 export async function listen(name, callback) { handlers.set(name, callback); return () => handlers.delete(name); }
 export async function emit(name, payload) { handlers.get(name)?.({payload}); }
 export async function enable() {} export async function disable() {} export async function isEnabled() { return false; }
+export async function openUrl(url){calls.push({command:'openUrl',url});}
 window.__newsMock={calls,emit};
 `;
 const server = await createServer({
   configFile: false, root, cacheDir:path.join(profile,'vite-cache'),
-  optimizeDeps:{exclude:['@tauri-apps/api/core','@tauri-apps/api/event','@tauri-apps/plugin-autostart']},
-  resolve: { alias: { '@': path.join(root, 'src') } },
+  optimizeDeps:{entries:[],include:['vue','pinia','naive-ui'],exclude:['@tauri-apps/api/core','@tauri-apps/api/event','@tauri-apps/plugin-autostart']},
+  resolve: { alias: { '@': path.join(root, 'src') },dedupe:['vue'] },
   plugins: [vue(), {
     name: 'news-ui-check',
     enforce:'pre',
@@ -69,7 +81,7 @@ try {
   }
   assert.ok(debugPort, 'Headless browser did not start');
   const pages = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();
-  const page = pages.find(p=>p.type==='page');
+  const page = pages.find(p=>p.type==='page'&&p.url.startsWith(`http://127.0.0.1:${port}/`));assert.ok(page,'Local test page must exist; exclude unrelated welcome tabs');
   ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve,reject)=>{ws.addEventListener('open',resolve,{once:true});ws.addEventListener('error',reject,{once:true});});
   ws.addEventListener('message',event=>{const result=JSON.parse(event.data);const callback=pending.get(result.id);if(callback){pending.delete(result.id);result.error?callback.reject(Error(JSON.stringify(result.error))):callback.resolve(result.result);}});
@@ -80,34 +92,64 @@ try {
   const waitFor=async expression=>{for(let attempt=0;attempt<100;attempt++){if(await evaluate(expression))return;await new Promise(resolve=>setTimeout(resolve,100));}throw Error('UI timeout: '+expression);};
   await waitFor(`!!document.querySelector('.alert-history-button') && !!window.__newsMock`);
   await evaluate(`document.querySelector('.alert-history-button').click()`);
-  await waitFor(`!!document.querySelector('.news-mode') && !!document.querySelector('.notice-list li')`);
+  await waitFor(`!!document.querySelector('.news-intro') && !!document.querySelector('.notice-list li')`);
+  assert.equal(await evaluate(`window.__newsMock.calls.some(c=>c.command==='get_sector_mainline'||c.command==='analyze_mainline')`),false,'Reading alerts does not scan or call Claude');
+  await evaluate(`Array.from(document.querySelectorAll('.news-tabs button')).find(button=>button.innerText==='研究归档').click()`);
+  await waitFor(`document.querySelector('.notice-list')?.innerText.includes('历史主线观察')`);
+  assert.match(await evaluate(`document.querySelector('.notice-list').innerText`),/通知快照/);
+  assert.equal(await evaluate(`!!document.querySelector('.ai-filter')`),false,'Persisted research is independent of news AI filter');
+  await evaluate(`window.__newsMock.emit('notification-open-history','persisted-research')`);
+  await waitFor(`document.querySelector('.notice-list li.selected')?.dataset.noticeId==='persisted-research'`);
+  assert.equal(await evaluate(`document.querySelector('.news-tabs button.active').innerText`),'研究归档','Old notification navigation reads persistent archive after restart');
+  await evaluate(`document.querySelector('.notice-mainlines button').click()`);
+  await waitFor(`document.querySelector('.mainline-archived')?.innerText.includes('历史快照')`);
+  assert.deepEqual(await evaluate(`window.__newsMock.calls.find(c=>c.command==='get_sector_mainline').args`),{kind:'industry',sectorCode:'SW801080',sectorName:'电子',fingerprint:'f'.repeat(64)});
+  assert.equal(await evaluate(`window.__newsMock.calls.some(c=>c.command==='analyze_mainline'||c.command==='analyze_archived_news')`),false,'Snapshot navigation never calls AI');
+  await evaluate(`Array.from(document.querySelectorAll('.n-card-header__close')).at(-1).click()`);
+  await waitFor(`!document.querySelector('.mainline-research')`);
+  await evaluate(`document.querySelector('.notice-model-open').click()`);
+  await waitFor(`document.querySelector('.notice-model-snapshot')?.innerText.includes('账户 #42')`);
+  assert.match(await evaluate(`document.querySelector('.notice-model-snapshot').innerText`),/2026-09-30.*[\s\S]*历史补齐，不能称实时.*[\s\S]*0.0123.*[\s\S]*下一开盘未知/);
+  assert.equal(await evaluate(`document.querySelectorAll('.notice-model-snapshot img').length`),0,'Model notification raw fields/JSON stay escaped');
+  assert.equal(await evaluate(`window.__modelNoticeXss`),undefined);
+  assert.equal(await evaluate(`window.__newsMock.calls.some(c=>/research_model_run|analyze_mainline|analyze_archived_news/.test(c.command))`),false,'Model notification opening never reruns account/Claude');
+  await evaluate(`Array.from(document.querySelectorAll('.n-card-header__close')).at(-1).click()`);
+  await waitFor(`!document.querySelector('.notice-model-snapshot')`);
+  await evaluate(`document.querySelector('.notice-intraday-open').click()`);
+  await waitFor(`document.querySelector('.notice-model-snapshot')?.innerText.includes('sz002672')`);
+  const intradayText=await evaluate(`document.querySelector('.notice-model-snapshot').innerText`);for(const token of ['2026-09-29','T+1','40%研究仓位'])assert.ok(intradayText.includes(token));
+  assert.equal(await evaluate(`document.querySelectorAll('.notice-model-snapshot img').length`),0);assert.equal(await evaluate(`window.__intradayNoticeXss`),undefined);
+  assert.equal(await evaluate(`window.__newsMock.calls.some(c=>/research_model_run|analyze_mainline|analyze_archived_news/.test(c.command))`),false);
+  await evaluate(`Array.from(document.querySelectorAll('.n-card-header__close')).at(-1).click()`);await waitFor(`!document.querySelector('.notice-model-snapshot')`);
+  await evaluate(`document.querySelector('.notice-condition-open').click()`);await waitFor(`document.querySelector('.condition-evidence')?.innerText.includes('模型和分钟新确认')`);
+  assert.match(await evaluate(`document.querySelector('.condition-evidence').innerText`),/条件新成立[\s\S]*1.2300%[\s\S]*触发时保存/);
+  assert.equal(await evaluate(`document.querySelectorAll('.condition-evidence img').length`),0);assert.equal(await evaluate(`window.__conditionNoticeXss`),undefined);
+  assert.equal(await evaluate(`window.__newsMock.calls.filter(c=>c.command==='get_model_condition_event').length`),1);
+  await evaluate(`Array.from(document.querySelectorAll('.n-card-header__close')).at(-1).click()`);await waitFor(`!document.querySelector('.condition-evidence')`);
+
   assert.equal(await evaluate(`document.querySelector('.news-tabs').innerText.includes('盘前 / 盘后')`), false, 'Removed timeline tab must stay hidden');
   await evaluate(`Array.from(document.querySelectorAll('.news-tabs button')).find(button=>button.innerText==='每日简报').click()`);
   await waitFor(`document.querySelector('.brief-card')?.innerText.includes('公司利润预亏')`);
   assert.ok(await evaluate(`document.querySelector('.brief-card').innerText.includes('价格提醒')`));
   assert.ok(await evaluate(`!!document.querySelector('.brief-card .manual-ai-btn')`));
   await evaluate(`Array.from(document.querySelectorAll('.news-tabs button')).find(button=>button.innerText==='市场资讯').click()`);
-  await evaluate(`document.querySelector('.ai-filter input').click()`);
-  await waitFor(`document.querySelectorAll('.notice-list li').length===1`);
-  assert.equal(await evaluate(`document.querySelector('.notice-list li').dataset.noticeId`),'news-check','Pending hybrid news must not count as a completed AI interpretation');
+  assert.equal(await evaluate(`!!document.querySelector('.ai-filter')`), false, 'Removed AI-only filter must not return');
+  await waitFor(`document.querySelectorAll('.notice-list li').length===2`);
   await evaluate(`(()=>{const search=document.querySelector('.news-tabs input[placeholder]');search.value='不存在的关键词';search.dispatchEvent(new Event('input',{bubbles:true}));})()`);
-  await waitFor(`document.querySelector('.empty')?.innerText.includes('没有匹配的 AI 解读')`);
+  await waitFor(`document.querySelector('.empty')?.innerText.includes('没有匹配')`);
   await evaluate(`(()=>{const search=document.querySelector('.news-tabs input[placeholder]');search.value='制造业';search.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   await waitFor(`document.querySelectorAll('.notice-list li').length===1`);
   await evaluate(`Array.from(document.querySelectorAll('.news-tabs button')).find(button=>button.innerText==='本次提醒').click()`);
   await waitFor(`document.querySelectorAll('.notice-list li').length===1`);
   await evaluate(`window.__newsMock.emit('notification-open-history','news-manual')`);
   await waitFor(`document.querySelector('.notice-list li.selected')?.dataset.noticeId==='news-manual'`);
-  assert.equal(await evaluate(`document.querySelector('.ai-filter input').checked`),false,'Notification navigation must clear the AI filter');
+  assert.equal(await evaluate(`!!document.querySelector('.ai-filter')`),false,'Notification navigation must not restore removed AI filter');
   assert.equal(await evaluate(`document.querySelectorAll('.notice-list li').length`),2);
   await evaluate(`Array.from(document.querySelectorAll('.news-tabs button')).find(button=>button.innerText==='市场资讯').click()`);
   assert.match(await evaluate(`document.querySelector('.notice-list').innerText`), /观点：.*[\s\S]*利空.*[\s\S]*制造业（推测）.*600001/);
-  assert.equal(await evaluate(`document.querySelector('.news-mode button').getAttribute('aria-pressed')`),'true');
-  await evaluate(`document.querySelectorAll('.news-mode button')[1].click()`);
-  await waitFor(`document.querySelectorAll('.news-mode button')[1].getAttribute('aria-pressed')==='true'`);
-  assert.ok(await evaluate(`window.__newsMock.calls.some(c=>c.command==='set_setting'&&c.args.key==='news_notification_mode'&&c.args.value==='hybrid')`));
-  await evaluate(`document.querySelectorAll('.news-mode button')[0].click()`);
-  await waitFor(`document.querySelectorAll('.news-mode button')[0].getAttribute('aria-pressed')==='true'`);
+  assert.equal(await evaluate(`document.querySelectorAll('.news-mode').length`),0,'Automatic/hybrid controls must be removed');
+  assert.equal(await evaluate(`document.querySelector('.news-intro').innerText.includes('手动点击')`),true);
+  assert.equal(await evaluate(`window.__newsMock.calls.some(c=>c.command==='get_news_ai_usage'||c.command==='analyze_archived_news')`),false,'Opening or filtering news must not call AI or automatic quota');
   await evaluate(`window.__newsMock.emit('notification-open-history','news-check')`);
   await waitFor(`!!document.querySelector('.notice-list li.selected')`);
   await evaluate(`document.querySelector('.notice-list summary').click()`);
@@ -115,6 +157,11 @@ try {
   await evaluate(`document.querySelector('.manual-ai-btn').click()`);
   await waitFor(`window.__newsMock.calls.some(c=>c.command==='analyze_archived_news'&&c.args.signalId==='news:manual')`);
   await waitFor(`document.querySelectorAll('.notice-list li')[1].innerText.includes('观点：')`);
+  assert.equal(await evaluate(`window.__newsMock.calls.filter(c=>c.command==='analyze_archived_news').length`),1,'Exactly one explicit click triggers the manual interpretation');
+  await evaluate(`document.querySelector('[data-notice-id="news-manual"] .notice-mainlines button').click()`);
+  await waitFor(`document.querySelector('.mainline-archived')?.innerText.includes('历史快照')`);
+  assert.equal(await evaluate(`window.__newsMock.calls.filter(c=>c.command==='get_sector_mainline').length`),2,'Related original news opens its same stored evidence');
+  assert.equal(await evaluate(`window.__newsMock.calls.some(c=>c.command==='analyze_mainline')`),false,'Related mainline navigation never invokes Claude');
   await call('Page.navigate',{url:`http://127.0.0.1:${port}/?toast`});
   await call('Emulation.setDeviceMetricsOverride',{width:360,height:142,deviceScaleFactor:1,mobile:false});
   await waitFor(`!!document.querySelector('.toast section button')`);
@@ -123,7 +170,7 @@ try {
   assert.ok(layout.x>=0&&layout.y>=0&&layout.right<=layout.width&&layout.bottom<=layout.height,`View button cropped: ${JSON.stringify(layout)}`);
   await evaluate(`document.querySelector('.toast section button').click()`);
   await waitFor(`window.__newsMock.calls.some(c=>c.command==='view_desktop_toast'&&c.args.id==='long-toast')`);
-  console.log('News UI check passed: completed AI filter, search combination, empty state, notification filter reset, mode persistence, daily brief, manual interpretation, escaped source, long-toast view button. IPC mocked; native Windows notification not tested.');
+  console.log('News UI check passed: persisted research archive/restart navigation, exact sector+fingerprint frozen snapshot opening with no AI; related original-news links, ordinary news search/empty state/reset without AI-only filter, no automatic AI or hybrid controls, daily brief, one manual interpretation, escaped source and long-toast view button. IPC mocked; native Windows notification/network delivery not tested.');
 } finally {
   ws?.close();
   if(browser?.exitCode===null) { const exited=new Promise(resolve=>browser.once('exit',resolve)); browser.kill(); await Promise.race([exited,new Promise(resolve=>setTimeout(resolve,2000))]); }

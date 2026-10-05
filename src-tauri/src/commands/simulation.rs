@@ -1,6 +1,6 @@
 use crate::datasource::history::{self, LocalHistoryConfig, LocalHistoryResult};
 use crate::db::{
-    simulation::{AccountInput, OrderInput, SimAccount, SimDetail, SimOrder, Target},
+    simulation::{AccountInput, AutomaticAccountPreset, CapitalAdjustmentInput, OrderInput, SimAccount, SimDetail, SimOrder, Target},
     Database,
 };
 use crate::domain::KLineData;
@@ -22,17 +22,35 @@ impl Drop for AccountRun {
 use tauri::State;
 
 #[tauri::command]
-pub fn simulation_list_accounts(db: State<'_, Arc<Database>>) -> Result<Vec<SimAccount>, String> {
-    db.list_sim_accounts().map_err(|error| error.to_string())
+pub fn simulation_auto_preset(db: State<'_, Arc<Database>>) -> Result<AutomaticAccountPreset, String> {
+    db.simulation_auto_preset()
+}
+
+#[tauri::command]
+pub fn simulation_save_auto_preset(db: State<'_, Arc<Database>>, input: AutomaticAccountPreset) -> Result<AutomaticAccountPreset, String> {
+    db.save_simulation_auto_preset(&input)
+}
+
+#[tauri::command]
+pub fn simulation_list_accounts(db: State<'_, Arc<Database>>) -> Result<Vec<serde_json::Value>, String> {
+    db.list_sim_accounts().map_err(|error| error.to_string())?.into_iter().map(|account| {
+        let mut value = serde_json::to_value(&account).map_err(|error| error.to_string())?;
+        value["managed_by"] = serde_json::Value::String(if db.is_follow_account(account.id)? { "model_follow" }
+            else if db.experiment_account(account.id)?.is_some() { "research" } else { "manual" }.into());
+        Ok(value)
+    }).collect()
 }
 
 #[tauri::command]
 pub async fn simulation_save_account(
     db: State<'_, Arc<Database>>,
-    input: AccountInput,
+    mut input: AccountInput,
     execution_mode: Option<String>,
 ) -> Result<SimAccount, String> {
+    input.transfer_fee_bps = 0;
+    input.slippage_bps = 0;
     if let Some(id) = input.id {
+        if db.is_follow_account(id)? {return Err("请在模型跟随页管理账户，原模型与费用保持固定".into());}
         if db.experiment_account(id)?.is_some() {
             return Err(
                 "研究账户的规则、股票池与费用已经冻结，请在研究中心管理；更改请建立新实验".into(),
@@ -89,10 +107,16 @@ pub async fn simulation_save_account(
 }
 
 #[tauri::command]
+pub async fn simulation_adjust_capital(db: State<'_, Arc<Database>>, input: CapitalAdjustmentInput) -> Result<SimAccount, String> {
+    super::model_follow::adjust_account_capital(&db, &input).await
+}
+
+#[tauri::command]
 pub fn simulation_delete_account(
     db: State<'_, Arc<Database>>,
     account_id: i64,
 ) -> Result<(), String> {
+    if db.is_follow_account(account_id)? {return Err("模型跟随记录需保留，请在跟随页暂停".into());}
     if db.experiment_account(account_id)?.is_some() {
         return Err("研究账户必须保留验证历史，请在研究中心暂停或淘汰".into());
     }
@@ -116,6 +140,7 @@ pub fn simulation_submit_order(
     stop_price: Option<String>,
     take_price: Option<String>,
 ) -> Result<SimOrder, String> {
+    if db.is_follow_account(input.account_id)? {return Err("跟随账户只接受原模型操作单".into());}
     if db.experiment_account(input.account_id)?.is_some() {
         return Err("不能向冻结研究账户插入手动指令".into());
     }
@@ -180,6 +205,7 @@ pub fn simulation_confirm_order(
     db: State<'_, Arc<Database>>,
     order_id: i64,
 ) -> Result<SimOrder, String> {
+    if let Ok(account)=db.follow_order_account(order_id) {if db.is_follow_account(account)? {return Err("原模型跟随账户自动提交；请在跟随页查看成交、暂停或撤销".into());}}
     let result = db.confirm_sim_order(order_id)?;
     if db.live_account(result.account_id)? {
         db.rearm_live_order(order_id)?;
@@ -203,6 +229,7 @@ pub async fn simulation_run(
 /// Run one account from locally stored history. QFQ bars decide at T close;
 /// only the following raw bar may mutate the cash/lot ledger.
 pub async fn run_account(db: &Database, account_id: i64) -> Result<SimDetail, String> {
+    if db.is_follow_account(account_id)? { return Err("自动模型专用账户由模型调度执行，不接受手动观察、运行或日线回放".into()); }
     if db.live_account(account_id)? {
         return Err("实时账户禁止使用日线回放撮合".into());
     }
@@ -221,13 +248,8 @@ pub async fn run_account(db: &Database, account_id: i64) -> Result<SimDetail, St
         }
         let now = chrono::Utc::now();
         let local = now.with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap());
-        let schedule = db.get_setting("quote_schedule").ok().flatten();
-        let policy =
-            crate::datasource::market_policy::MarketRequestPolicy::from_quote_schedule_json(
-                schedule.as_deref(),
-            )?;
         use chrono::Timelike;
-        if policy.is_trading_day_at(now) && local.hour() < 16 {
+        if crate::datasource::trading_calendar::is_trading_day_at(now, local.date_naive())? && local.hour() < 16 {
             return db.get_sim_detail(account_id);
         }
     }

@@ -68,7 +68,7 @@ function ask() { if (question.value.trim() && !props.busy && props.installed) em
 
 <template>
   <section class="workbench">
-    <p class="intro">AI 解释本次指标、交易规则与回测，列出支持因素、风险和失效条件。多角色研判第一轮技术、多方、空方并发，第二轮多空并发交叉回应，最后由风控综合，共最多六次调用。</p>
+    <p class="intro">AI 依据本次模型证据、近期原文与形态回答：现在怎么看、依据是什么、还差什么条件、怎样会失效。每条判断附实际数值与日期。多角度研判会交叉检查支持与反证。</p>
     <p class="note">快照问答与 Agent 解读是单轮后台任务，完成后结果显示在本卡片下方；自动多角色研判按轮次运行。后台沿用你的 Claude Code 设置、skills 和 MCP，只有任务文件读写被预先授权；其他需人工批准的工具可能被拒绝。每次完成的后台调用也可从记录中打开 Claude 终端查看并继续对话。</p>
     <details>
       <summary>查看分析方法、提示词与本次输入</summary>
@@ -91,7 +91,7 @@ function ask() { if (question.value.trim() && !props.busy && props.installed) em
 
     <div class="question">
       <label for="agent-question">围绕当前快照提问</label>
-      <textarea id="agent-question" v-model="question" maxlength="500" rows="2" :disabled="busy" placeholder="例如：评分较高但交易规则没就绪，主要差在哪里？" />
+      <textarea id="agent-question" v-model="question" maxlength="500" rows="2" :disabled="busy" placeholder="例如：模型看好但还没触发，现在差什么条件？什么情况会推翻判断？" />
       <div class="question-actions">
         <button :disabled="busy || !installed || !question.trim()" @click="ask">针对问题解读</button>
         <small>单次问答，最多 500 字；发送后看下方“AI 解读”结果，过程在调用记录中。连续追问请用“应用内连续对话”或终端。</small>
@@ -134,9 +134,7 @@ function ask() { if (question.value.trim() && !props.busy && props.installed) em
 
 <style scoped>
 .workbench { margin-bottom: 14px; font-size: var(--text-xs); line-height: 1.7; color: var(--color-text-secondary); }
-html[data-style="trading"] .workbench,
 html[data-style="modern"] .workbench { margin-bottom: 0; }
-html[data-style="trading"] .workbench > details,
 html[data-style="modern"] .workbench > details { background: var(--color-surface-0); }
 .intro { color: var(--color-text-primary); margin-top: 0; }
 .note { color: var(--color-text-tertiary); }
@@ -145,7 +143,6 @@ summary { cursor: pointer; color: var(--color-text-primary); font-weight: 600; }
 pre { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px; background: var(--color-surface-2); font: inherit; }
 .path { overflow-wrap: anywhere; }
 .question { display: grid; gap: 6px; margin: 12px 0; }
-html[data-style="trading"] .question,
 html[data-style="modern"] .question { gap: var(--space-2); margin: var(--space-2) 0; padding: var(--space-3); border: 1px solid var(--color-border-0); border-radius: var(--radius-md); background: var(--color-surface-0); }
 textarea, select { color: var(--color-text-primary); background: var(--color-surface-2); border: 1px solid var(--color-border-0); border-radius: var(--radius-sm); padding: 8px; font: inherit; }
 textarea { width: 100%; box-sizing: border-box; resize: vertical; }
@@ -159,6 +156,5 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .run { display: flex; gap: 6px 14px; flex-wrap: wrap; text-align: left; }
 .run.selected { border-color: var(--color-accent); }
 .error { color: var(--color-error); }
-html[data-style="trading"] .error,
 html[data-style="modern"] .error { background: var(--color-error-bg); padding: var(--space-2); border-radius: var(--radius-sm); }
 </style>

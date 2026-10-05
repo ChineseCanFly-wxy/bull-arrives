@@ -15,6 +15,7 @@ pub fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
         apply_main_window_size(&app, &db)?;
     }
     window.show().map_err(|e| e.to_string())?;
+    window.unminimize().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -157,6 +158,11 @@ pub fn set_ticker_opacity(
     Ok(())
 }
 
+// One row is at most 19 logical pixels; reserve the ticker's vertical padding.
+fn ticker_height(visible_rows: u32, max_height: u32) -> u32 {
+    visible_rows.max(1).saturating_mul(19).saturating_add(8).max(38).min(max_height)
+}
+
 /// 根据当前可见行情行数调整悬浮窗高度，最多占用显示器可用高度。
 #[tauri::command]
 pub fn resize_ticker_window(app: AppHandle, visible_rows: u32) -> Result<(), String> {
@@ -171,8 +177,7 @@ pub fn resize_ticker_window(app: AppHandle, visible_rows: u32) -> Result<(), Str
         .unwrap_or(600)
         .saturating_sub(40)
         .max(38);
-    let rows = visible_rows.clamp(1, 200);
-    let height = (rows.saturating_mul(19)).max(38).min(max_height);
+    let height = ticker_height(visible_rows, max_height);
     window
         .set_size(tauri::LogicalSize::new(230_u32, height))
         .map_err(|e| e.to_string())?;
@@ -273,4 +278,20 @@ pub fn close_ticker_quick_add(app: AppHandle) -> Result<(), String> {
         .get_webview_window("ticker-quick")
         .ok_or_else(|| "快速自选窗口不存在".to_string())?;
     quick.hide().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod ticker_size_tests {
+    use super::ticker_height;
+    #[test]
+    fn adaptive_height_tracks_rows_and_never_exceeds_screen_limit() {
+        assert_eq!(ticker_height(0, 800), 38);
+        assert_eq!(ticker_height(1, 800), 38);
+        assert_eq!(ticker_height(2, 800), 46);
+        assert_eq!(ticker_height(10, 800), 198);
+        assert_eq!(ticker_height(2, 38), 38);
+        assert_eq!(ticker_height(1000, 720), 720);
+        assert_eq!(ticker_height(u32::MAX, 720), 720);
+        assert!(ticker_height(5, 800) < ticker_height(6, 800));
+    }
 }

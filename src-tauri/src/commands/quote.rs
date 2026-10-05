@@ -4,12 +4,6 @@ use crate::domain::{Depth, IndexQuote, KLineData, MinuteData, Quote};
 use std::sync::Arc;
 use tauri::State;
 
-fn ensure_detail_request_allowed(manager: &DataSourceManager) -> Result<(), String> {
-    manager
-        .ensure_request_allowed()
-        .map_err(|reason| format!("{reason}；详情无缓存可返回，请在交易时段内重试"))
-}
-
 #[tauri::command]
 pub fn get_quotes(cache: State<'_, Arc<QuoteCache>>) -> Vec<Quote> {
     cache.get_all_quotes()
@@ -26,7 +20,6 @@ pub async fn get_depth(
     market: String,
     manager: State<'_, Arc<DataSourceManager>>,
 ) -> Result<Depth, String> {
-    ensure_detail_request_allowed(&manager)?;
     let source = manager.active_source().ok_or("No active data source")?;
     source
         .fetch_depth(&code, &market)
@@ -40,7 +33,6 @@ pub async fn get_intraday(
     market: String,
     manager: State<'_, Arc<DataSourceManager>>,
 ) -> Result<Vec<MinuteData>, String> {
-    ensure_detail_request_allowed(&manager)?;
     // 优先用活跃源；返回空时回退到备用源（如腾讯对北交所 bj 代码无分时数据）。
     let active_name = manager.active_name();
     if let Some(source) = manager.get_source(&active_name) {
@@ -54,7 +46,6 @@ pub async fn get_intraday(
         if name == active_name {
             continue;
         }
-        ensure_detail_request_allowed(&manager)?;
         match source.fetch_minute_data(&code, &market).await {
             Ok(data) if !data.is_empty() => return Ok(data),
             Ok(_) => {}
@@ -73,7 +64,6 @@ pub async fn get_kline(
     count: Option<u32>,
     manager: State<'_, Arc<DataSourceManager>>,
 ) -> Result<Vec<KLineData>, String> {
-    ensure_detail_request_allowed(&manager)?;
     // 优先用活跃源；仅返回单根 K 线时视为数据缺失（如腾讯对北交所仅返回当日），回退备用源。
     let active_name = manager.active_name();
     let mut active_result: Vec<KLineData> = Vec::new();
@@ -92,7 +82,6 @@ pub async fn get_kline(
         if name == active_name {
             continue;
         }
-        ensure_detail_request_allowed(&manager)?;
         match source
             .fetch_kline(&code, &market, &period, end_date.as_deref(), count)
             .await

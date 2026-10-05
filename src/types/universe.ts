@@ -128,7 +128,7 @@ export interface BoardCount {
  *
  * 注意：**真正的默认值定义在 Rust 侧**（`MarketFilter::default`），
  * 这里只是为了在预设尚未加载完成时让 UI 有一个可绑定的非空对象。
- * 打开筛选器时会立即被 `get_filter_presets` 下发的预设覆盖。
+ * 这里只允许沪深普通股，ST 与北交所不提供可关闭的研究范围开关。
  */
 export function createDefaultFilter(): MarketFilter {
   return {
@@ -170,7 +170,7 @@ export function createDefaultFilter(): MarketFilter {
   };
 }
 
-/** 预设方案（由 Rust 侧下发，规则只有一份） */
+/** 行情条件预设（Rust 单一来源；不表示已验证策略，旧字段仅为存量数据兼容） */
 export interface PresetInfo {
   id: string;
   label: string;
@@ -236,13 +236,12 @@ export const BOARD_LABELS: Record<Board, string> = {
   other: '未识别',
 };
 
-/** 可在 UI 中勾选的板块（B股与未识别不提供勾选） */
+/** 可在基础行情工具中勾选的沪深板块；北交所不属于本项目研究范围。 */
 export const SELECTABLE_BOARDS: Board[] = [
   'sh_main',
   'sz_main',
   'chi_next',
   'star',
-  'bse',
 ];
 
 /** 元 → 亿元 */

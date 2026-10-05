@@ -92,13 +92,10 @@ async fn kline_covers_all_boards() {
     assert!(failures.is_empty(), "日K 通道存在缺口: {failures:?}");
 }
 
-/// **最关键的一条**：用真实快照跑一遍所有内置预设，确认不会筛出 0 只。
-///
-/// 这条测试直接对应「点了筛选什么都没有」的问题：新浪通道不提供量比，
-/// 若字段能力判定失效，4 套带量比条件的预设会全部筛空。
+/// Read the real quote endpoint and retain the manual pool after legacy strategy removal.
 #[tokio::test]
 #[ignore]
-async fn presets_match_something_on_real_snapshot() {
+async fn basic_pool_matches_real_snapshot_without_legacy_strategies() {
     let (rows, source) = eastmoney_universe::fetch_snapshot_auto(None)
         .await
         .expect("快照失败");
@@ -125,6 +122,7 @@ async fn presets_match_something_on_real_snapshot() {
             "预设「{}」在真实数据上筛出 0 只 —— 筛选条件与数据源字段不匹配",
             preset.label()
         );
+        assert!(matched.iter().all(|r|!r.is_st&&!r.is_delisting&&matches!(r.board,crate::datasource::eastmoney_universe::Board::ShMain|crate::datasource::eastmoney_universe::Board::SzMain|crate::datasource::eastmoney_universe::Board::ChiNext|crate::datasource::eastmoney_universe::Board::Star)));
     }
 }
 

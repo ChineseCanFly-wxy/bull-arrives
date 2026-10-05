@@ -74,6 +74,9 @@ pub struct StockAnalysis {
     /// 后端冻结的 Agent 输入快照；前端只能持此指纹触发解读。
     #[serde(default)]
     pub agent_context_fingerprint: Option<String>,
+    /// 与截止日绑定的多年模型证据及近期原文，不由旧技术评分推导。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research_context: Option<serde_json::Value>,
 }
 
 /// 至少需要多少根日 K 才能输出完整评分（MA60 需要 60 根）
@@ -287,6 +290,7 @@ pub fn analyze(klines: &[KLineData]) -> Option<StockAnalysis> {
         rule_match: None,
         history: None,
         agent_context_fingerprint: None,
+        research_context: None,
     })
 }
 

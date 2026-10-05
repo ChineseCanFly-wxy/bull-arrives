@@ -1,7 +1,6 @@
 use crate::domain::AppError;
 use crate::domain::*;
 use async_trait::async_trait;
-use market_policy::{MarketGateDecision, MarketRequestPolicy};
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
@@ -184,8 +183,6 @@ pub trait DataSource: Send + Sync {
 pub struct DataSourceManager {
     sources: HashMap<String, Box<dyn DataSource>>,
     active: RwLock<String>,
-    request_policy: RwLock<MarketRequestPolicy>,
-    request_policy_enabled: std::sync::atomic::AtomicBool,
     pub wakeup: Notify,
     revision: std::sync::atomic::AtomicU64,
 }
@@ -195,8 +192,6 @@ impl DataSourceManager {
         Self {
             sources: HashMap::new(),
             active: RwLock::new(String::new()),
-            request_policy: RwLock::new(MarketRequestPolicy::default()),
-            request_policy_enabled: std::sync::atomic::AtomicBool::new(false),
             wakeup: Notify::new(),
             revision: std::sync::atomic::AtomicU64::new(0),
         }
@@ -210,53 +205,6 @@ impl DataSourceManager {
         self.revision
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         self.wakeup.notify_one();
-    }
-
-    /// Replace the runtime request policy after validating `settings.quote_schedule`.
-    /// The previous policy remains active if the JSON is invalid.
-    pub fn set_request_policy_json(&self, quote_schedule: Option<&str>) -> Result<(), String> {
-        let policy = MarketRequestPolicy::from_quote_schedule_json(quote_schedule)?;
-        self.set_request_policy(policy);
-        Ok(())
-    }
-
-    pub fn set_request_policy(&self, policy: MarketRequestPolicy) {
-        *self
-            .request_policy
-            .write()
-            .unwrap_or_else(|error| error.into_inner()) = policy;
-        self.invalidate_requests();
-    }
-
-    pub fn set_request_policy_enabled(&self, enabled: bool) {
-        self.request_policy_enabled
-            .store(enabled, std::sync::atomic::Ordering::Release);
-        self.invalidate_requests();
-    }
-
-    pub fn request_policy_enabled(&self) -> bool {
-        self.request_policy_enabled
-            .load(std::sync::atomic::Ordering::Acquire)
-    }
-
-    pub fn request_decision(&self) -> MarketGateDecision {
-        if !self.request_policy_enabled() {
-            return MarketGateDecision::Allowed;
-        }
-        self.request_policy
-            .read()
-            .unwrap_or_else(|error| error.into_inner())
-            .decision_now()
-    }
-
-    /// Gate every outbound live market-data request before selecting either the
-    /// active source or a fallback source. Metadata search is intentionally not
-    /// gated, so users can manage their watchlist outside quote polling hours.
-    pub fn ensure_request_allowed(&self) -> Result<(), String> {
-        match self.request_decision() {
-            MarketGateDecision::Allowed => Ok(()),
-            MarketGateDecision::Paused { reason } => Err(reason),
-        }
     }
 
     /// Register a data source. First registered source becomes active automatically.
@@ -371,13 +319,13 @@ pub mod history;
 pub mod kline;
 pub mod market_clock;
 pub mod a_share_calendar;
-pub mod market_policy;
 pub mod trading_calendar;
 #[cfg(test)]
 mod network_smoke;
 pub mod profile;
 pub mod search;
 pub mod sector;
+pub mod sw_sector;
 pub mod sina;
 pub mod sina_universe;
 pub mod tencent;

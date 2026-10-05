@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-const assets = join(import.meta.dirname, '..', 'dist', 'assets');
+const assets = join(import.meta.dirname, '..', 'src-tauri', 'target', 'frontend', 'assets');
 const cssFiles = readdirSync(assets).filter(name => name.endsWith('.css'));
 const css = cssFiles.map(name => readFileSync(join(assets, name), 'utf8')).join('\n');
 const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)];

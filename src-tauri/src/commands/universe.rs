@@ -8,7 +8,6 @@ use crate::datasource::eastmoney_universe::{
     FilterPreset, MarketFilter, PresetInfo, SnapshotRow, SnapshotSource, DEFAULT_SNAPSHOT_TTL,
 };
 use crate::datasource::market_clock::MarketSession;
-use crate::datasource::market_policy::MarketRequestPolicy;
 use crate::datasource::sector::{self, SectorKind};
 use crate::db::Database;
 use crate::domain::KLineData;
@@ -156,12 +155,10 @@ pub async fn generate_dynamic_filter_proposal(
     if !matches!(session, MarketSession::PreOpen | MarketSession::Closed) {
         return Err("动态筛选只在盘前或收盘后生成，盘中参数保持冻结".into());
     }
-    let schedule = db
-        .get_setting("quote_schedule")
-        .map_err(|error| error.to_string())?;
-    let policy = MarketRequestPolicy::from_quote_schedule_json(schedule.as_deref())?;
-    if !policy.is_trading_day_at(chrono::Utc::now()) {
-        return Err("当前为周末或已配置休市日，不生成动态筛选建议".into());
+    let now = chrono::Utc::now();
+    let day = now.with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap()).date_naive();
+    if !crate::datasource::trading_calendar::is_trading_day_at(now, day)? {
+        return Err("当前为非交易日，不生成动态筛选建议".into());
     }
     let configured = db
         .get_setting("universe_source")
@@ -425,11 +422,15 @@ fn snapshot_ttl(force_refresh: bool, reuse_snapshot: bool) -> Duration {
     }
 }
 
+fn accepts_quote_preset(id: &str) -> bool {
+    id == "custom" || FilterPreset::ALL.iter().any(|preset| preset.id() == id)
+}
+
 /// 获取全市场股票池并应用筛选条件。
 ///
 /// 筛选条件的优先级：`filter` > `preset` > 默认条件。
 ///
-/// - `preset` 传预设 id（如 `"strong_breakout"`），未知 id 回退为「全部」
+/// - `preset` 只接受当前行情预设（如 `"quote_liquidity"`）；旧策略和未知 id 拒绝执行
 /// - `filter` 传完整的筛选条件（前端微调预设后传这个）
 /// - `page` / `page_size`：**服务端分页**。传了 `page` 就只返回那一页
 ///   （`page_size` 缺省 20，上限 100）；翻页由前端逐页请求，避免一次传输几千行
@@ -452,6 +453,9 @@ pub async fn get_market_universe(
     reuse_snapshot: Option<bool>,
     source: Option<String>,
 ) -> Result<UniverseResponse, String> {
+    if preset.as_deref().is_some_and(|id| !accepts_quote_preset(id)) {
+        return Err("旧市场筛选策略已退役；请使用研究模型或沪深基础股票池，旧条件不会自动执行".into());
+    }
     let ttl = snapshot_ttl(
         force_refresh.unwrap_or(false),
         reuse_snapshot.unwrap_or(false),
@@ -705,39 +709,9 @@ fn normalize_meta(
 /// 之所以 `Result` 不往外抛：内置策略是产品底线，
 /// 不能因为用户自建数据坏了就让整条策略栏消失 —— 读不出来就只下发内置的。
 fn all_presets_impl(db: &Database) -> Vec<PresetInfo> {
-    let mut presets = preset_infos();
-    let builtin_count = presets.len();
-
-    match load_custom_presets(db) {
-        Ok(custom) => presets.extend(custom),
-        Err(error) => {
-            log::warn!("[universe] 读取自定义策略失败，仅下发内置预设：{error}");
-        }
-    }
-
-    if let Err(error) = db.sync_strategy_presets(&presets) {
-        log::error!("[strategy] 策略版本库同步失败：{error}");
-    } else if let Ok(library) = db.strategy_library() {
-        let versions: std::collections::HashMap<_, _> = library
-            .cards
-            .into_iter()
-            .map(|card| (card.id.clone(), card))
-            .collect();
-        for preset in &mut presets {
-            if let Some(card) = versions.get(&preset.id) {
-                preset.strategy_version_id = Some(card.version_id);
-                preset.strategy_version = card.current_version;
-                preset.strategy_status = card.status.clone();
-            }
-        }
-    }
-
-    log::info!(
-        "[universe] get_filter_presets -> 内置 {} + 自建 {}",
-        builtin_count,
-        presets.len() - builtin_count
-    );
-    presets
+    // 自建条件和旧策略版本留在数据库作历史，不再由读取目录重新登记为候选。
+    let _=db;
+    preset_infos()
 }
 
 pub(crate) fn sync_strategy_registry(db: &Database) {
@@ -874,7 +848,7 @@ pub fn delete_filter_preset(db: State<'_, Arc<Database>>, id: String) -> Result<
 #[cfg(test)]
 mod tests {
     use super::{
-        accepts_history, matches_sector_filters, next_custom_id, normalize_meta, snapshot_ttl,
+        accepts_history, accepts_quote_preset, matches_sector_filters, next_custom_id, normalize_meta, snapshot_ttl,
         MAX_LABEL_CHARS,
     };
     use crate::datasource::eastmoney_universe::{
@@ -883,6 +857,18 @@ mod tests {
     use crate::domain::KLineData;
     use crate::quant::playbook::TradeRule;
     use std::{collections::HashSet, time::Duration};
+
+    #[test]
+    fn quote_preset_api_accepts_current_catalog_and_rejects_retired_or_unknown_ids() {
+        for id in ["all", "custom", "quote_liquidity", "quote_active", "quote_gentle_rise"] {
+            assert!(accepts_quote_preset(id), "{id} should be accepted");
+        }
+        for id in crate::datasource::eastmoney_universe::RETIRED_PRESET_IDS {
+            assert!(!accepts_quote_preset(id), "{id} must remain retired");
+        }
+        assert!(!accepts_quote_preset("unknown"));
+        assert!(!accepts_quote_preset("custom_saved"));
+    }
 
     #[test]
     fn sector_filters_or_within_kind_and_between_kinds() {
@@ -1077,7 +1063,7 @@ mod tests {
         let stored = load_custom_presets(&db).expect("应能读回");
         assert_eq!(stored.len(), 3, "三条自建策略都应读回");
         assert!(stored.iter().all(|preset| !preset.builtin));
-        assert_eq!(all_presets_impl(&db).len(), builtin_total + 3);
+        assert_eq!(all_presets_impl(&db).len(), builtin_total);
 
         // 改名 + 覆盖条件：id 不变、条件被替换
         let renamed = save_preset_impl(
@@ -1128,7 +1114,7 @@ mod tests {
             "自建之间不应允许重名"
         );
         assert!(
-            save_preset_impl(&db, None, "强势突破", None, None, MarketFilter::default()).is_err(),
+            save_preset_impl(&db, None, "沪深基础股票池", None, None, MarketFilter::default()).is_err(),
             "与内置策略重名也应被拒"
         );
         // 内置策略不能被改

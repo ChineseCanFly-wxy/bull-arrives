@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { Menu } from '@tauri-apps/api/menu';
 
 import { useQuoteStore } from '@/stores/quote';
 import { useWatchlistStore } from '@/stores/watchlist';
@@ -25,6 +26,7 @@ watch(() => watchlist.activeGroupId, () => {
   groupTimer = setTimeout(() => { groupFlash.value = false; }, 1200);
 });
 let unlistenSettings: UnlistenFn | null = null;
+let contextMenu: Promise<Menu> | null = null;
 
 const initFailed = ref(false);
 
@@ -47,6 +49,7 @@ onUnmounted(() => {
   if (cycleTimer) clearInterval(cycleTimer);
   if (unlistenSettings) unlistenSettings();
   if (groupTimer) clearTimeout(groupTimer);
+  void contextMenu?.then(menu => menu.close()).catch(console.error);
 });
 
 /// The main window and this ticker are separate WebViews with independent
@@ -107,6 +110,7 @@ watch(
       console.error('[TickerBar] resize failed:', e);
     });
   },
+  { immediate: true, flush: 'post' },
 );
 
 const retryHintVisible = ref(false);
@@ -143,6 +147,7 @@ function priceTone(changePct: number | null): string {
 let isDragging = false;
 
 function onMouseDown(e: MouseEvent) {
+  if (e.button !== 0) return;
   isDragging = false;
   if (initFailed.value) {
     return;
@@ -206,6 +211,23 @@ function openQuickAdd() {
     console.error('[TickerBar] open_ticker_quick_add failed:', e);
   });
 }
+async function showContextMenu() {
+  try {
+    contextMenu ??= Menu.new({ items: [
+      { id: 'ticker-quick-add', text: '快速自选', action: openQuickAdd },
+      { id: 'ticker-display-settings', text: '展示设置', action: () => {
+        void invoke('open_navigation', { destination: 'settings:ticker' }).catch(error => {
+          console.error('[TickerBar] display settings failed:', error);
+        });
+      } },
+    ] });
+    const menu = await contextMenu;
+    await menu.popup(undefined, getCurrentWindow());
+  } catch (error) {
+    contextMenu = null;
+    console.error('[TickerBar] context menu failed:', error);
+  }
+}
 </script>
 
 <template>
@@ -216,12 +238,13 @@ function openQuickAdd() {
     role="button"
     tabindex="0"
     :aria-label="`${groupName}分组，点击显示主界面`"
-    :title="`当前分组：${groupName}`"
+    :title="`当前分组：${groupName} · 右键快速自选或调整展示`"
     @keydown.enter="handleClick"
     @keydown.space.prevent="handleClick"
     @mousedown="onMouseDown"
     @mouseenter="paused = true"
     @mouseleave="paused = false"
+    @contextmenu.prevent.stop="showContextMenu"
     @wheel.stop
     @click="handleClick"
   >
@@ -362,8 +385,7 @@ function openQuickAdd() {
 }
 .ticker-retry-hint {
   color: var(--color-warning);
-  font-size: 9px;
-  opacity: 0.7;
+  font-size: var(--text-xs);
 }
 
 /* ── 快速自选入口 ──

@@ -1,0 +1,97 @@
+{
+  "schema": "financial-adapter-fixture-v1",
+  "runner_sha256": "71b6f3f8eab4cdaa2b65fb5fc4b23e4a168d8644c3cfc83d693e24f62a3c86c3",
+  "source_manifest_sha256": "a3e6127dcf40b1946b9975b17078a2ea1aedb57e0d45e80d002e927d39bc9b39",
+  "fixture_sha256": "fe267dd978febba218d169f61bfec38f042c5ca7bcf0ac6fd48ecd3123ff26da",
+  "content_sha256": "d0516cd4a8987bce178b47f295ab3e7aaade8b41fbeb66fc83e04f8f48a0b580",
+  "source_run_id": "ashare-fundamental-2026-10-01-conservative-ablation-v1",
+  "model_name": "基本面37探索模型",
+  "score_semantic": "二十日绝对开盘收益代理；财务时点保守延后，历史修订链未认证；不是胜率",
+  "mode": "replay",
+  "comparison": "baseline",
+  "holding_days": 20,
+  "scores": 4454,
+  "unknown_scores": [
+    {
+      "symbol": "sh688759",
+      "as_of": "2026-09-30",
+      "score": null,
+      "reason": "主要财务字段不足共同研究池条件；未知不填0"
+    }
+  ],
+  "positive_scores": 4021,
+  "continuous_metrics": {
+    "net_return_pct": 57.551,
+    "max_drawdown_pct": 31.127,
+    "return_over_drawdown": 1.849,
+    "completed_holding_cycles": 689,
+    "open_positions": 10,
+    "win_rate_pct": 47.17,
+    "mean_cycle_net_pct": 1.2627,
+    "median_cycle_net_pct": -0.6146,
+    "profit_factor": 1.223,
+    "mean_holding_sessions": 18.38,
+    "overdue_cycles": 3,
+    "overdue_open_positions": 4,
+    "max_overdue_sessions": 1545,
+    "annualized_sharpe_descriptive": 0.463,
+    "exposure_mean_pct": 59.468,
+    "stale_open_positions": 0,
+    "dividend_receivable_cny": 4994.184,
+    "blocked_exit_sessions": 27,
+    "blocked_entries": 2,
+    "corporate_events": 61,
+    "verified_cash_payments": 0,
+    "verified_share_releases": 0,
+    "model_edge_exit_requests": 0,
+    "bonus_share_events_without_listing_date": 6,
+    "company_action_formula_mismatches_held": 2,
+    "st_in_position": 25,
+    "suspended_marks": 25
+  },
+  "accounting": {
+    "net_change_cny": 57550.6514,
+    "completed_pnl_cny": 61231.595,
+    "unclosed_pnl_cny": -3680.948,
+    "reconcile_cny": -0.0044,
+    "minimum_cash_cny": 23602.8736
+  },
+  "locked_tail": [
+    {
+      "code": "600588",
+      "bonus_locked": 30,
+      "locked_value_cny": 276.6,
+      "overdue_sessions": 1545
+    },
+    {
+      "code": "300559",
+      "bonus_locked": 100,
+      "locked_value_cny": 1256.0,
+      "overdue_sessions": 1533
+    },
+    {
+      "code": "300818",
+      "bonus_locked": 182,
+      "locked_value_cny": 2857.4,
+      "overdue_sessions": 842
+    },
+    {
+      "code": "301042",
+      "bonus_locked": 40,
+      "locked_value_cny": 1167.2,
+      "overdue_sessions": 77
+    }
+  ],
+  "audit_checks": {
+    "envelope_sha": true,
+    "net_pnl": true,
+    "drawdown": true,
+    "completed_cycle_win_rate": true,
+    "actual_current_scores_unknown_preserved": true
+  },
+  "files": {
+    "replay_adapter.py": "71b6f3f8eab4cdaa2b65fb5fc4b23e4a168d8644c3cfc83d693e24f62a3c86c3",
+    "replay-sources.json": "a3e6127dcf40b1946b9975b17078a2ea1aedb57e0d45e80d002e927d39bc9b39",
+    "adapter-checks/fundamental37-continuous.json": "fe267dd978febba218d169f61bfec38f042c5ca7bcf0ac6fd48ecd3123ff26da"
+  }
+}

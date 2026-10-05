@@ -207,6 +207,41 @@ fn ensure_version(tx: &Transaction<'_>, preset: &PresetInfo) -> Result<(i64, i64
 }
 
 impl Database {
+    /// Retire the old snapshot templates without deleting definitions, orders or audit events.
+    pub fn retire_legacy_market_templates(&self) -> rusqlite::Result<()> {
+        let mut conn=self.conn.lock().unwrap_or_else(|e|e.into_inner());
+        let tx=conn.transaction()?;let timestamp=now();
+        tx.execute("INSERT INTO strategy_events(version_id,from_state,to_state,actor,reason,created_at)
+            SELECT id,status,'retired','system','旧市场手工模板退役：保留历史，无项目多年实证，不作为研究模型执行',?1
+            FROM strategy_versions WHERE engine_revision='strategy-v1' AND status!='retired'",[&timestamp])?;
+        tx.execute("UPDATE strategy_versions SET status='retired',revision=revision+1,updated_at=?1
+            WHERE engine_revision='strategy-v1' AND status!='retired'",[&timestamp])?;
+        tx.execute("UPDATE strategy_cards SET active_version_id=NULL,updated_at=?1
+            WHERE active_version_id IN (SELECT id FROM strategy_versions WHERE engine_revision='strategy-v1')",[&timestamp])?;
+        let has_experiments:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='research_experiments')",[],|r|r.get(0))?;
+        if has_experiments {
+            tx.execute("INSERT INTO research_events(experiment_id,state,message,created_at)
+                SELECT e.id,'paused','旧市场模板退役，自动研究与主/对照账户暂停；定义持仓和历史保留',?1 FROM research_experiments e
+                JOIN strategy_versions v ON v.id=e.version_id WHERE v.engine_revision='strategy-v1' AND e.state NOT IN ('paused','rejected')",[&timestamp])?;
+            tx.execute("UPDATE research_experiments SET state='paused',last_message='旧市场模板已退役，不再自动执行；历史保留'
+                WHERE version_id IN (SELECT id FROM strategy_versions WHERE engine_revision='strategy-v1') AND state!='rejected'",[])?;
+            tx.execute("UPDATE sim_accounts SET auto_enabled=0 WHERE id IN
+                (SELECT e.account_id FROM research_experiments e JOIN strategy_versions v ON v.id=e.version_id WHERE v.engine_revision='strategy-v1') OR id IN
+                (SELECT c.account_id FROM research_daily_comparison c JOIN research_experiments e ON e.id=c.experiment_id JOIN strategy_versions v ON v.id=e.version_id WHERE v.engine_revision='strategy-v1')",[])?;
+        }
+        let selected:Option<String>=tx.query_row("SELECT value FROM settings WHERE key='universe_preset'",[],|row|row.get(0)).optional()?;
+        if selected.as_deref().is_some_and(|id|!matches!(id,"all"|"custom")) {
+            let previous:Option<String>=tx.query_row("SELECT value FROM settings WHERE key='universe_filter'",[],|r|r.get(0)).optional()?;
+            if let Some(previous)=previous {
+                let archive=serde_json::json!({"preset":selected,"filter":previous}).to_string();
+                tx.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('universe_legacy_filter_archive',?1)",[archive])?;
+            }
+            tx.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('universe_preset','all')",[])?;
+            let filter=serde_json::to_string(&MarketFilter::default()).map_err(|e|rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            tx.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('universe_filter',?1)",[filter])?;
+        }
+        tx.commit()
+    }
     pub fn migrate_strategies(&self) -> rusqlite::Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|error| error.into_inner());
         conn.execute_batch(
@@ -391,11 +426,11 @@ impl Database {
     ) -> Result<StrategyCardView, String> {
         let mut conn = self.conn.lock().unwrap_or_else(|error| error.into_inner());
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let (card_id, from, revision): (String, String, i64) = tx
+        let (card_id, from, revision,engine): (String, String, i64,String) = tx
             .query_row(
-                "SELECT card_id,status,revision FROM strategy_versions WHERE id=?1",
+                "SELECT card_id,status,revision,engine_revision FROM strategy_versions WHERE id=?1",
                 [version_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?,row.get(3)?)),
             )
             .map_err(|_| "策略版本不存在".to_string())?;
         if revision != expected_revision {
@@ -403,6 +438,9 @@ impl Database {
         }
         let to = match action {
             "activate" => {
+                if from=="retired" || engine==ENGINE_REVISION {
+                    return Err("旧市场模板已退役，不能重新采用；研究模型须有独立的冻结实现与证据".into());
+                }
                 if !confirmed {
                     return Err("采用策略必须由用户明确确认".into());
                 }
@@ -526,6 +564,32 @@ mod tests {
         assert!(db
             .transition_strategy(card.version_id, "activate", true, card.revision)
             .is_err());
+    }
+
+    #[test]
+    fn retired_templates_keep_definitions_and_cannot_revive() {
+        let db=database();let p=preset("旧手工条件");db.sync_strategy_presets(&[p.clone()]).unwrap();
+        db.set_setting("universe_preset","strong_breakout").unwrap();
+        db.set_setting("universe_filter",r#"{"change_pct_min":3}"#).unwrap();
+        {let conn=db.conn.lock().unwrap();conn.execute("UPDATE strategy_stage_runs SET status='passed'",[]).unwrap();conn.execute("UPDATE strategy_cards SET active_version_id=(SELECT id FROM strategy_versions LIMIT 1)",[]).unwrap();}
+        db.migrate_simulation().unwrap();db.migrate_research_loop().unwrap();
+        let experiment=db.register_experiment(&p,&crate::db::research_loop::ResearchConfig::default(),"legacy-test").unwrap();
+        {let conn=db.conn.lock().unwrap();conn.execute_batch("INSERT INTO sim_accounts(id,name,initial_cash,cash,mode,auto_enabled,created_at,updated_at) VALUES(1,'旧模板主账户',100000,100000,'auto',1,'test','test'),(2,'旧模板对照',100000,100000,'auto',1,'test','test');").unwrap();conn.execute("INSERT INTO research_daily_comparison(experiment_id,account_id) VALUES(?1,2)",[experiment]).unwrap();}
+        db.link_experiment(experiment,1,"[]").unwrap();
+        db.retire_legacy_market_templates().unwrap();db.retire_legacy_market_templates().unwrap();
+        let card=db.strategy_library().unwrap().cards.pop().unwrap();
+        assert_eq!(card.status,"retired");assert!(card.active_version_id.is_none());
+        assert!(db.transition_strategy(card.version_id,"activate",true,card.revision).is_err());
+        assert!(db.require_current_research_version(experiment).is_err());
+        assert!(db.set_experiment_state(experiment,"observing","resume").is_err());
+        assert_eq!(db.research_experiments().unwrap()[0].state,"paused");
+        db.sync_strategy_presets(&[p]).unwrap();assert_eq!(db.strategy_library().unwrap().cards[0].status,"retired");
+        assert_eq!(db.get_setting("universe_preset").unwrap().as_deref(),Some("all"));
+        let archive:serde_json::Value=serde_json::from_str(&db.get_setting("universe_legacy_filter_archive").unwrap().unwrap()).unwrap();assert_eq!(archive["preset"],"strong_breakout");assert_eq!(archive["filter"],r#"{"change_pct_min":3}"#);
+        let f:MarketFilter=serde_json::from_str(&db.get_setting("universe_filter").unwrap().unwrap()).unwrap();assert!(f.change_pct_min.is_none());
+        let conn=db.conn.lock().unwrap();let count:i64=conn.query_row("SELECT COUNT(*) FROM strategy_events WHERE to_state='retired'",[],|r|r.get(0)).unwrap();assert_eq!(count,1);
+        let active:i64=conn.query_row("SELECT SUM(auto_enabled) FROM sim_accounts WHERE id IN (1,2)",[],|r|r.get(0)).unwrap();assert_eq!(active,0);
+        assert!(crate::db::research_loop::guard_execution(&conn,1).is_err());assert!(crate::db::research_loop::guard_execution(&conn,2).is_err());
     }
 
     #[test]

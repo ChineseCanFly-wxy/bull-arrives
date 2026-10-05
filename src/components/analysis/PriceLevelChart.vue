@@ -19,7 +19,7 @@ const props = defineProps<{
   levels: PriceLevel[];
 }>();
 
-// ── 画布坐标（宽度固定 680，靠 width:100% 自适应容器宽度）──
+// ── 画布坐标（至少680px；窄屏横向滚动，避免SVG文字随viewBox缩小）──
 const W = 680;
 const H = 380;
 const TOP = 26;
@@ -138,6 +138,7 @@ const placed = computed<Placed[]>(() => {
     </div>
 
     <template v-else>
+      <div class="plc-plot" role="region" aria-label="支撑压力价格图，可横向滚动" tabindex="0">
       <svg :viewBox="`0 0 ${W} ${H}`" width="100%" role="img">
         <title>支撑位与压力位</title>
         <desc>
@@ -184,6 +185,7 @@ const placed = computed<Placed[]>(() => {
         <!-- 文字标注 -->
         <text :x="AXIS_X + 18" :y="TOP - 8" class="hint">价位由价格自身走出，不含筹码估算</text>
       </svg>
+      </div>
 
       <!-- 说明与明细 -->
       <div class="plc-meta">
@@ -236,13 +238,15 @@ const placed = computed<Placed[]>(() => {
 }
 
 /* ── SVG ── */
+.plc-plot { max-width: 100%; overflow-x: auto; }
+.plc-plot svg { display: block; min-width: 680px; }
 .ticks line {
   stroke: var(--color-border-0);
   stroke-width: 1;
   opacity: 0.8;
 }
 .ticks text {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   fill: var(--color-text-tertiary);
@@ -291,9 +295,8 @@ const placed = computed<Placed[]>(() => {
   fill: var(--color-accent);
 }
 .hint {
-  font-size: 11.5px;
+  font-size: var(--text-xs);
   fill: var(--color-text-tertiary);
-  opacity: 0.85;
 }
 
 /* ── 说明区 ── */
@@ -328,7 +331,7 @@ const placed = computed<Placed[]>(() => {
   padding: 1px 5px;
   border-radius: var(--radius-sm);
   border: 1px solid currentColor;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .tag.resistance {
   color: var(--color-warning);

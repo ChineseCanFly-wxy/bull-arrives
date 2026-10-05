@@ -546,9 +546,7 @@ function rowKey(row: Monitor): string {
   flex-direction: column;
   gap: var(--space-2);
 }
-html[data-style="trading"] .monitor,
 html[data-style="modern"] .monitor { gap: var(--space-3); }
-html[data-style="trading"] .monitor .form,
 html[data-style="modern"] .monitor .form { padding: var(--panel-padding); border: 1px solid var(--color-border-0); border-radius: var(--radius-md); background: var(--color-surface-1); }
 .form {
   flex-shrink: 0;

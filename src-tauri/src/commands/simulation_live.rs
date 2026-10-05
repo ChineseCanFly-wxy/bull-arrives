@@ -82,7 +82,6 @@ pub fn simulation_live_status(
     db.live_status(account_id)
 }
 pub async fn snapshot(manager: &DataSourceManager, symbol: &str) -> Result<LiveTick, String> {
-    manager.ensure_request_allowed()?;
     let active = manager.active_name();
     let mut sources = manager.all_sources();
     sources.sort_by_key(|(name, _)| *name != active);
@@ -124,6 +123,7 @@ pub async fn run(
     manager: &DataSourceManager,
     account: i64,
 ) -> Result<SimDetail, String> {
+    if db.is_follow_account(account)? {return Err("原模型跟随账户由专用调度全自动执行，无需逐笔确认".into());}
     let _permit = GATE
         .get_or_init(|| tokio::sync::Semaphore::new(1))
         .try_acquire()
@@ -137,17 +137,7 @@ pub async fn run(
         }
     }
     let now = chrono::Utc::now();
-    let schedule = db.get_setting("quote_schedule").ok().flatten();
-    let policy = crate::datasource::market_policy::MarketRequestPolicy::from_quote_schedule_json(
-        schedule.as_deref(),
-    )?;
-    let gate = crate::datasource::a_share_calendar::continuous(now).and_then(|_| {
-        if policy.is_trading_day_at(now) {
-            Ok(())
-        } else {
-            Err("A 股休市或用户额外休市日".into())
-        }
-    });
+    let gate = crate::datasource::a_share_calendar::continuous(now);
     if let Err(reason) = gate {
         db.live_message(account, &reason)?;
         return db.get_sim_detail(account);

@@ -38,6 +38,10 @@ export function useChartCore(options: {
     const tokens = getComputedStyle(document.documentElement);
     const color = (name: string, fallback: string) => tokens.getPropertyValue(name).trim() || fallback;
     return {
+      fontSans: tokens.getPropertyValue('--font-sans').trim() || '"Microsoft YaHei", sans-serif',
+      fontNumbers: tokens.getPropertyValue('--font-mono').trim() || 'Arial, "Microsoft YaHei", sans-serif',
+      tickSize: settings.visualStyle === 'elegant' ? 12 : 10,
+      tooltipSize: settings.visualStyle === 'elegant' ? 13 : 11,
       up: isClassic ? '#f85149' : color('--color-up', '#f85149'),
       down: isClassic ? '#3fb950' : color('--color-down', '#3fb950'),
       neutral: isClassic ? '#8b949e' : color('--color-text-secondary', '#8b949e'),
@@ -85,6 +89,7 @@ export function useChartCore(options: {
         area: { lineSize: 1.5, lineColor: c.areaLineColor },
         tooltip: {
           legend: {
+            family: c.fontNumbers, size: c.tooltipSize, color: c.tooltipText,
             // klinecharts 内置的 {change} 按「上一根 bar」计算，用在分时图上会得到
             // 每分钟的微小波动。这里改为以昨收为基准，才是交易软件里「分时涨跌幅」的口径。
             template: (data: { current?: KCLineData | null } | null) => {
@@ -110,7 +115,7 @@ export function useChartCore(options: {
           },
           title: { show: false },
           rect: { position: 'fixed', paddingLeft: 8, paddingTop: 4, paddingRight: 8, paddingBottom: 4, offsetLeft: 8, offsetTop: 8, offsetRight: 8, offsetBottom: 0, borderRadius: 4, borderSize: 0, backgroundColor: c.tooltipBg },
-          text: { size: 11, color: c.tooltipText, family: 'var(--font-sans)' },
+          text: { size: c.tooltipSize, color: c.tooltipText, family: c.fontSans },
         } as any, // legend.template 支持回调，labels/text 为遗留字段不在 v10 类型中
         priceMark: {
           high: { show: false },
@@ -125,27 +130,27 @@ export function useChartCore(options: {
         ],
         lines: c.lineColors.map(color => ({ style: 'solid', smooth: false, size: 1, color })),
         lastValueMark: { show: false },
-        tooltip: { show: true, labels: ['', '', '', '', '', '量', '额'], text: { size: 11, color: c.tooltipText } } as any, // labels/text 为遗留字段
+        tooltip: { show: true, title: { family: c.fontSans, size: c.tooltipSize, color: c.tooltipText }, legend: { family: c.fontNumbers, size: c.tooltipSize, color: c.tooltipText }, labels: ['', '', '', '', '', '量', '额'], text: { size: c.tooltipSize, color: c.tooltipText, family: c.fontSans } } as any, // labels/text 为遗留字段
       },
       xAxis: {
         show: true,
         size: 'auto',
         axisLine: { show: true, color: c.axisColor, size: 1 },
         tickLine: { show: false },
-        tickText: { size: 10, color: c.tickColor, family: 'var(--font-sans)', marginStart: 0, marginEnd: 0 },
+        tickText: { size: c.tickSize, color: c.tickColor, family: c.fontNumbers, marginStart: 0, marginEnd: 0 },
       },
       yAxis: {
         show: true,
         size: 'auto',
         axisLine: { show: false },
         tickLine: { show: false },
-        tickText: { size: 10, color: c.tickColor, family: 'var(--font-sans)' },
+        tickText: { size: c.tickSize, color: c.tickColor, family: c.fontNumbers },
       },
       separator: { size: 1, color: c.separatorColor, fill: false, activeBackgroundColor: 'rgba(255,255,255,0.02)' },
       crosshair: {
         show: true,
-        horizontal: { show: true, line: { show: true, color: c.lineColor, size: 1 }, text: { show: true, size: 10, color: c.crosshairText, family: 'var(--font-mono)', backgroundColor: c.crosshairBg, paddingLeft: 4, paddingTop: 2, paddingRight: 4, paddingBottom: 2 } as any }, // backgroundColor 不在 StateTextStyle 中
-        vertical: { show: true, line: { show: true, color: c.lineColor, size: 1 }, text: { show: true, size: 10, color: c.crosshairText, family: 'var(--font-mono)', backgroundColor: c.crosshairBg, paddingLeft: 4, paddingTop: 2, paddingRight: 4, paddingBottom: 2 } as any },
+        horizontal: { show: true, line: { show: true, color: c.lineColor, size: 1 }, text: { show: true, size: c.tickSize, color: c.crosshairText, family: c.fontNumbers, backgroundColor: c.crosshairBg, paddingLeft: 4, paddingTop: 2, paddingRight: 4, paddingBottom: 2 } as any }, // backgroundColor 不在 StateTextStyle 中
+        vertical: { show: true, line: { show: true, color: c.lineColor, size: 1 }, text: { show: true, size: c.tickSize, color: c.crosshairText, family: c.fontNumbers, backgroundColor: c.crosshairBg, paddingLeft: 4, paddingTop: 2, paddingRight: 4, paddingBottom: 2 } as any },
       },
     });
   }
@@ -162,6 +167,7 @@ export function useChartCore(options: {
         area: { lineSize: 1.5, lineColor: c.areaLineColor },
         tooltip: {
           legend: {
+            family: c.fontNumbers, size: c.tooltipSize, color: c.tooltipText,
             template: [
               { title: dateLabel, value: '{time}' },
               { title: '开', value: '{open}' },
@@ -174,7 +180,7 @@ export function useChartCore(options: {
           },
           title: { show: false },
           rect: { position: 'fixed', paddingLeft: 8, paddingTop: 4, paddingRight: 8, paddingBottom: 4, offsetLeft: 8, offsetTop: 8, offsetRight: 8, offsetBottom: 0, borderRadius: 4, borderSize: 0, backgroundColor: c.tooltipBg },
-          text: { size: 11, color: c.tooltipText, family: 'var(--font-sans)' },
+          text: { size: c.tooltipSize, color: c.tooltipText, family: c.fontSans },
         } as any, // text 为遗留字段
         priceMark: {
           high: { show: false },

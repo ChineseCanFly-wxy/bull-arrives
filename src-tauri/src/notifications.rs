@@ -196,7 +196,7 @@ fn record_history(app: &tauri::AppHandle, payload: &mut Value, pending: bool) ->
         NEXT_ID.fetch_add(1, Ordering::Relaxed)
     );
     payload["id"] = Value::String(id.clone());
-    payload["received_at"] = Value::Number(chrono::Utc::now().timestamp_millis().into());
+    stamp_notification(payload,chrono::Utc::now().timestamp_millis());
     let version = {
         let history = app.state::<NotificationHistory>();
         let mut inner = history.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -214,12 +214,16 @@ fn record_history(app: &tauri::AppHandle, payload: &mut Value, pending: bool) ->
     let _ = app.emit("price-alert-triggered", &payload);
     (id, version)
 }
+fn stamp_notification(payload:&mut Value,now:i64){
+    payload["delivered_at"]=Value::Number(now.into());
+    if payload.get("received_at").is_none_or(Value::is_null){payload["received_at"]=Value::Number(now.into());}
+}
 
 fn archive_news_payload(app: &tauri::AppHandle, payload: &Value) {
     if let Some(db) = app.try_state::<std::sync::Arc<crate::db::Database>>() {
         let result = match payload["signal_kind"].as_str() {
             Some("news") => db.archive_news(payload),
-            Some("price" | "risk") => db.archive_brief_alert(payload),
+            Some("price" | "risk" | "research") => db.archive_brief_alert(payload),
             _ => Ok(()),
         };
         if let Err(error) = result {
@@ -228,7 +232,30 @@ fn archive_news_payload(app: &tauri::AppHandle, payload: &Value) {
     }
 }
 
+fn is_model_notice(payload: &Value) -> bool {
+    payload["signal_kind"] == "research"
+        && (payload.get("model_snapshot").is_some_and(Value::is_object)
+            || payload.get("intraday_snapshot").is_some_and(Value::is_object)
+            || payload.get("condition_event").is_some_and(Value::is_object))
+}
+
+fn delivery_policy(payload: &Value, research_enabled: bool, desktop_always: bool) -> Option<bool> {
+    if payload["stockdb_update_alert"]["schema"]=="stockdb-update-failed-v1" {return Some(true);}
+    let model = is_model_notice(payload);
+    if payload["signal_kind"] == "research" && !research_enabled { None } else { Some(model || desktop_always) }
+}
+
 pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
+    // Muting research delivery preserves history and never pauses model computation/trading.
+    let research_enabled = app.try_state::<std::sync::Arc<crate::db::Database>>()
+        .map(|db| db.research_notifications_enabled().unwrap_or(false)).unwrap_or(true);
+
+    let Some(force_desktop) = delivery_policy(&payload,
+        research_enabled,
+        setting_enabled(app, "notification_desktop_always", false)) else {
+        record_history(app, &mut payload, false);
+        return;
+    };
     let title = payload
         .get("title")
         .and_then(Value::as_str)
@@ -245,7 +272,7 @@ pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
         title,
         body,
         history_version: version,
-        force_desktop: setting_enabled(app, "notification_desktop_always", false),
+        force_desktop,
         response: None,
     };
     if let Err(error) = app.state::<NotificationDelivery>().sender.try_send(job) {
@@ -268,7 +295,7 @@ pub fn news_analysis_updated(app: &tauri::AppHandle, payload: &Value, push: bool
         let history = app.state::<NotificationHistory>();
         let mut inner = history.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = inner.entries.iter_mut().find(|entry| entry["signal_id"].as_str() == signal_id) {
-            for key in ["id", "received_at", "history_version", "delivery"] {
+            for key in ["id", "received_at", "delivered_at", "history_version", "delivery"] {
                 updated[key] = entry[key].clone();
             }
             if let (Some(id), Some(version)) = (updated["id"].as_str(), updated["history_version"].as_u64()) {
@@ -296,7 +323,7 @@ pub fn news_analysis_updated(app: &tauri::AppHandle, payload: &Value, push: bool
 }
 
 #[tauri::command]
-pub async fn test_notification(app: tauri::AppHandle) -> Result<DeliveryStatus, String> {
+pub async fn test_notification(app: tauri::AppHandle, research: Option<bool>) -> Result<DeliveryStatus, String> {
     let id = format!(
         "test-{}-{}",
         chrono::Utc::now().timestamp_millis(),
@@ -305,10 +332,11 @@ pub async fn test_notification(app: tauri::AppHandle) -> Result<DeliveryStatus, 
     let (response, receiver) = tokio::sync::oneshot::channel();
     let job = DeliveryJob {
         id: id.clone(),
-        title: "Bull Arrives 通知测试".into(),
-        body: "收到此通知说明系统已受理通知；是否显示横幅仍受勿扰和系统策略影响。".into(),
+        title: if research == Some(true) { "研究中心提醒测试" } else { "Bull Arrives 通知测试" }.into(),
+        body: if research == Some(true) { "研究提醒会显示模型观察及模拟买卖结果；本次仅测试通知，不创建委托或调整账户。" } else { "收到此通知说明系统已受理通知；是否显示横幅仍受勿扰和系统策略影响。" }.into(),
         history_version: u64::MAX,
-        force_desktop: setting_enabled(&app, "notification_desktop_always", false),
+        // Test both channels, including the desktop channel required by model notices.
+        force_desktop: true,
         response: Some(response),
     };
     app.state::<NotificationDelivery>()
@@ -356,6 +384,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn model_popups_only_apply_to_model_and_intraday_observations() {
+        assert!(is_model_notice(&serde_json::json!({"signal_kind":"research","model_snapshot":{}})));
+        assert!(is_model_notice(&serde_json::json!({"signal_kind":"research","intraday_snapshot":{}})));
+        assert!(is_model_notice(&serde_json::json!({"signal_kind":"research","condition_event":{"schema":"model-condition-event-v1"}})));
+        assert!(!is_model_notice(&serde_json::json!({"signal_kind":"news","model_snapshot":{}})));
+        assert!(!is_model_notice(&serde_json::json!({"signal_kind":"research","model_snapshot":null})));
+        assert!(!is_model_notice(&serde_json::json!({"signal_kind":"research"})));
+    }
+
+    #[test]
+    fn research_delivery_has_its_own_switch_and_requests_visible_desktop_channel() {
+        let model = serde_json::json!({"signal_kind":"research","model_snapshot":{}});
+        assert_eq!(delivery_policy(&model, false, true), None);
+        assert_eq!(delivery_policy(&model, false, false), None);
+        assert_eq!(delivery_policy(&model, true, false), Some(true));
+        assert_eq!(delivery_policy(&model, true, true), Some(true));
+        let other_research = serde_json::json!({"signal_kind":"research"});
+        assert_eq!(delivery_policy(&other_research, false, true), None);
+        assert_eq!(delivery_policy(&other_research, true, false), Some(false));
+        let data_error=serde_json::json!({"signal_kind":"system","stockdb_update_alert":{"schema":"stockdb-update-failed-v1"}});
+        assert_eq!(delivery_policy(&data_error,false,false),Some(true));
+        let news = serde_json::json!({"signal_kind":"news"});
+        assert_eq!(delivery_policy(&news, false, false), Some(false));
+        assert_eq!(delivery_policy(&news, true, true), Some(true));
+    }
+
+    #[test]
     fn clear_watermark_rejects_old_delivery() {
         let mut inner = HistoryInner::default();
         inner.entries.push_back(serde_json::json!({"id": "old"}));
@@ -364,6 +419,13 @@ mod tests {
         inner.version += 1;
         assert_ne!(old, inner.version);
         assert!(inner.entries.is_empty());
+    }
+    #[test]
+    fn delivery_keeps_source_receipt_and_research_identity(){
+        let mut payload=serde_json::json!({"received_at":"2026-09-30T07:20:00Z","signal_kind":"research","sector_code":"SW801080","fingerprint":"frozen"});
+        stamp_notification(&mut payload,42);assert_eq!(payload["received_at"],"2026-09-30T07:20:00Z");assert_eq!(payload["delivered_at"],42);
+        assert_eq!(payload["sector_code"],"SW801080");assert_eq!(payload["fingerprint"],"frozen");
+        let mut empty=serde_json::json!({});stamp_notification(&mut empty,43);assert_eq!(empty["received_at"],43);
     }
 
     #[test]

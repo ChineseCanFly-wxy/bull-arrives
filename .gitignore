@@ -59,3 +59,49 @@ docs/code-review-*.md
 # 注：`docs/AI接入方案.md` 原先按 2026-09-13 的决定只在本地维护、不进仓库，
 # 2026-09-16 起改为随仓库发布 —— 它已经作为待办清单的一项链在 README 里，
 # 别人点进去要能看见。
+
+# 本地数据、密钥和研究输出不进入发版提交。研究编译/离线测试只纳入下面的明确文件。
+/data/
+/portable/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+**/__pycache__/
+/research/**
+!/research/ashare-fundamental-2026-10-01/
+!/research/ashare-fundamental-2026-10-01/adapter-checks/
+!/research/ashare-mainline-2026-10-01/
+!/research/ashare-mainline-2026-10-01/longitudinal-v2/
+!/research/forward-chain-2026-10-01/
+!/research/forward-chain-2026-10-01/real-history-v3/
+!/research/research-center-runner/
+!/research/research-center-runner/checks/
+!/research/研究中心任务书.md
+!/research/research-center-runner/model_runner.py
+!/research/research-center-runner/registry.json
+!/research/research-center-runner/refresh_market.py
+!/research/research-center-runner/checks/verified-rank-forward-c0ae27eb-45f7-4dd6-b678-1fe478201281.json
+!/research/ashare-fundamental-2026-10-01/replay_adapter.py
+!/research/ashare-fundamental-2026-10-01/replay-sources.json
+!/research/ashare-fundamental-2026-10-01/adapter-checks/manifest.json
+!/research/ashare-fundamental-2026-10-01/adapter-checks/fundamental37-continuous.json
+!/research/ashare-fundamental-2026-10-01/current-stock-evidence.json
+!/research/ashare-fundamental-2026-10-01/research-summary-with-neighbors.json
+!/research/ashare-mainline-2026-10-01/longitudinal-v2/decision.json
+!/research/forward-chain-2026-10-01/real-history-v3/actual-notification-fixtures.json
+
+# Trusted finite search source only; data, fit artifacts and account outputs stay local.
+!/research/nested-technical-v1/
+!/research/nested-technical-v1/search.py
+!/research/nested-technical-v1/README.md
+# 自动跟随模型实际内嵌的冻结 runner 与证据（仅这些小文件随代码发布）
+!/research/follow-timing-2026-10-04/
+!/research/follow-timing-2026-10-04/checks/
+!/research/follow-timing-2026-10-04/checks/index-forward.json
+!/research/research-center-runner/checks/verified-rank-forward-b6cce0d8-167d-4c84-ad84-32f5b6800312.json
+!/research/research-center-runner/follow_context.py
+!/research/research-center-runner/recent_market_fallback.py

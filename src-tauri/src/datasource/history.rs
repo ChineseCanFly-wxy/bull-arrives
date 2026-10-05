@@ -37,6 +37,8 @@ pub struct LocalHistoryResult {
     pub klines: Vec<KLineData>,
     /// 未复权价格，用于模拟成交与现金账本。
     pub raw_klines: Vec<KLineData>,
+    /// 原始日线的每日 ST 状态；缺字段保持 unknown，不用今天的名称倒推。
+    pub st_by_date: Vec<(String, Option<bool>)>,
     pub source: String,
     pub protocol: LocalHistoryProtocol,
     pub start_date: Option<String>,
@@ -116,6 +118,37 @@ pub async fn probe(config: &LocalHistoryConfig) -> Result<LocalHistoryProtocol, 
     Ok(protocol)
 }
 
+/// Read-only date and breadth verification after an updater exits successfully.
+/// This does not certify model factors; model refresh keeps its own stricter checks.
+pub async fn verify_completed_day(config:&LocalHistoryConfig,expected:&str,previous:&str)->Result<(),String>{
+    async fn snapshot(config:&LocalHistoryConfig,date:&str)->Result<Value,String>{
+        let mut url=validate_base_url(&config.base_url)?;url.set_query(None);
+        url.query_pairs_mut().append_pair("cmd","vals").append_pair("t","日k").append_pair("json","1").append_pair("k1","all:").append_pair("k2",&format!("key:{}",normalize_date(date)?));
+        let mut response=client(config)?.get(url).send().await.map_err(|e|format!("更新后读取StockDB失败：{e}"))?.error_for_status().map_err(|e|e.to_string())?;
+        let mut bytes=Vec::new();
+        while let Some(chunk)=response.chunk().await.map_err(|e|e.to_string())?{if bytes.len()+chunk.len()>32*1024*1024{return Err("StockDB日线响应超过32MiB，未确认更新完成".into());}bytes.extend_from_slice(&chunk);}
+        serde_json::from_slice(&bytes).map_err(|e|format!("StockDB日线JSON无效：{e}"))
+    }
+    let (current,baseline)=tokio::try_join!(snapshot(config,expected),snapshot(config,previous))?;
+    let current=completed_codes(&current,&normalize_date(expected)?)?;let baseline=completed_codes(&baseline,&normalize_date(previous)?)?;
+    if baseline.len()<2000||current.len()<2000||current.intersection(&baseline).count()*100<baseline.len()*95{return Err(format!("StockDB更新尚未取得{expected}的完整日线：本期{}只、前期{}只；等待后台重试",current.len(),baseline.len()));}
+    Ok(())
+}
+fn completed_codes(value:&Value,expected:&str)->Result<std::collections::HashSet<String>,String>{
+    let mut codes=std::collections::HashSet::new();
+    for item in value.as_array().ok_or("StockDB更新核验响应不是数组")?{
+        let row=row_object(item).ok_or("StockDB更新核验含无效记录")?;
+        if normalize_date(&string_value(row.get("date"),"date")?)?!=expected{return Err("StockDB更新核验返回其他日期，未确认成功".into());}
+        let code=string_value(row.get("code"),"code")?;let plain=code.rsplit('.').next().unwrap_or(&code);let plain=plain.trim_start_matches("sh").trim_start_matches("sz").trim_start_matches("bj");
+        if (code.starts_with("sh")&&plain.starts_with("00"))||(code.starts_with("sz")&&plain.starts_with("39")){continue;}
+        if plain.len()!=6||!plain.bytes().all(|b|b.is_ascii_digit())||!matches!(&plain[..2],"00"|"30"|"60"|"68"|"83"|"87"|"88"|"92"){continue;}
+        let (open,high,low,close)=(number(row.get("open"),"open")?,number(row.get("high"),"high")?,number(row.get("low"),"low")?,number(row.get("close"),"close")?);
+        if [open,high,low,close].iter().any(|v|!v.is_finite()||*v<=0.)||high<open.max(close)||low>open.min(close)||low>high{return Err("StockDB更新核验价格无效".into());}
+        if !codes.insert(plain.to_string()){return Err("StockDB更新核验有重复代码".into());}
+    }
+    Ok(codes)
+}
+
 /// Fetch raw daily rows plus adjustment factors and return validated, ascending
 /// qfq K-lines. Dates accept `YYYYMMDD` or `YYYY-MM-DD`.
 pub async fn fetch_daily(
@@ -144,6 +177,23 @@ pub async fn fetch_daily(
         request_value(&client, rows_url),
         request_value(&client, factors_url)
     )?;
+    let mut st_by_date = Vec::new();
+    for item in rows.as_array().ok_or("本地日 K 响应不是数组")? {
+        let row = row_object(item).ok_or("本地日 K 包含无效记录")?;
+        let day = normalize_date(&string_value(row.get("date"), "date")?)?;
+        let status = match row.get("is_st") {
+            Some(Value::Bool(v)) => Some(*v),
+            Some(v) if v.as_i64() == Some(0) => Some(false),
+            Some(v) if v.as_i64() == Some(1) => Some(true),
+            _ => None,
+        };
+        st_by_date.push((format!("{}-{}-{}", &day[..4], &day[4..6], &day[6..]), status));
+    }
+    st_by_date.sort_by(|a, b| a.0.cmp(&b.0));
+    // 指定历史截止时，未来因子不得经价格舍入影响过去信号。
+    let mut parsed_factors=parse_factors(factors,&code)?;
+    if let Some(end)=end.as_ref(){parsed_factors.retain(|(date,_)|date<=end);}
+    let factors=Value::Array(parsed_factors.into_iter().map(|(date,cum)|serde_json::json!({"date":date,"cum":cum})).collect());
     let (klines, raw_klines) = parse_rows(rows, factors, &code)?;
     let start_date = klines.first().map(|row| row.date.clone());
     let end_date = klines.last().map(|row| row.date.clone());
@@ -151,6 +201,7 @@ pub async fn fetch_daily(
         sample_count: klines.len(),
         klines,
         raw_klines,
+        st_by_date,
         source: SOURCE.to_string(),
         protocol,
         start_date,
@@ -269,7 +320,7 @@ fn parse_rows(
     factors: Value,
     code: &str,
 ) -> Result<(Vec<KLineData>, Vec<KLineData>), String> {
-    let factors = parse_factors(factors)?;
+    let factors = parse_factors(factors, code)?;
     let latest_factor = factors.last().map(|(_, factor)| *factor).unwrap_or(1.0);
     let decimals = if code.starts_with('1') || code.starts_with('5') {
         3
@@ -282,6 +333,7 @@ fn parse_rows(
     let mut klines = Vec::with_capacity(rows.len());
     let mut raw_klines = Vec::with_capacity(rows.len());
     for item in rows {
+        check_stock_identity(item, code)?;
         let row = row_object(item).ok_or_else(|| "本地日 K 包含无效记录".to_string())?;
         let compact_date = normalize_date(&string_value(row.get("date"), "date")?)?;
         let factor = factors
@@ -364,12 +416,13 @@ fn parse_rows(
     Ok((klines, raw_klines))
 }
 
-fn parse_factors(value: Value) -> Result<Vec<(String, f64)>, String> {
+fn parse_factors(value: Value, code: &str) -> Result<Vec<(String, f64)>, String> {
     let items = value
         .as_array()
         .ok_or_else(|| "本地复权响应不是数组".to_string())?;
     let mut factors = Vec::with_capacity(items.len());
     for item in items {
+        check_stock_identity(item, code)?;
         let (date, row) = match item.as_array() {
             Some(pair) if pair.len() == 2 => {
                 let key = pair[0]
@@ -413,6 +466,23 @@ fn row_object(value: &Value) -> Option<&serde_json::Map<String, Value>> {
     })
 }
 
+fn check_stock_identity(value: &Value, expected: &str) -> Result<(), String> {
+    let check = |returned: String| {
+        if returned == expected { Ok(()) }
+        else { Err(format!("本地历史股票身份{returned}与请求{expected}不一致")) }
+    };
+    if let Some(code) = row_object(value).and_then(|row| row.get("code")) {
+        check(normalize_symbol(&string_value(Some(code), "code")?)?)?;
+    }
+    if let Some(pair) = value.as_array().filter(|pair| pair.len() == 2) {
+        let key = pair[0].as_str().ok_or("本地历史记录键无效")?;
+        for part in key.split(':') {
+            if let Ok(code) = normalize_symbol(part) { check(code)?; }
+        }
+    }
+    Ok(())
+}
+
 fn string_value(value: Option<&Value>, field: &str) -> Result<String, String> {
     match value {
         Some(Value::String(value)) => Ok(value.clone()),
@@ -437,6 +507,15 @@ fn round(value: f64, decimals: i32) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn update_verification_rejects_stale_duplicate_and_invalid_price_rows(){
+        let row=serde_json::json!({"code":"600000","date":"20260930","open":10,"high":11,"low":9,"close":10.5});
+        assert_eq!(super::completed_codes(&serde_json::json!([row.clone()]),"20260930").unwrap().len(),1);
+        assert!(super::completed_codes(&serde_json::json!([row.clone()]),"20260929").is_err());
+        assert!(super::completed_codes(&serde_json::json!([row.clone(),row.clone()]),"20260930").is_err());
+        let mut invalid=row;invalid["close"]=serde_json::json!(20);assert!(super::completed_codes(&serde_json::json!([invalid]),"20260930").is_err());
+    }
+
     use super::*;
     use serde_json::json;
 
@@ -502,6 +581,27 @@ mod tests {
         assert!(parse_rows(bad, json!([]), "600000")
             .unwrap_err()
             .contains("OHLC"));
+    }
+
+    #[test]
+    fn daily_parser_rejects_explicit_stock_identity_conflicts() {
+        let row = rows()[0].clone();
+        assert!(parse_rows(rows(), factors(), "600000").is_ok(), "Legacy rows without explicit identity stay supported");
+        for code in [json!("600000"), json!(600000), json!("sh600000")] {
+            let mut matching = row.clone(); matching["code"] = code;
+            assert!(parse_rows(json!([matching]), json!([]), "600000").is_ok());
+        }
+        let mut conflict = row.clone(); conflict["code"] = json!("600001");
+        assert!(parse_rows(json!([conflict.clone()]), json!([]), "600000").unwrap_err().contains("股票身份"));
+        assert!(parse_rows(json!([["day:600000:20240102", conflict]]), json!([]), "600000").is_err(), "A matching key cannot hide a conflicting code field");
+        let mut matching = row.clone(); matching["code"] = json!("600000");
+        for key in ["day:600001:20240102", "day:sh600001:20240102", "600001:20240102", "600001"] {
+            assert!(parse_rows(json!([[key, matching.clone()]]), json!([]), "600000").unwrap_err().contains("股票身份"), "Conflicting tuple key: {key}");
+        }
+        assert!(parse_rows(json!([["day:600000:20240102", matching]]), json!([]), "600000").is_ok());
+        for factors in [json!([["复权:600001:20240101", {"cum":2.0}]]), json!([{"code":"600001","date":"20240101","cum":2.0}])] {
+            assert!(parse_rows(json!([row.clone()]), factors, "600000").unwrap_err().contains("股票身份"), "Adjustment factors must belong to the requested stock too");
+        }
     }
 
     #[test]

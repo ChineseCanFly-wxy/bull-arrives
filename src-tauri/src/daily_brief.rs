@@ -1,6 +1,6 @@
 //! 本地盘前/盘后简报；只使用已保存的资讯和提醒，不自动调用 AI。
 
-use crate::{datasource::market_policy::MarketRequestPolicy, db::Database};
+use crate::db::Database;
 use chrono::{DateTime, FixedOffset, NaiveDate, TimeZone, Timelike, Utc};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -57,7 +57,7 @@ fn build_brief(db: &Database, now: DateTime<Utc>, stage: &str) -> Result<Option<
     if let Some(saved) = db.daily_brief(&day, stage)? { return Ok(Some(saved)); }
     let (start, end) = brief_window(now, stage)?;
     let news = db.brief_news_between(&start, &end)?;
-    let alerts = if stage == "postclose" { db.brief_alerts_between(&start, &end)? } else { Vec::new() };
+    let alerts = if stage == "postclose" { db.brief_alerts_between(&start, &end)?.into_iter().filter(|item|matches!(item["signal_kind"].as_str(),Some("price"|"risk"))).collect::<Vec<_>>() } else { Vec::new() };
     if news.is_empty() && alerts.is_empty() { return Ok(None); }
     let major = news.iter().filter(|item| item["severity"] == "high").take(5).map(compact_news).collect::<Vec<_>>();
     let watchlist = news.iter().filter(|item| item["severity"] != "high" && item["watchlist_match"] == true)
@@ -79,8 +79,7 @@ fn build_brief(db: &Database, now: DateTime<Utc>, stage: &str) -> Result<Option<
 
 pub fn ensure_due_brief(db: &Database, now: DateTime<Utc>) -> Result<(), String> {
     let local = now.with_timezone(&china());
-    let policy = MarketRequestPolicy::from_quote_schedule_json(db.get_setting("quote_schedule").map_err(|e| e.to_string())?.as_deref())?;
-    if !policy.is_trading_day_at(now) { return Ok(()); }
+    if !crate::datasource::trading_calendar::is_trading_day_at(now, local.date_naive())? { return Ok(()); }
     let minute = local.hour() * 60 + local.minute();
     let stage = if minute >= POSTCLOSE_MINUTE { "postclose" }
         else if minute >= PREOPEN_MINUTE { "preopen" }
@@ -114,7 +113,15 @@ mod tests {
             .execute("UPDATE news_archive SET received_at=?1 WHERE id='news:major'", [recorded.to_rfc3339()]).unwrap();
         let alert = json!({"id":"alert:1","title":"甲公司价格提醒","body":"价格触发","signal_kind":"price","received_at":recorded.timestamp_millis()});
         db.archive_brief_alert(&alert).unwrap();
-        let brief = build_brief(&db, now, "postclose").unwrap().unwrap();
+        db.archive_brief_alert(&json!({"id":"research:1","title":"模型观察","body":"研究信号","signal_kind":"research","received_at":recorded.timestamp_millis()})).unwrap();
+        // Even a stale client/database writing the removed keys must not block briefs.
+        db.set_setting("quote_schedule_enabled", "1").unwrap();
+        db.set_setting("quote_schedule", "invalid legacy JSON").unwrap();
+        let holiday = Utc.with_ymd_and_hms(2026, 10, 1, 7, 16, 0).single().unwrap();
+        ensure_due_brief(&db, holiday).unwrap();
+        assert!(db.daily_briefs().unwrap().is_empty());
+        ensure_due_brief(&db, now).unwrap();
+        let brief = db.daily_brief("2026-09-28", "postclose").unwrap().unwrap();
         assert_eq!(brief["news_count"], 1);
         assert_eq!(brief["alert_count"], 1);
         assert_eq!(brief["major"][0]["title"], "甲公司收到立案告知书");
