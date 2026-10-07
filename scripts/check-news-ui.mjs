@@ -26,9 +26,12 @@ const mock = `
 const handlers = new Map();
 const rows = ${JSON.stringify([entry, directEntry])};
 const briefs = [{day:'2026-09-27',stage:'postclose',generated_at:'2026-09-27T07:17:00Z',window_start:'2026-09-27T01:10:00Z',window_end:'2026-09-27T07:17:00Z',news_count:1,alert_count:1,major:[],watchlist:[{signal_id:'news:manual',title:'公司利润预亏',excerpt:'原文',source:'测试',tag:'业绩',received_at:Date.now()}],other:[],alerts:[{title:'价格提醒',body:'价格触发',received_at:Date.now(),kind:'price'}]}];
+let operations={enabled:true,version:0,entries:[{id:1,at:Date.now(),level:"正常",source:"自动模型",message:"开始检查原模型；复用已有账户",repeats:1},{id:2,at:Date.now(),level:"注意",source:"数据更新",message:"网络暂不可用，等待后台重试 <img src=x onerror=alert(1)>",repeats:2}]};
 export const calls = [];
 export async function invoke(command, args) {
   calls.push({command, args});
+  if(command === 'get_automatic_operations_log') return structuredClone(operations);
+  if(command === 'clear_automatic_operations_log') {operations.entries=[];operations.version++;return structuredClone(operations);}
   if(command === 'get_notification_history') return {version:0,entries:rows};
   if(command === 'get_news_archive') return rows;
   if(command === 'get_daily_briefs') return briefs;
@@ -37,7 +40,8 @@ export async function invoke(command, args) {
   if(command === 'get_sector_mainline')return ${JSON.stringify(frozenSnapshot)};
   if(command === 'get_mainline_watchlist')return [];
   if(command === 'analyze_archived_news') { const found=rows.find(row=>row.signal_id===args.signalId); found.agent_summary=true; found.body=${JSON.stringify(body)}; emit('news-analysis-updated',found); return found; }
-  if(command === 'set_setting' || command === 'dismiss_desktop_toast' || command === 'view_desktop_toast') return;
+  if(command === 'set_setting') {if(args.key==='automatic_operations_log_enabled'){operations.enabled=args.value==='1';operations.version++;}return;}
+  if(command === 'dismiss_desktop_toast' || command === 'view_desktop_toast') return;
   if(command === 'desktop_toast_ready') { setTimeout(() => emit('desktop-toast-show', {id:'long-toast',title:'很长的资讯标题'.repeat(20),body:${JSON.stringify(body.repeat(12))}}),0); return; }
   throw Error('Unexpected IPC: '+command);
 }
@@ -45,7 +49,7 @@ export async function listen(name, callback) { handlers.set(name, callback); ret
 export async function emit(name, payload) { handlers.get(name)?.({payload}); }
 export async function enable() {} export async function disable() {} export async function isEnabled() { return false; }
 export async function openUrl(url){calls.push({command:'openUrl',url});}
-window.__newsMock={calls,emit};
+window.__newsMock={calls,emit,addOperation(message){if(operations.enabled){operations.version++;operations.entries.unshift({id:operations.version+10,at:Date.now(),source:"模拟交易",level:"正常",message,repeats:1});}}};
 `;
 const server = await createServer({
   configFile: false, root, cacheDir:path.join(profile,'vite-cache'),
@@ -94,6 +98,27 @@ try {
   await evaluate(`document.querySelector('.alert-history-button').click()`);
   await waitFor(`!!document.querySelector('.news-intro') && !!document.querySelector('.notice-list li')`);
   assert.equal(await evaluate(`window.__newsMock.calls.some(c=>c.command==='get_sector_mainline'||c.command==='analyze_mainline')`),false,'Reading alerts does not scan or call Claude');
+  await evaluate(`Array.from(document.querySelectorAll('.news-tabs button')).find(button=>button.innerText==='自动操作').click()`);
+  await waitFor(`document.querySelectorAll('.operations-list li').length===2`);
+  assert.equal(await evaluate(`document.querySelectorAll('.operations-list img').length`),0,'Automatic operation text stays escaped');
+  assert.equal(await evaluate(`!!document.querySelector('.news-intro')`),false,'Log page has only its own switch');
+  await evaluate(`document.querySelector('.operations-toggle [role="switch"]').click()`);
+  await waitFor(`document.querySelector('.operations-toolbar')?.innerText.includes('记录已关闭')`);
+  assert.deepEqual(await evaluate(`window.__newsMock.calls.filter(c=>c.command==='set_setting').map(c=>c.args)`),[{key:'automatic_operations_log_enabled',value:'0'}],'Log switch never changes notification or trading settings');
+  await evaluate(`window.__newsMock.addOperation('记录关闭期间不补记')`);
+  await evaluate(`document.querySelector('.operations-toggle [role="switch"]').click()`);
+  await waitFor(`document.querySelector('.operations-toolbar')?.innerText.includes('记录已开启')`);
+  assert.equal(await evaluate(`document.querySelectorAll('.operations-list li').length`),2,'Re-enabling never backfills disabled operations');
+  await evaluate(`window.__newsMock.addOperation('新买入结果会出现在自动操作记录')`);
+  await waitFor(`document.querySelectorAll('.operations-list li').length===3`);
+  await evaluate(`document.querySelector('.operations-toolbar button').click()`);
+  await waitFor(`!document.querySelector('.operations-list')`);
+  assert.equal(await evaluate(`document.querySelector('.operations-toolbar')?.innerText.includes('记录已开启')`),true,'Clearing log preserves recording switch');
+  await evaluate(`Array.from(document.querySelectorAll('.news-tabs button')).find(button=>button.innerText==='市场资讯').click()`);
+  const previousLogReads=await evaluate(`window.__newsMock.calls.filter(c=>c.command==='get_automatic_operations_log').length`);
+  await new Promise(resolve=>setTimeout(resolve,2200));
+  assert.equal(await evaluate(`window.__newsMock.calls.filter(c=>c.command==='get_automatic_operations_log').length`),previousLogReads,'Leaving log page stops polling');
+
   await evaluate(`Array.from(document.querySelectorAll('.news-tabs button')).find(button=>button.innerText==='研究归档').click()`);
   await waitFor(`document.querySelector('.notice-list')?.innerText.includes('历史主线观察')`);
   assert.match(await evaluate(`document.querySelector('.notice-list').innerText`),/通知快照/);
@@ -170,7 +195,7 @@ try {
   assert.ok(layout.x>=0&&layout.y>=0&&layout.right<=layout.width&&layout.bottom<=layout.height,`View button cropped: ${JSON.stringify(layout)}`);
   await evaluate(`document.querySelector('.toast section button').click()`);
   await waitFor(`window.__newsMock.calls.some(c=>c.command==='view_desktop_toast'&&c.args.id==='long-toast')`);
-  console.log('News UI check passed: persisted research archive/restart navigation, exact sector+fingerprint frozen snapshot opening with no AI; related original-news links, ordinary news search/empty state/reset without AI-only filter, no automatic AI or hybrid controls, daily brief, one manual interpretation, escaped source and long-toast view button. IPC mocked; native Windows notification/network delivery not tested.');
+  console.log('News UI check passed: independent automatic-log switch, clear, disabled-period exclusion, live refresh and polling cleanup; persisted research archive/restart navigation, exact sector+fingerprint frozen snapshot opening with no AI; related original-news links, ordinary news search/empty state/reset without AI-only filter, no automatic AI or hybrid controls, daily brief, one manual interpretation, escaped source and long-toast view button. IPC mocked; native Windows notification/network delivery not tested.');
 } finally {
   ws?.close();
   if(browser?.exitCode===null) { const exited=new Promise(resolve=>browser.once('exit',resolve)); browser.kill(); await Promise.race([exited,new Promise(resolve=>setTimeout(resolve,2000))]); }

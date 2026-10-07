@@ -32,12 +32,14 @@ pub struct NotificationHistorySnapshot {
 }
 
 struct HistoryInner {
+    started_at: i64,
     version: u64,
     entries: VecDeque<Value>,
 }
 impl Default for HistoryInner {
     fn default() -> Self {
         Self {
+            started_at: chrono::Utc::now().timestamp_millis(),
             version: 0,
             entries: VecDeque::new(),
         }
@@ -245,7 +247,28 @@ fn delivery_policy(payload: &Value, research_enabled: bool, desktop_always: bool
     if payload["signal_kind"] == "research" && !research_enabled { None } else { Some(model || desktop_always) }
 }
 
+fn news_after_start(payload: &Value, started_at: i64, now: i64) -> bool {
+    payload["published_at"].as_str()
+        .and_then(|value|chrono::DateTime::parse_from_rfc3339(value).ok())
+        .is_some_and(|published|published.timestamp_millis()>started_at && published.timestamp_millis()<=now)
+}
+fn current_news(app: &tauri::AppHandle, payload: &Value) -> bool {
+    let history=app.state::<NotificationHistory>();
+    let started_at=history.0.lock().unwrap_or_else(|e|e.into_inner()).started_at;
+    news_after_start(payload,started_at,chrono::Utc::now().timestamp_millis())
+}
 pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
+    // 关机期间的积压和时间未核实的原文只归档，不进入本次提醒或通知队列。
+    if payload["signal_kind"]=="news" && !current_news(app,&payload) {
+        archive_news_payload(app,&payload); return;
+    }
+    if payload["signal_kind"]=="research" {
+        let title=payload["title"].as_str().unwrap_or("研究状态更新");
+        let body=payload["body"].as_str().unwrap_or("");
+        if payload["model_snapshot"]["follow_account_id"].as_i64().is_some() {
+            log::info!(target: "automation::trading", "{title}：{body}");
+        } else { log::info!(target: "automation::research", "{title}：{body}"); }
+    }
     // Muting research delivery preserves history and never pauses model computation/trading.
     let research_enabled = app.try_state::<std::sync::Arc<crate::db::Database>>()
         .map(|db| db.research_notifications_enabled().unwrap_or(false)).unwrap_or(true);
@@ -305,7 +328,7 @@ pub fn news_analysis_updated(app: &tauri::AppHandle, payload: &Value, push: bool
         }
     }
     let _ = app.emit("news-analysis-updated", &updated);
-    if push {
+    if push && current_news(app,&updated) {
         let (id, history_version) = delivery_target.unwrap_or_else(|| (
             updated["signal_id"].as_str().unwrap_or("news-analysis").to_string(), u64::MAX,
         ));
@@ -383,6 +406,20 @@ pub fn clear_notification_history(
 mod tests {
     use super::*;
 
+    #[test]
+    fn news_notification_boundary_uses_publication_not_receipt_and_resets_each_start() {
+        let start=chrono::DateTime::parse_from_rfc3339("2026-10-07T01:00:00Z").unwrap().timestamp_millis();
+        let now=start+120_000;
+        let payload=|published: &str|serde_json::json!({"published_at":published,"received_at":now});
+        assert!(!news_after_start(&payload("2026-10-07T08:59:59+08:00"),start,now));
+        assert!(!news_after_start(&payload("2026-10-07T09:00:00+08:00"),start,now));
+        let fresh=payload("2026-10-07T09:00:01+08:00");
+        assert!(news_after_start(&fresh,start,now));
+        assert!(!news_after_start(&fresh,now,now+120_000),"重启不补发旧资讯");
+        assert!(!news_after_start(&payload("2026-10-07T09:03:00+08:00"),start,now));
+        assert!(!news_after_start(&payload("not-a-time"),start,now));
+        assert!(!news_after_start(&serde_json::json!({"published_date":"2026-10-07","received_at":now}),start,now));
+    }
     #[test]
     fn model_popups_only_apply_to_model_and_intraday_observations() {
         assert!(is_model_notice(&serde_json::json!({"signal_kind":"research","model_snapshot":{}})));

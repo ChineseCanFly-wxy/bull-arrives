@@ -1684,6 +1684,7 @@ async fn automatic_model(db: &Database, model: &str, expected: &AutomaticInput) 
     binding.initial_cash_cny = db.simulation_auto_preset()?.initial_cash_cny;
     if !automatic_candidates(&binding)? { return Ok(json!({"model_id":model,"state":"no_candidates","as_of":expected.as_of,"source_run_id":source_id,"source_sha256":binding.source_sha256,"message":"新资金预设不足以按模型买入一手，等待合格候选"})); }
     db.create_automatic_follow_account(&mut binding)?;
+    log::info!(target: "automation::model", "模型 {model} 已建立专用账户 #{}，按原模型入场时段等待新盘口",binding.account_id);
     db.enable_model_observation(source_id, true)?;
     Ok(json!({"model_id":model,"state":"created","account_id":binding.account_id,"as_of":binding.as_of,
         "source_run_id":source_id,"source_sha256":binding.source_sha256,"message":"已按本模型独立推荐配置新建账户，等待原入场时段和新盘口"}))
@@ -1707,8 +1708,11 @@ async fn automatic_worker(db: &Database, input: &AutomaticInput, started: DateTi
         db.change_follow_automatic_record(|record| {
             if record.running_owner != Some(std::process::id()) || record.started_at.as_deref() != Some(started.to_rfc3339().as_str()) { return Err("自动检查任务所有者已改变，不提交旧任务结果".into()); }
             record.models.retain(|previous| previous["model_id"] != model);
-            record.models.push(row); Ok(())
+            record.models.push(row.clone()); Ok(())
         })?;
+        if row["state"]=="error" {
+            log::warn!(target: "automation::model", "模型 {model}：{}",row["message"].as_str().unwrap_or("检查失败"));
+        } else { log::info!(target: "automation::model", "模型 {model}：{}",row["message"].as_str().unwrap_or("检查完成")); }
         if deferred { break; }
     }
     if errors.is_empty() { Ok(!deferred) } else { Err(errors.join("；")) }
@@ -1756,17 +1760,23 @@ fn revalidate_automatic_completion(db: &Database, input: &AutomaticInput, now: D
 pub async fn automatic_tick(db: Arc<Database>) {
     let now = Utc::now();
     let input = match automatic_input(&db, now) { Ok(input) if input.state == "due" => input, _ => return };
-    if let Err(error) = revalidate_automatic_completion(&db, &input, now) { log::warn!("[model-auto] {error}"); return; }
+    if let Err(error) = revalidate_automatic_completion(&db, &input, now) { log::warn!(target: "automation::model", "自动模型检查失败：{error}"); return; }
     let Ok(permit) = SETUP_GATE.get_or_init(|| tokio::sync::Semaphore::new(1)).try_acquire() else { return; };
     match claim_automatic(&db, &input, now) {
         Ok(true) => {}, Ok(false) => return,
-        Err(error) => { log::warn!("[model-auto] {error}"); return; },
+        Err(error) => { log::warn!(target: "automation::model", "自动模型检查失败：{error}"); return; },
     }
+    log::info!(target: "automation::model", "开始自动检查原模型，行情截止日 {}",input.as_of);
     tauri::async_runtime::spawn(async move {
         let _permit = permit;
         let result = automatic_worker(&db, &input, now).await;
+        match &result {
+            Ok(true)=>log::info!(target: "automation::model", "本轮模型检查完成；复用原账户，仅为合格候选建立新账户"),
+            Ok(false)=>log::info!(target: "automation::model", "本轮模型检查暂停或等待其他研究任务，已保留进度"),
+            Err(error)=>log::warn!(target: "automation::model", "本轮模型检查失败，保留账户并等待后台重试：{error}"),
+        }
         let persisted = finish_automatic(&db, &input, now, Utc::now(), result);
-        if let Err(error) = persisted { log::warn!("[model-auto] 无法保存任务完成水位：{error}"); }
+        if let Err(error) = persisted { log::error!(target: "automation::model", "无法保存任务完成水位：{error}"); }
     });
 }
 
@@ -2078,6 +2088,11 @@ pub async fn tick_all(db: &Database, manager: &DataSourceManager, app: &tauri::A
             binding.state = "data_unavailable".into();
             binding.message = error;
             let _ = db.save_follow_binding(&binding);
+        }
+        if binding.state != listed.state || binding.message != listed.message {
+            if binding.state=="data_unavailable" {
+                log::warn!(target: "automation::trading", "账户 #{}：{}",binding.account_id,binding.message);
+            } else { log::info!(target: "automation::trading", "账户 #{}：{}",binding.account_id,binding.message); }
         }
         // Publish before processing another model so the first plan is immediately followable.
         if let Ok(notices) = db.follow_notices() {

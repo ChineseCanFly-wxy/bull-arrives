@@ -219,6 +219,7 @@ pub fn get_settings(db: State<'_, Arc<Database>>) -> Result<HashMap<String, Stri
 
 #[tauri::command]
 pub fn set_setting(
+    operations: State<'_, Arc<crate::operations_log::OperationsLog>>,
     db: State<'_, Arc<Database>>,
     stockdb: State<'_, Arc<StockDbManager>>,
     key: String,
@@ -244,7 +245,8 @@ pub fn set_setting(
     if (key == "ai_enabled"
         || key == "ai_monitor_enabled"
         || key == "local_history_enabled"
-        || key == "news_notifications_enabled")
+        || key == "news_notifications_enabled"
+        || key == crate::operations_log::SETTING)
         && value != "0"
         && value != "1"
     {
@@ -315,6 +317,9 @@ pub fn set_setting(
         return stockdb.set_service_url(&value);
     }
     db.set_setting(&key, &value).map_err(|e| e.to_string())?;
+    if key == crate::operations_log::SETTING {
+        operations.set_enabled(value=="1");
+    }
     // 每次重新开启先建立当前资讯水位，避免停用期间积压内容集中弹出。
     if key == "news_notifications_enabled" && value == "1" {
         db.set_setting("news_flash_initialized", "0")

@@ -18,6 +18,7 @@ pub mod navigation;
 pub mod daily_brief;
 pub mod notification_identity;
 pub mod notifications;
+mod operations_log;
 pub mod quant;
 pub mod simulation;
 pub mod simulation_live;
@@ -349,7 +350,10 @@ pub fn run() {
             std::fs::create_dir_all(&app_dir).expect("Failed to create app data directory");
             let log_file =
                 File::create(app_dir.join("bull-arrives.log")).expect("Failed to create log file");
+            let operations=Arc::new(operations_log::OperationsLog::default());
+            app.manage(operations.clone());
             CombinedLogger::init(vec![
+                Box::new(operations_log::OperationsLogger(operations.clone())),
                 TermLogger::new(
                     LevelFilter::Info,
                     Config::default(),
@@ -370,6 +374,7 @@ pub fn run() {
             // `state not managed for field \`db\``，前端初始化随之失败、界面停在空白。
             // 这里的初始化最多几百毫秒，但慢盘 / 杀软扫描下足以让启动必现失败。
             app.manage(db.clone());
+            operations.set_enabled(db.get_setting(operations_log::SETTING).ok().flatten().as_deref()!=Some("0"));
             let interactive_root = crate::agent::long_path(&app_dir).join("agent-interactive");
             app.manage(crate::agent::interactive::InteractiveRoot(interactive_root));
             log::info!("Database opened successfully");
@@ -454,7 +459,7 @@ pub fn run() {
                 timer.tick().await;
                 match model_conditions::tick(&condition_db,&condition_manager,chrono::Utc::now()).await {
                     Ok(notices)=>for notice in notices{notifications::publish(&condition_app,notice);},
-                    Err(error)=>log::warn!("[model condition] {error}"),
+                    Err(error)=>log::warn!(target: "automation::research", "条件检查失败：{error}"),
                 }
             }});
 
@@ -1112,6 +1117,8 @@ pub fn run() {
             commands::watchlist::move_watch_down,
             commands::watchlist::search_stocks,
             notifications::get_notification_history,
+            operations_log::get_automatic_operations_log,
+            operations_log::clear_automatic_operations_log,
             notifications::clear_notification_history,
             notifications::test_notification,
             news::analyze_archived_news,

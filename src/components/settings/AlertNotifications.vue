@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { NButton, NModal, NPopconfirm, useMessage } from 'naive-ui';
+import { NButton, NModal, NPopconfirm, NSwitch, useMessage } from 'naive-ui';
 import { applyHistoryWatermark, mergeHistoryEntries } from '@/utils/notificationHistory';
 import { useSettingsStore } from '@/stores/settings';
 import MainlineResearch from '@/components/sector/MainlineResearch.vue';
@@ -23,6 +23,18 @@ const message = useMessage();
 const entries = ref<AlertNotice[]>([]); const version = ref(0); const showHistory = ref(false); const clearing = ref(false);
 const settings=useSettingsStore();const archive=ref<AlertNotice[]>([]);const category=ref('news');const keyword=ref('');const newsBusy=ref(false);
 const briefs=ref<DailyBrief[]>([]);
+interface OperationEntry { id:number; at:number; level:string; source:string; message:string; repeats:number }
+interface OperationSnapshot { enabled:boolean; version:number; entries:OperationEntry[] }
+const operations=ref<OperationSnapshot>({enabled:settings.automaticOperationsLogEnabled,version:0,entries:[]});
+const operationsBusy=ref(false);const operationsToggleBusy=ref(false);const operationsError=ref('');
+const shownOperations=computed(()=>operations.value.entries.filter(row=>!keyword.value||row.source.includes(keyword.value)||row.message.includes(keyword.value)));
+let operationsTimer:ReturnType<typeof setInterval>|undefined;
+function applyOperations(snapshot:OperationSnapshot){if(!disposed&&snapshot.version>=operations.value.version)operations.value=snapshot;}
+async function refreshOperations(){if(operationsBusy.value)return;operationsBusy.value=true;try{applyOperations(await invoke<OperationSnapshot>('get_automatic_operations_log'));operationsError.value='';}catch(e){if(!disposed)operationsError.value=`自动操作记录读取失败：${e}`;}finally{operationsBusy.value=false;}}
+async function toggleOperations(enabled:boolean){if(operationsToggleBusy.value)return;operationsToggleBusy.value=true;try{if(!await settings.setSetting('automatic_operations_log_enabled',enabled?'1':'0'))message.error(settings.error||'记录开关保存失败');await refreshOperations();}finally{operationsToggleBusy.value=false;}}
+async function clearOperations(){try{applyOperations(await invoke<OperationSnapshot>('clear_automatic_operations_log'));message.success('自动操作记录已清空');}catch(e){message.error(`清空自动操作记录失败：${e}`);}}
+function refreshCurrent(){if(category.value==='operations')void refreshOperations();else{void refreshNews();void refreshBriefs();void refreshResearch();}}
+watch([showHistory,category],([open,tab])=>{if(operationsTimer)clearInterval(operationsTimer);operationsTimer=undefined;if(open&&tab==='operations'){void refreshOperations();operationsTimer=setInterval(()=>void refreshOperations(),2000);}});
 const researchArchive=ref<AlertNotice[]>([]);const mainlineTarget=ref<MainlineTarget|null>(null);const showResearch=ref(false);
 const conditionEventKey=ref<string|null>(null);const showCondition=ref(false);
 function conditionEvents(entry:AlertNotice){return (entry.condition_events?.length?entry.condition_events:entry.condition_event?[entry.condition_event]:[]).filter(e=>e.schema==='model-condition-event-v1'&&typeof e.event_key==='string');}
@@ -77,17 +89,24 @@ onMounted(async () => {
   const snapshot=await invoke<Snapshot>('get_notification_history'); if(!disposed && snapshot.version>=version.value){ watermark(snapshot.version); merge(snapshot.entries.map(normalizeNotice)); }
  } catch(e){ if(!disposed)message.error(`提醒记录加载失败：${String(e)}`); }
 });
-onUnmounted(()=>{disposed=true;unlisteners.forEach(fn=>fn());});
+onUnmounted(()=>{disposed=true;if(operationsTimer)clearInterval(operationsTimer);unlisteners.forEach(fn=>fn());});
 </script>
 <template>
 <NButton class="alert-history-button" size="small" @click="showHistory=true">资讯与提醒 · {{ entries.length }}</NButton>
 <NModal v-model:show="showHistory" preset="card" title="资讯与提醒" style="width:760px;max-width:94vw">
- <div class="news-intro"><div><b>全市场重要事件</b><p>资讯保留最近 500 条，自选与已核查主线分别标记；首次开启只建立水位，后续有新事件才通知。</p><p>资讯直接通知原文，Claude Code 解读仅在手动点击后运行。模型、主线提醒归档14日，可回到通知当时证据。</p></div><NButton size="small" :loading="newsBusy" @click="toggleNews">{{settings.newsNotificationsEnabled?'暂停资讯采集':'开启资讯采集'}}</NButton></div>
- <div class="news-tabs"><button v-for="tab in [{id:'news',label:'市场资讯'},{id:'research',label:'研究归档'},{id:'briefs',label:'每日简报'},{id:'alerts',label:'本次提醒'}]" :key="tab.id" :class="{active:category===tab.id}" @click="category=tab.id">{{tab.label}}</button><input v-if="category!=='briefs'" v-model="keyword" placeholder="搜索标题或摘要"/><NButton size="small" @click="refreshNews();refreshBriefs();refreshResearch()">刷新</NButton></div>
+ <div v-if="category!=='operations'" class="news-intro"><div><b>全市场重要事件</b><p>资讯保留最近 500 条，自选与已核查主线分别标记；资讯仅通知本次启动后发布的内容；启动前和发布时间未核实的内容只保留记录。</p><p>资讯直接通知原文，Claude Code 解读仅在手动点击后运行。模型、主线提醒归档14日，可回到通知当时证据。</p></div><NButton size="small" :loading="newsBusy" @click="toggleNews">{{settings.newsNotificationsEnabled?'暂停资讯采集':'开启资讯采集'}}</NButton></div>
+ <div class="news-tabs"><button v-for="tab in [{id:'news',label:'市场资讯'},{id:'research',label:'研究归档'},{id:'briefs',label:'每日简报'},{id:'alerts',label:'本次提醒'},{id:'operations',label:'自动操作'}]" :key="tab.id" :class="{active:category===tab.id}" @click="category=tab.id">{{tab.label}}</button><input v-if="category!=='briefs'" v-model="keyword" :placeholder="category==='operations'?'搜索操作或来源':'搜索标题或摘要'"/><NButton size="small" @click="refreshCurrent">刷新</NButton></div>
  <p v-if="category==='research'" class="notice-hint">模型与主线提醒按通知时实际快照留存14日，重启仍可读。模型账户可以在研究中心查看完整账本；这里不自动运行账户或重算评分。形态与模型记录均是研究观察，未获生产准入；清空本次提醒不会删除此归档。</p>
  <template v-if="category==='alerts'">
  <div class="history-head"><p class="notice-hint">保留最近 50 条。Windows 已受理不代表横幅必然可见。</p><NPopconfirm positive-text="清空" negative-text="取消" @positive-click="clearHistory"><template #trigger><NButton size="small" type="error" ghost :disabled="!entries.length||clearing" :loading="clearing">清空记录</NButton></template>仅清除提醒历史，不会删除逐票规则、冷却或每日触发标记。确定继续？</NPopconfirm></div>
  </template>
+ <section v-if="category==='operations'" class="operations-panel">
+  <div class="operations-heading"><div><b>自动操作记录</b><p>只记录本次运行，最多 200 条；关闭只停止新增记录，自动任务和买卖通知照常运行。</p></div><label class="operations-toggle"><span>记录自动操作</span><NSwitch :value="operations.enabled" :disabled="operationsToggleBusy" :loading="operationsToggleBusy" aria-label="记录自动操作" @update:value="toggleOperations" /></label></div>
+  <div class="operations-toolbar"><span>{{operations.enabled?'记录已开启':'记录已关闭'}} · {{operations.entries.length}} 条 · 页面打开时自动刷新</span><NButton size="small" :disabled="!operations.entries.length" @click="clearOperations">清空记录</NButton></div>
+  <p v-if="operationsError" class="operations-error" role="alert">{{operationsError}}</p>
+  <ol v-if="shownOperations.length" class="operations-list" aria-label="自动操作记录列表"><li v-for="row in shownOperations" :key="row.id" :data-operation-id="row.id"><header><time>{{new Date(row.at).toLocaleString('zh-CN',{hour12:false})}}</time><span class="operation-source">{{row.source}}</span><span class="operation-level" :data-level="row.level">{{row.level}}</span><small v-if="row.repeats>1">重复 {{row.repeats}} 次</small></header><p>{{row.message}}</p></li></ol>
+  <div v-else class="empty"><b>{{keyword?'没有匹配的自动操作':operations.enabled?'等待下一次自动操作':'自动操作记录已关闭'}}</b><p>数据更新与重试、模型检查与建账、模拟买卖、主线扫描和自动研究会在这里显示。连续相同内容合并；记录不会弹出系统通知，也不会补记关闭期间的操作。</p></div>
+ </section>
  <section v-if="category==='briefs'" class="brief-list">
   <p class="brief-caveat">交易日盘前 09:10、盘后 15:15 后，从本机已保存的记录生成。关闭资讯采集时不会纳入新资讯；离线时段无法补齐。简报不会自动调用 AI。</p>
   <article v-for="brief in briefs" :key="`${brief.day}-${brief.stage}`" class="brief-card">
@@ -101,7 +120,7 @@ onUnmounted(()=>{disposed=true;unlisteners.forEach(fn=>fn());});
   </article>
   <div v-if="!briefs.length" class="empty"><b>还没有每日简报</b><p>交易日运行到盘前或盘后时段后，会根据本机已有的资讯与价格/风险提醒生成；没有记录时不会创建空简报。</p></div>
  </section>
- <template v-else>
+ <template v-else-if="category!=='operations'">
   <ol v-if="shown.length" class="notice-list"><li v-for="entry in shown" :key="entry.id" :data-notice-id="entry.id" :class="{selected:entry.id===selectedId}"><span v-if="entry.signal_tag" class="signal-tag" :data-kind="entry.signal_kind">{{entry.signal_tag}}</span><strong>{{entry.title}}</strong><time>{{entry.received_at?new Date(entry.received_at).toLocaleString():'接收时间未核实'}}</time><p>{{entry.body}}</p><small v-if="entry.news_source">{{entry.news_source}} · {{entry.agent_summary?'已保存 AI 解读':'原文通知'}} · 发布时间 {{entry.published_at||'未核实'}} · 接收时间 {{entry.source_received_at||new Date(entry.received_at).toLocaleString()}}</small><div class="notice-mainlines"><button v-if="followSnapshot(entry)" class="notice-follow-open" type="button" @click="openFollow(entry)">查看跟随账户 #{{entry.model_snapshot?.follow_account_id}} · 操作单 #{{entry.model_snapshot?.order_id}}</button><button v-for="target in mainlines(entry)" :key="`${target.kind}-${target.sector_code}-${target.fingerprint}`" type="button" @click="openMainline(target)">查看 {{target.sector_name}} · {{target.as_of||'日期未核实'}} {{target.fingerprint?'通知快照':'当前观察'}} <small v-if="target.match_basis">关联依据 {{target.match_basis}}</small></button><button v-for="event in conditionEvents(entry)" :key="event.event_key" class="notice-condition-open" type="button" @click="openCondition(event.event_key)">查看 {{event.model_name}} 触发条件证据</button><button v-if="intradaySnapshot(entry)" class="notice-intraday-open" type="button" @click="openIntraday(entry)">查看分钟形态与仓位研究 · {{entry.intraday_snapshot?.symbol}}</button><button v-if="modelSnapshot(entry)" class="notice-model-open" type="button" @click="openModel(entry)">查看模型账户 #{{entry.model_snapshot?.run_id}} · {{entry.model_snapshot?.as_of}} 通知快照</button></div><button v-if="entry.signal_kind==='news'&&!entry.agent_summary" type="button" class="manual-ai-btn" :disabled="!!aiBusyId" @click="analyzeNews(entry)">{{aiBusyId===entry.signal_id?'AI 解读中…':'手动 AI 解读'}}</button><details v-if="entry.original_title||entry.original_body"><summary>查看采集原文</summary><b>{{entry.original_title}}</b><p>{{entry.original_body||'来源未提供正文'}}</p></details><small v-if="entry.delivery&&category==='alerts'">系统：{{entry.delivery.native==='accepted'?'已受理':entry.delivery.native==='failed'?'失败':entry.delivery.native==='not-requested'?'仅记录':'等待中'}} · 桌面：{{entry.delivery.desktop==='queued'?'已排队':entry.delivery.desktop==='failed'?'失败':entry.delivery.desktop==='not-requested'?'未启用':'等待中'}}</small></li></ol>
   <div v-else class="empty"><b>暂时没有匹配的内容</b><p>开启资讯采集后，全天命中重要事件规则的全市场快讯和公告会进入这里；无需添加自选股。首次开启不会补推历史内容。</p></div>
  </template>
@@ -113,6 +132,8 @@ onUnmounted(()=>{disposed=true;unlisteners.forEach(fn=>fn());});
 <ModelConditionEvidence :show="showCondition" :event-key="conditionEventKey" @update:show="showCondition=$event" />
 </template>
 <style scoped>
+.operations-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin:16px 0}.operations-heading b{font-size:15px}.operations-heading p{font-size:13px;line-height:1.7;color:var(--color-text-secondary);max-width:470px;margin:6px 0}.operations-toggle{display:flex;align-items:center;gap:10px;font-size:13px;white-space:nowrap}.operations-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px;color:var(--color-text-secondary)}.operations-error{color:var(--color-error);font-size:13px}.operations-list{list-style:none;margin:12px 0 0;padding:0;max-height:52vh;overflow:auto}.operations-list li{padding:12px;border:1px solid var(--color-border-0);border-radius:6px;margin-bottom:8px;background:var(--color-surface-1)}.operations-list header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:var(--color-text-secondary)}.operations-list time{font-variant-numeric:tabular-nums}.operation-source{color:var(--color-accent);font-weight:600}.operation-level[data-level="失败"]{color:var(--color-error)}.operation-level[data-level="注意"]{color:var(--color-warning)}.operations-list p{font-size:14px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0;color:var(--color-text-primary)}
+
 .notice-model-snapshot{line-height:1.7;font-size:13px}.notice-model-snapshot article{padding:10px;margin-top:8px;border:1px solid var(--color-border-0);border-radius:6px}.notice-model-snapshot pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto;font-size:var(--text-xs);font-family:var(--font-sans)}
 .notice-mainlines{display:flex;gap:6px;flex-wrap:wrap}.notice-mainlines button{font:inherit;font-size:12px;border:1px solid var(--color-border-0);background:var(--color-surface-2);color:var(--color-accent);border-radius:6px;padding:6px 9px;cursor:pointer}.notice-mainlines small{display:block;margin-top:3px}
 .alert-history-button{position:fixed;right:16px;bottom:38px;z-index:20}.history-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.notice-hint{color:var(--color-text-secondary);font-size:12px}.notice-list{list-style:none;padding:0;max-height:55vh;overflow:auto}.notice-list li{padding:12px 0;border-bottom:1px solid var(--color-border)}.notice-list time{float:right;color:var(--color-text-secondary);font-size:12px}.notice-list p{margin:6px 0}.notice-list small{color:var(--color-text-tertiary)}.signal-tag{display:inline-block;margin-right:8px;padding:1px 6px;border-radius:999px;background:var(--color-surface-1);color:var(--color-accent);font-size:var(--text-xs)}.signal-tag[data-kind="risk"]{color:#d03050}.empty{padding:32px;text-align:center;color:var(--color-text-tertiary)}

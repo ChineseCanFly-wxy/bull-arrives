@@ -163,6 +163,7 @@ fn set_discovery_enabled(db:&Database,enabled:bool,restart:bool)->Result<Value,S
         db.set_setting("mainline_discovery_last_error","null").map_err(|e|e.to_string())?;
     }
     db.set_setting("mainline_discovery_enabled",if enabled{"1"}else{"0"}).map_err(|e|e.to_string())?;
+    log::info!(target: "automation::mainline", "{}",if enabled{"全市场扫描已开启，继续已有进度"}else{"全市场扫描已暂停，已有进度保留"});
     DISCOVERY_REVISION.fetch_add(1,Ordering::SeqCst);
     discovery_wake().notify_waiters();discovery_wake().notify_one();
     discovery_status(db)
@@ -191,6 +192,10 @@ fn save_discovery_progress(db:&Database,state:&Value,revision:u64)->Result<bool,
     if !discovery_enabled(db) || DISCOVERY_REVISION.load(Ordering::SeqCst)!=revision {return Ok(false);}
     db.set_setting(DISCOVERY_STATE,&state.to_string()).map_err(|e|e.to_string())?;
     db.set_setting("mainline_discovery_last_error","null").map_err(|e|e.to_string())?;
+    let failed=state["failed"].as_array().map_or(0,Vec::len);
+    log::info!(target: "automation::mainline", "行情 {}：已扫描 {}/{} 个板块，候选 {} 个，失败 {} 个{}",
+        state["as_of"].as_str().unwrap_or("待核实"),state["processed"].as_u64().unwrap_or(0),state["total"].as_u64().unwrap_or(0),
+        state["candidates"].as_array().map_or(0,Vec::len),failed,if state["finished"]==true{"；本轮完成"}else{"；继续后台扫描"});
     Ok(true)
 }
 fn start_discovery_chunk(db:&Database,revision:u64,chunk:&[Value],day:&str,index:&[KLineData])
@@ -553,7 +558,7 @@ pub async fn scheduled_tick(db:&Database, app:&tauri::AppHandle) {
                                     format!("截至{day}全市场扫描后，完整成分验证通过。强势观察股：{names}。查看该次证据、模型记录和近期原文；主线仅辅助观察，模型尚未准入。")));
                             }
                             let _=db.set_setting(&key,&day);
-                        },Ok(_)=>{},Err(e)=>log::warn!("[mainline] 发现主线成分扫描：{e}"),
+                        },Ok(_)=>{},Err(e)=>log::warn!(target: "automation::mainline", "主线成分扫描失败：{e}"),
                     }
                 }
             }
@@ -561,7 +566,7 @@ pub async fn scheduled_tick(db:&Database, app:&tauri::AppHandle) {
         Ok::<(),String>(())
         }=>result };
         if let Err(error)=result {
-            log::warn!("[mainline] 全市场发现：{error}");
+            log::warn!(target: "automation::mainline", "全市场扫描失败：{error}");
             let _control=DISCOVERY_CONTROL.get_or_init(||std::sync::Mutex::new(())).lock().unwrap_or_else(|e|e.into_inner());
             if discovery_enabled(db) && DISCOVERY_REVISION.load(Ordering::SeqCst)==revision {
                 let _=db.set_setting("mainline_discovery_last_error",&json!(error).to_string());
@@ -583,7 +588,7 @@ pub async fn scheduled_tick(db:&Database, app:&tauri::AppHandle) {
                 }
                 if let Err(e)=db.set_setting(&key,&day) {log::warn!("[mainline] 保存提醒水位失败：{e}");}
             },
-            Ok(_)=>{},Err(e)=>log::warn!("[mainline] {}: {e}",watch.code),
+            Ok(_)=>{},Err(e)=>log::warn!(target: "automation::mainline", "板块 {} 检查失败：{e}",watch.code),
         }
     }
 }

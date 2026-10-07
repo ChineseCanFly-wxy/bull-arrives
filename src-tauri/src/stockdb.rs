@@ -717,7 +717,13 @@ impl StockDbManager {
         if state!="due" {if state=="failed"{self.publish_update_failure(now)?;}return Ok(());}
         let Ok(_guard)=self.operation.try_lock() else{return Ok(());};
         if !crate::stockdb_schedule::claim(&self.db,&cfg,now,startup,false)?{self.publish_update_failure(now)?;return Ok(());}
-        self.perform_update(now).await.map(|_|())
+        log::info!(target: "automation::data", "开始定时数据更新，第 {} 次尝试；更新期间程序管理服务启停",record.failures.saturating_add(1));
+        let result=self.perform_update(now).await;
+        match &result {
+            Ok(message)=>log::info!(target: "automation::data", "定时数据更新完成：{message}"),
+            Err(error)=>log::warn!(target: "automation::data", "定时数据更新失败：{error}；重试进度由后台维护"),
+        }
+        result.map(|_|())
     }
 
     async fn perform_update(&self,now:chrono::DateTime<chrono::Utc>)->Result<String,String>{

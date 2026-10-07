@@ -466,7 +466,7 @@ fn prepare_source_with_mainlines(
     let items = match result {
         Ok(items) => items,
         Err(error) => {
-            log::warn!("[news] {error}");
+            log::warn!(target: "automation::news", "资讯源检查失败：{error}");
             return Vec::new();
         }
     };
@@ -573,6 +573,7 @@ async fn poll_once(db: &Arc<Database>, app: &tauri::AppHandle) {
     if prepared.is_empty() {
         return;
     }
+    log::info!(target: "automation::news", "本轮收到 {} 条新资讯；仅通知本次启动后发布且时间有效的内容",prepared.len());
     let db = Arc::clone(db);
     let app = app.clone();
     // 通知逐条投递，资讯抓取继续按分钟运行。自动流程只发布原文。

@@ -900,6 +900,7 @@ pub async fn scheduled_tick(db: &Database) {
     let day=day.to_string();
     if db.get_setting("research_auto_day").ok().flatten().as_deref()==Some(day.as_str()){return;}
     let _=db.set_setting("research_auto_day",&day);
+    log::info!(target: "automation::research", "开始 {day} 盘后研究与历史对照");
     let result=async {
         let tasks=db.model_tasks()?;
         let registry:Value=serde_json::from_str(include_str!("../../../research/research-center-runner/registry.json")).map_err(|e|e.to_string())?;
@@ -914,6 +915,7 @@ pub async fn scheduled_tick(db: &Database) {
         let run=run_model(db,task["model_id"].as_str().unwrap().into(),task["holding_days"].as_i64().unwrap(),task["comparison"].as_str().unwrap().into(),"replay".into(),None).await?;
         Ok::<String,String>(format!("{day} 研究任务 #{id} 已用受信模型实际跑完历史对照，账本 #{run}；非准入、不执行AI生成脚本"))
     }.await;
+    match &result { Ok(message)=>log::info!(target: "automation::research", "{message}"),Err(error)=>log::warn!(target: "automation::research", "盘后研究失败：{error}"), }
     let message=match result {Ok(v)=>v,Err(e)=>{let _=db.set_setting("model_research_last_error",&e);format!("{day} 项目内研究未完成：{e}；当日不自动重复调用，错误保留，可手动模型运行")}};
     let _=db.set_setting("research_auto_message",&message);
 }
