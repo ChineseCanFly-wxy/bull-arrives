@@ -227,7 +227,7 @@ fn run_fold(
 ) -> Result<Value, String> {
     let stdout = output.with_extension("log");
     let stderr = output.with_extension("error.log");
-    let mut command = std::process::Command::new(&c.python);
+    let mut command = research::python_command(c)?;
     command
         .arg(script)
         .args([

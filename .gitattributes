@@ -1,4 +1,8 @@
 # 冻结研究程序和证据按原始字节校验 SHA256，Git 不得转换换行符。
-research/** -text
+research/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 src-tauri/*.json -text
 src-tauri/prompts/** -text
+research-assets.json -text
+scripts/research-bundle.py -text
+scripts/check-research-runtime.py -text
+scripts/research-requirements.txt -text

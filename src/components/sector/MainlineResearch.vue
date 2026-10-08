@@ -202,6 +202,7 @@ onBeforeUnmount(() => { epoch++; clearInterval(referenceClockTimer); });
       <div><b>{{ sectorName }} · 主线详情</b> <NTag size="small" type="info">手动观察 · 仅提醒</NTag></div>
       <div class="mainline-actions"><NButton size="small" :disabled="loading || !!error || !!watchError || !data" :loading="savingWatch" @click="toggleWatch">{{ watched ? '暂停主线提醒' : '开启主线提醒' }}</NButton><NButton class="mainline-refresh-control" size="small" :loading="loading" @click="refresh()">{{ snapshotFingerprint ? '重读通知快照' : '刷新研究' }}</NButton></div>
     </header>
+    <p class="mainline-meta">近期主线趋势直接获取在线行情；多年走势、历史买卖价位研究需另行安装并启用StockDB。</p>
     <p class="mainline-observation">开启主线提醒后，应用运行时会在盘后检查该板块与领涨候选；覆盖、日期和主线条件全部通过后才发提醒。无需账户，只发提醒；不会自动买卖，也不会使用自动模型账户。</p>
     <p v-if="error" class="mainline-error" role="alert">{{ error }}<span v-if="data">；保留上次结果供查看，本次未更新。</span></p>
     <p v-if="watchError" class="mainline-error" role="alert">{{ watchError }}；刷新研究可重试，读取成功前不能更改提醒。</p>

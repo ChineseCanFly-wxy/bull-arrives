@@ -269,7 +269,7 @@ def refresh_stockdb(args):
     now = dt.datetime.now(dt.timezone(dt.timedelta(hours=8)))
     if as_of > now.date() or (as_of == now.date() and now.time().replace(tzinfo=None) < dt.time(16)):
         raise ValueError("只接受已完成交易日，16时之前不采用当天日线")
-    if output.exists() or source == output or source in output.parents or any(p.lower() in ("stockdb", "data", "mydb") for p in output.parts):
+    if output.exists() or source == output or source in output.parents or any(p.lower() in ("stockdb", "mydb") for p in output.parts):
         raise ValueError("输出必须是不存在的独立研究目录，禁止写StockDB目录/覆盖旧快照")
     original_meta = json.loads((source / "matrices-metadata.json").read_text(encoding="utf8"))
     cutoff = int(original_meta["quality"]["last_date"])
@@ -464,7 +464,17 @@ def self_check():
             Client = FixtureClient
             fetch_index = lambda *_: (live, {"provider": "deterministic synthetic CSI300 fixture, never market evidence"})
             before = digest(source / "matrices.npz")
-            result = refresh(SimpleNamespace(source=source, index=index_path, as_of="2026-09-28", endpoint="http://127.0.0.1:7899", output=root / "appended"))
+            import recent_market_fallback
+            for blocked in (source, root / "stockdb/exports/new", root / "mydb/new"):
+                args = SimpleNamespace(source=source, index=index_path, as_of="2026-09-28", endpoint="http://127.0.0.1:1", output=blocked)
+                for invoke in (lambda: refresh_stockdb(args), lambda: recent_market_fallback.refresh(args,"unavailable",digest,read_index,write_json)):
+                    try:
+                        invoke()
+                    except ValueError:
+                        pass
+                    else:
+                        raise AssertionError("source/StockDB output accepted")
+            result = refresh(SimpleNamespace(source=source, index=index_path, as_of="2026-09-28", endpoint="http://127.0.0.1:7899", output=root / "data/research-workspace/appended"))
             assert result["state"] == "updated" and result["as_of"] == "2026-09-28"
             assert digest(source / "matrices.npz") == before
             with np.load(Path(result["snapshot"]) / "matrices.npz", allow_pickle=False) as saved:

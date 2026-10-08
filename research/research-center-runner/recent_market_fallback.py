@@ -199,7 +199,7 @@ def refresh(args, stockdb_error, digest, read_index, write_json, now=None, reque
         raise ValueError("收盘日线须16:00后读取，不把盘中行情作为完成日日线")
     source,index = args.source.resolve(),args.index.resolve()
     root = args.output.resolve()
-    if root == source or source in root.parents or root in source.parents or root in index.parents or any(p.lower() in ("stockdb", "data", "mydb") for p in root.parts):
+    if root == source or source in root.parents or root in source.parents or root in index.parents or any(p.lower() in ("stockdb", "mydb") for p in root.parts):
         raise ValueError("备用输出必须独立于原快照/StockDB目录")
     if (root / "refresh-audit.json").exists():
         raise ValueError("备用不覆盖已有刷新审计，须使用新的研究目录")

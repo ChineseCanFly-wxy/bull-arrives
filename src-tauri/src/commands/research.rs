@@ -19,13 +19,65 @@ static GATE: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelRunnerConfig {pub research_root:String,pub python:String,pub snapshot:String,pub index:String}
-pub(crate) fn model_config(db:&Database)->Result<ModelRunnerConfig,String>{
-    if let Some(raw)=db.get_setting("model_runner_config").map_err(|e|e.to_string())? {return serde_json::from_str(&raw).map_err(|_|"模型研究路径配置损坏".into());}
-    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().ok_or("缺项目目录")?;
-    let mut candidates=vec![root.join(".venv/Scripts/python.exe")];
-    if let Some(home)=dirs::home_dir(){for path in ["AppData/Local/Programs/Python/Python312/python.exe","AppData/Local/Programs/Python/Python313/python.exe",".cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe"]{candidates.push(home.join(path));}}
-    let python=candidates.into_iter().find(|p|p.is_file()).map(|p|p.to_string_lossy().into_owned()).unwrap_or_else(||"python".into());
-    Ok(ModelRunnerConfig{research_root:root.to_string_lossy().into_owned(),python,snapshot:root.join("research/ashare-open-2026-10-01/stockdb-live/exports").to_string_lossy().into_owned(),index:root.join("research/ashare-open-2026-10-01/online/index-sh-000300.ndjson").to_string_lossy().into_owned()})
+static BUNDLED_ROOT: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+pub(crate) fn initialize_runtime(resources: std::path::PathBuf) {
+    let _ = BUNDLED_ROOT.set(resources.join("research-runtime"));
+}
+
+fn bundled_config(root: &std::path::Path) -> Option<ModelRunnerConfig> {
+    let python = root.join(format!("python-{}", std::env::consts::ARCH));
+    let python = python.join(if cfg!(windows) { "python.exe" } else { "bin/python3.12" });
+    let snapshot = root.join("research/ashare-open-2026-10-01/stockdb-live/exports");
+    let index = root.join("research/ashare-open-2026-10-01/online/index-sh-000300.ndjson");
+    if !root.join("runtime.json").is_file() || !python.is_file() || !snapshot.join("matrices.npz").is_file() || !index.is_file() {
+        return None;
+    }
+    Some(ModelRunnerConfig { research_root: root.to_string_lossy().into_owned(), python: python.to_string_lossy().into_owned(), snapshot: snapshot.to_string_lossy().into_owned(), index: index.to_string_lossy().into_owned() })
+}
+
+fn resolve_saved_config(saved: Option<ModelRunnerConfig>, bundled: Option<ModelRunnerConfig>) -> Option<ModelRunnerConfig> {
+    match (saved, bundled) {
+        (Some(saved), Some(mut bundled)) if !std::path::Path::new(&saved.research_root).join("research/research-center-runner/model_runner.py").is_file() => {
+            // Migrated CI/old-install paths must not discard valid incremental data.
+            if std::path::Path::new(&saved.snapshot).join("matrices.npz").is_file() { bundled.snapshot = saved.snapshot; }
+            if std::path::Path::new(&saved.index).is_file() { bundled.index = saved.index; }
+            Some(bundled)
+        }
+        (Some(saved), _) => Some(saved),
+        (None, bundled) => bundled,
+    }
+}
+
+pub(crate) fn model_config(db: &Database) -> Result<ModelRunnerConfig, String> {
+    let saved = db.get_setting("model_runner_config").map_err(|e|e.to_string())?
+        .map(|raw| serde_json::from_str(&raw).map_err(|_| "模型研究路径配置损坏".to_string())).transpose()?;
+    let bundled = BUNDLED_ROOT.get().and_then(|root| bundled_config(root));
+    if let Some(config) = resolve_saved_config(saved, bundled) { return Ok(config); }
+    #[cfg(debug_assertions)]
+    {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().ok_or("缺项目目录")?;
+        let mut candidates = vec![root.join(".venv/Scripts/python.exe")];
+        if let Some(home) = dirs::home_dir() {
+            for path in ["AppData/Local/Programs/Python/Python312/python.exe", "AppData/Local/Programs/Python/Python313/python.exe", ".cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe"] { candidates.push(home.join(path)); }
+        }
+        let python = candidates.into_iter().find(|p|p.is_file()).map(|p|p.to_string_lossy().into_owned()).unwrap_or_else(||"python".into());
+        return Ok(ModelRunnerConfig { research_root:root.to_string_lossy().into_owned(), python, snapshot:root.join("research/ashare-open-2026-10-01/stockdb-live/exports").to_string_lossy().into_owned(), index:root.join("research/ashare-open-2026-10-01/online/index-sh-000300.ndjson").to_string_lossy().into_owned() });
+    }
+    #[cfg(not(debug_assertions))]
+    Err("安装包缺少完整研究环境，请重新安装完整版本，或在研究中心选择已有研究环境；StockDB需另行安装".into())
+}
+
+pub(crate) fn python_command(config: &ModelRunnerConfig) -> Result<std::process::Command, String> {
+    let mut command = std::process::Command::new(&config.python);
+    command.args(["-E", "-s", "-B", "-X", "utf8"]);
+    if std::path::Path::new(&config.research_root).join("runtime.json").is_file() {
+        // Frozen modules probe a home cache; private Python must use its own packages.
+        let home = workspace()?.join("runtime-home");
+        std::fs::create_dir_all(&home).map_err(|e|e.to_string())?;
+        command.env("USERPROFILE", &home).env("HOME", &home);
+    }
+    Ok(command)
 }
 #[tauri::command]
 pub fn research_model_config(db:State<'_,Arc<Database>>,config:Option<ModelRunnerConfig>)->Result<ModelRunnerConfig,String>{
@@ -132,7 +184,7 @@ pub(crate) fn execute_model_controlled(c:ModelRunnerConfig,model:String,hold:i64
     let c=execution_config(c,&model)?;
     let runner=trusted_execution_runner(&c,&model)?;let work=workspace()?.join("model-runs");std::fs::create_dir_all(&work).map_err(|e|e.to_string())?;
     let key=uuid::Uuid::new_v4().to_string();let out=work.join(format!("{key}.json"));let stdout=work.join(format!("{key}.log"));let stderr=work.join(format!("{key}.error.log"));
-    let mut command=std::process::Command::new(&c.python);
+    let mut command=python_command(&c)?;
     command.arg(&runner).args(["--model-id",&model,"--holding-days",&hold.to_string(),"--comparison",&comparison,"--mode",&mode,"--snapshot",&c.snapshot,"--index",&c.index,"--output"]).arg(&out);
     if let Some(day)=start {command.args(["--forward-start",&day.to_string()]);}
     command.env("PYTHONIOENCODING","utf-8").current_dir(&c.research_root).stdin(std::process::Stdio::null()).stdout(std::fs::File::create(&stdout).map_err(|e|e.to_string())?).stderr(std::fs::File::create(&stderr).map_err(|e|e.to_string())?);
@@ -167,7 +219,7 @@ pub(crate) fn refresh_model_config_controlled(mut c:ModelRunnerConfig,endpoint:S
     let previous=previous_model_session(&day)?;
     let key=uuid::Uuid::new_v4().to_string();let work=workspace()?.join("snapshots");std::fs::create_dir_all(&work).map_err(|e|e.to_string())?;
     let out=work.join(&key);let stdout=work.join(format!("{key}.log"));let stderr=work.join(format!("{key}.error.log"));
-    let mut command=std::process::Command::new(&c.python);
+    let mut command=python_command(&c)?;
     command.arg(&script).args(["--source",&c.snapshot,"--index",&c.index,"--endpoint",&endpoint,"--as-of",&day,"--previous-as-of",&previous,"--output"]).arg(&out).current_dir(&c.research_root).env("PYTHONIOENCODING","utf-8").stdin(std::process::Stdio::null()).stdout(std::fs::File::create(&stdout).map_err(|e|e.to_string())?).stderr(std::fs::File::create(&stderr).map_err(|e|e.to_string())?);
     #[cfg(windows)]{use std::os::windows::process::CommandExt;command.creation_flags(0x08000000);}
     let mut child=command.spawn().map_err(|e|format!("Python增量刷新启动失败：{e}"))?;let _process_job=own_research_process(&mut child)?;let began=std::time::Instant::now();
@@ -274,6 +326,48 @@ pub async fn scheduled_model_tick(db:&Database)->Vec<Value>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "runs all installed frozen models; needs prepared research-runtime"]
+    fn installed_runtime_executes_every_model_without_stockdb_or_developer_python() {
+        let root = std::path::PathBuf::from(std::env::var("BULL_TEST_RESEARCH_ROOT").expect("installed resource path"));
+        initialize_runtime(root.parent().unwrap().to_path_buf());
+        let db_root = std::env::temp_dir().join(format!("bull-installed-run-{}",uuid::Uuid::new_v4()));
+        let db = Database::open(db_root).unwrap();
+        let config = model_config(&db).unwrap();
+        let config = refresh_model_config_controlled(config,"http://127.0.0.1:1".into(),"2026-09-30".into(),true,None).unwrap();
+        assert_eq!(std::path::Path::new(&config.research_root), root);
+        assert!(config.python.starts_with(root.to_str().unwrap()));
+        for model in ["breadth22_h20","index26_h20","breadth22_excess_csi20","breadth22_rank20","breadth22_open_downside20","fundamental37_h20"] {
+            let mode = if model == "fundamental37_h20" {"replay"} else {"forward"};
+            let raw = execute_model(config.clone(),model.into(),20,"baseline".into(),mode.into(),None).unwrap();
+            let checked = check_bound_run(&raw).unwrap();
+            assert_eq!(checked["model_id"],model);
+            assert_eq!(checked["as_of"],"2026-09-30");
+            assert!(!checked["current_scores"].as_array().unwrap().is_empty());
+            println!("INSTALLED_RESEARCH_OK model={} scores={}",model,checked["current_scores"].as_array().unwrap().len());
+        }
+    }
+    #[test]
+    fn installed_runtime_repairs_ci_paths_and_keeps_incremental_snapshots() {
+        let root = std::env::temp_dir().join(format!("bull-installed-research-{}", uuid::Uuid::new_v4()));
+        let snapshot = root.join("research/ashare-open-2026-10-01/stockdb-live/exports");
+        let index = root.join("research/ashare-open-2026-10-01/online/index-sh-000300.ndjson");
+        let python = root.join(format!("python-{}", std::env::consts::ARCH)).join(if cfg!(windows) {"python.exe"} else {"bin/python3.12"});
+        for file in [root.join("runtime.json"), snapshot.join("matrices.npz"), index.clone(), python.clone()] {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap(); std::fs::write(file, "fixture").unwrap();
+        }
+        let bundled = bundled_config(&root).unwrap();
+        assert_eq!(bundled.python, python.to_string_lossy());
+        let advanced = root.join("advanced"); std::fs::create_dir(&advanced).unwrap(); std::fs::write(advanced.join("matrices.npz"), "newer").unwrap();
+        let saved = ModelRunnerConfig { research_root: "D:/a/bull-arrives/bull-arrives".into(), python: "missing-python".into(), snapshot:advanced.to_string_lossy().into_owned(), index:index.to_string_lossy().into_owned() };
+        let fixed = resolve_saved_config(Some(saved), Some(bundled.clone())).unwrap();
+        assert_eq!(fixed.research_root, bundled.research_root); assert_eq!(fixed.snapshot, advanced.to_string_lossy());
+        let runner = root.join("research/research-center-runner/model_runner.py"); std::fs::create_dir_all(runner.parent().unwrap()).unwrap(); std::fs::write(&runner, "manual").unwrap();
+        let mut manual = bundled.clone(); manual.python = "my-python".into();
+        assert_eq!(resolve_saved_config(Some(manual),Some(bundled)).unwrap().python,"my-python");
+        std::fs::remove_file(python).unwrap(); assert!(bundled_config(&root).is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn data_failure_message_keeps_the_actual_source_reason_without_python_stack_frames(){
         let raw="Traceback (most recent call last):\n  File \"refresh_market.py\", line 360\nValueError: StockDB及近期行情备用均未取得合格日线；StockDB：未更新；行情备用：指数日期不符\n";
@@ -949,7 +1043,16 @@ pub fn account_failed(db: &Database, account: i64, error: &str) {
 }
 
 fn workspace() -> Result<std::path::PathBuf, String> {
-    let root = dirs::data_local_dir()
+    #[cfg(test)]
+    if let Ok(path) = std::env::var("BULL_RESEARCH_TEST_WORKSPACE") {
+        let root = std::path::PathBuf::from(path);
+        std::fs::create_dir_all(&root).map_err(|e|e.to_string())?;
+        return Ok(root);
+    }
+    let portable = std::env::current_exe().ok().and_then(|exe| {
+        exe.with_file_name("portable.dat").is_file().then(|| exe.parent().map(|dir|dir.join("data"))).flatten()
+    });
+    let root = portable.or_else(dirs::data_local_dir)
         .ok_or("无法定位用户数据目录")?
         .join("bull-arrives")
         .join("research-workspace");

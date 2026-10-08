@@ -321,7 +321,7 @@ fn export_context(
     let log = dir.join(format!("bull-follow-{key}.log"));
     std::fs::write(&input, bundle).map_err(|e| e.to_string())?;
     let result = (|| {
-        let mut command = std::process::Command::new(&config.python);
+        let mut command = super::research::python_command(&config)?;
         command
             .arg(&runner)
             .arg("--bundle")

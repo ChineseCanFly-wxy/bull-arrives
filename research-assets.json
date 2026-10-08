@@ -1,0 +1,20 @@
+{
+  "tag": "research-assets-2026-09-30",
+  "asset": "bull-arrives-research-2026-09-30-v2.zip",
+  "sha256": "21fa713d26a428723b66abcc148a4573812a42bf42a2a84940752cb5d3aff85a",
+  "files": 177,
+  "bytes": 472196219,
+  "additional_files": {
+    "research/ashare-open-2026-10-01/stockdb-live/exports/invalid_records.ndjson.gz": "c4533a14bc6b4bc8c731b48ae1db2f2a26058358cd281c0411d573076528bdf2",
+    "research/ashare-open-2026-10-01/online/301016-20250430.pdf": "0b3fc140bfb60a5f4243a2ade3f8a9eed2299f8711404bd3692c510b006fe3f0",
+    "research/ashare-open-2026-10-01/online/301016-20260430.pdf": "60bec72f7f5e49a37475d8bc6f4f04b68e2b883d4ba02cde2adf6261ed56ea92",
+    "research/ashare-open-2026-10-01/online/301283-20260521.pdf": "38017900f5894d8a8d4e384777a4215d97ba802ce3b29bf9698886172dc57450",
+    "research/ashare-open-2026-10-01/online/301552-20250527.pdf": "8db7a1798454ef1215c2efdeea87880a041129393bab6aae8a9e49aa400966cb",
+    "research/ashare-open-2026-10-01/online/301552-20260511.pdf": "d9a0739169e747ce863a0d6ff5abde8c8efa68776260d0e9fdeb9b8a3d38681f",
+    "research/ashare-open-2026-10-01/online/601985-20260717.pdf": "2ec527667441b41de8fd7def65cf9abca214e5bed04a28131e5c64041e899489",
+    "research/ashare-open-2026-10-01/online/603881-20250613.pdf": "229808b6c7624650bc50b4f6120a8a57256a955b736877cf4b75f0098a1aca5a",
+    "research/ashare-open-2026-10-01/online/603881-20260623.pdf": "5c088271bb0f8645b7102426b513b5f9b15c830678805668facc3774cac81fcd",
+    "research/ashare-open-2026-10-01/online/candidates/688085-implementation.pdf": "a055bf65e56211969f707178dd0917689c259f4916fc59f0d42b8cffda0c83c6",
+    "research/ashare-open-2026-10-01/online/candidates/301227-implementation.pdf": "f5d4b3d3c131aa52fa0ee8316c95ca2fb6dfa3f7a821f91f0a4ffc3e59a6ad47"
+  }
+}

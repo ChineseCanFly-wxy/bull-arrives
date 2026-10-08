@@ -77,12 +77,12 @@ fn relative_metrics(bars:&[KLineData],index:&[KLineData])->Result<Value,String>{
     m["window_start"]=json!(aligned[0].date);m["window_end"]=json!(aligned.last().unwrap().date);
     Ok(m)
 }
-fn member_metrics(data:&history::LocalHistoryResult,index:&[KLineData],as_of:&str)->Result<Option<Value>,String>{
-    match data.st_by_date.iter().find(|(day,_)|day.as_str()==as_of).and_then(|(_,status)|*status){
+fn member_metrics(data:&history::LocalHistoryResult,index:&[KLineData],as_of:&str,historical_st:bool)->Result<Option<Value>,String>{
+    if historical_st { match data.st_by_date.iter().find(|(day,_)|day.as_str()==as_of).and_then(|(_,status)|*status){
         Some(true)=>return Ok(None),
         Some(false)=>{},
         None=>return Err("截止交易日ST状态缺失，拒绝猜测".into()),
-    }
+    }}
     if data.end_date.as_deref()!=Some(as_of){return Err("日线截止日期落后或停牌".into());}
     relative_metrics(&data.klines,index).map(Some)
 }
@@ -444,7 +444,7 @@ pub fn get_mainline_alert_history(db:State<'_,Arc<Database>>)->Result<Vec<Value>
 pub async fn scan(db: &Database, kind: &str, code: &str, name: &str) -> Result<Value,String> {
     let kind=validate(kind,code,name)?;
     let _permit=GATE.get_or_init(||tokio::sync::Semaphore::new(1)).try_acquire().map_err(|_|"主线研究正在扫描，请稍后重试")?;
-    if db.get_setting("local_history_enabled").ok().flatten().as_deref()!=Some("1") { return Err("请先启用本地历史数据；主线扫描不使用缺少历史的实时排行替代".into()); }
+    let local_history=db.get_setting("local_history_enabled").map_err(|e|e.to_string())?.as_deref()==Some("1");
     let day=completed_day(Utc::now())?; let as_of=day.to_string();
     let (members,index)=tokio::try_join!(sector_members(kind,code),benchmark(&as_of))?;
     let hist=sector_history(code,&index).await?;
@@ -457,10 +457,20 @@ pub async fn scan(db: &Database, kind: &str, code: &str, name: &str) -> Result<V
     let config=history::LocalHistoryConfig::new(db.get_setting("local_history_url").map_err(|e|e.to_string())?.unwrap_or_else(||"http://127.0.0.1:7899".into()));
     let start=(day-Duration::days(400)).to_string();
     let mut queue=tokio::task::JoinSet::new(); let mut results=Vec::new();
-    // ponytail: eight local reads at once; reuse StockDB, no second market service.
+    // Eight reads at once; online observations never supply historical ST or raw execution prices.
     for member in eligible.iter().cloned() {
         let cfg=config.clone();let begin=start.clone();let end=as_of.clone();
-        queue.spawn(async move {let symbol=format!("{}{}",member.market,member.code);let history=history::fetch_daily(&cfg,&symbol,Some(&begin),Some(&end)).await;(member,history)});
+        queue.spawn(async move {
+            let symbol=format!("{}{}",member.market,member.code);
+            let history=if local_history {history::fetch_daily(&cfg,&symbol,Some(&begin),Some(&end)).await} else {
+                crate::datasource::kline::fetch_qfq_daily_kline_with_source(&symbol,120).await.map(|(rows,source)| {
+                    let rows:Vec<_>=rows.into_iter().filter(|row|row.date<=end).collect();
+                    history::LocalHistoryResult {start_date:rows.first().map(|r|r.date.clone()),end_date:rows.last().map(|r|r.date.clone()),sample_count:rows.len(),
+                        klines:rows,raw_klines:Vec::new(),st_by_date:Vec::new(),source:source.label().into(),protocol:history::LocalHistoryProtocol::Json}
+                })
+            };
+            (member,history)
+        });
         if queue.len()>=8 {results.push(queue.join_next().await.ok_or("扫描队列缺失")?.map_err(|e|e.to_string())?);}
     }
     while let Some(row)=queue.join_next().await {results.push(row.map_err(|e|e.to_string())?);}
@@ -472,7 +482,7 @@ pub async fn scan(db: &Database, kind: &str, code: &str, name: &str) -> Result<V
             missing.push(json!({"symbol":symbol,"reason":"该成分行情时间缺失、未来或不是截止交易日"}));continue;
         }
         let history=match result {Ok(v)=>v,Err(e)=>{missing.push(json!({"symbol":symbol,"reason":e}));continue;}};
-        let m=match member_metrics(&history,&index,&as_of){
+        let m=match member_metrics(&history,&index,&as_of,local_history){
             Ok(Some(value))=>value,
             Ok(None)=>{excluded+=1;continue;},
             Err(reason)=>{missing.push(json!({"symbol":symbol,"reason":reason}));continue;},
@@ -481,7 +491,7 @@ pub async fn scan(db: &Database, kind: &str, code: &str, name: &str) -> Result<V
         if m["strong"]==true{trending+=1;}
         let r20=number(&m,"r20");let r60=number(&m,"r60");let distance=(number(&m,"close")-number(&m,"ma20"))/number(&m,"atr");
         if m["strong"]!=true || r20<=number(&sector_metrics,"r20") || r20<=0.0 || distance>2.0 || history.klines.last().unwrap().volume==0 {continue;}
-        let plan=plan(&history.klines,&history.raw_klines,&m,&symbol);
+        let plan=if local_history {plan(&history.klines,&history.raw_klines,&m,&symbol)} else {json!({"status":"reference_unavailable","reason":"当前为在线近期趋势观察；历史买卖价位研究需安装并启用StockDB"})};
         let mut row=m;row["symbol"]=symbol.into();row["name"]=member.name.into();row["as_of"]=as_of.clone().into();
         row["score"]=(0.5*r20+0.3*r60-0.2*distance).into();row["plan"]=plan;row["pe"]=json!(member.pe);row["pb"]=json!(member.pb);
         candidates.push(row);
@@ -499,10 +509,11 @@ pub async fn scan(db: &Database, kind: &str, code: &str, name: &str) -> Result<V
     let news=recent_news(db,name,&leaders,&as_of)?;
     let mut output=json!({"schema":"mainline-observation-v1","model_status":"unvalidated_hypothesis","sector_code":code,"sector_name":name,"kind":kind,
         "as_of":as_of,"sector_source":hist.source,"sector_history_end":sector_date,"member_source":members.source,"member_as_of":as_of,"membership_observed_at":observed_members_at,"membership_source_is_current_snapshot":true,
+        "member_history_source":if local_history{"StockDB"}else{"在线近期前复权日线"},"historical_research_available":local_history,
         "total_members":members.total,"excluded_members":excluded,"covered_members":covered,"missing_members":missing,
         "complete":complete,"strong":strong,"status":if strong{"持续趋势及强股条件满足，研究观察"}else if !complete{"数据覆盖或时点不完整，停止提醒"}else{"持续趋势或强股条件未通过"},
         "metrics":sector_metrics,"benchmark":{"symbol":"sh000300","source":"Tencent explicit index daily","as_of":as_of},"trend_breadth":breadth,"trending_members":trending,"leaders":leaders,"model_research":model_research,"news":news,"generated_at":Utc::now().to_rfc3339(),
-        "limitations":["当前成分股不是历史成分，不能倒推多年板块策略收益；短于六十六个真实交易日的历史记为缺失，未核验上市日期不排除", "主线及分层计划未获多年模型准入；主线条件加入股票模型尚未证明长期增益，形态排序分不是上涨概率", "PE/PB是当前估值代理，缺公告时点财报，不能判定成长质量", "资讯仅最近七日采集归档最多五千条中的结构化股票/名称/主题匹配，非全网完整覆盖；采集时间不同于发布时间，截点之后的公告只作为新信息", "盘中确认、T+1及无法成交只写观察条件，本模块不自动下单"]});
+        "limitations":["近期主线观察可直接获取在线行情；多年走势、历史ST和买卖价位研究需安装并启用StockDB；在线观察不把前复权价格冒充实际成交价", "当前成分股不是历史成分，不能倒推多年板块策略收益；短于六十六个真实交易日的历史记为缺失，未核验上市日期不排除", "主线及分层计划未获多年模型准入；主线条件加入股票模型尚未证明长期增益，形态排序分不是上涨概率", "PE/PB是当前估值代理，缺公告时点财报，不能判定成长质量", "资讯仅最近七日采集归档最多五千条中的结构化股票/名称/主题匹配，非全网完整覆盖；采集时间不同于发布时间，截点之后的公告只作为新信息", "盘中确认、T+1及无法成交只写观察条件，本模块不自动下单"]});
     output=seal_snapshot(output)?;save_snapshot(db,&output)?;
     Ok(output)
 }
@@ -617,12 +628,17 @@ mod tests {
         assert!(relative_metrics(&contaminated,&rows).unwrap_err().contains(&missing_date));
         let mut data=history::LocalHistoryResult{klines:rows.clone(),raw_klines:rows.clone(),st_by_date:vec![(rows.last().unwrap().date.clone(),Some(false))],
             source:"offline fixture".into(),protocol:history::LocalHistoryProtocol::Json,start_date:Some(rows[0].date.clone()),end_date:Some(rows.last().unwrap().date.clone()),sample_count:rows.len()};
-        let as_of=rows.last().unwrap().date.as_str();assert!(member_metrics(&data,&rows,as_of).unwrap().is_some());
+        let as_of=rows.last().unwrap().date.as_str();assert!(member_metrics(&data,&rows,as_of,true).unwrap().is_some());
         data.klines=rows[30..].to_vec();data.raw_klines=data.klines.clone();data.sample_count=data.klines.len();
-        assert!(member_metrics(&data,&rows,as_of).unwrap_err().contains("缺少真实交易日"),"Short history must remain missing, not an inferred IPO exclusion");
-        data.st_by_date[0].1=Some(true);assert!(member_metrics(&data,&rows,as_of).unwrap().is_none(),"Only verified ST status excludes this member");
-        data.st_by_date[0].1=None;assert!(member_metrics(&data,&rows,as_of).is_err());
-        data.st_by_date[0].1=Some(false);data.end_date=Some(rows[88].date.clone());assert!(member_metrics(&data,&rows,as_of).is_err());
+        assert!(member_metrics(&data,&rows,as_of,true).unwrap_err().contains("缺少真实交易日"),"Short history must remain missing, not an inferred IPO exclusion");
+        data.st_by_date[0].1=Some(true);assert!(member_metrics(&data,&rows,as_of,true).unwrap().is_none(),"Only verified ST status excludes this member");
+        data.st_by_date[0].1=None;assert!(member_metrics(&data,&rows,as_of,true).is_err());
+        data.st_by_date[0].1=Some(false);data.end_date=Some(rows[88].date.clone());assert!(member_metrics(&data,&rows,as_of,true).is_err());
+        data.klines=rows.clone();data.raw_klines.clear();data.st_by_date.clear();data.end_date=Some(as_of.into());
+        let observed=member_metrics(&data,&rows,as_of,false).unwrap().unwrap();
+        assert!(member_metrics(&data,&rows,as_of,true).is_err(),"Online names must not become historical ST evidence");
+        assert_eq!(plan(&data.klines,&data.raw_klines,&observed,"sh600519")["status"],"reference_unavailable");
+        data.end_date=Some(rows[88].date.clone());assert!(member_metrics(&data,&rows,as_of,false).is_err());
         let mut duplicate=rows.clone();duplicate.insert(40,rows[40].clone());assert!(relative_metrics(&duplicate,&rows).is_err());
         let mut broken=rows.clone();broken[89].close=f64::NAN;assert!(relative_metrics(&broken,&rows).is_err());
     }
@@ -749,6 +765,20 @@ mod tests {
         assert!(!discovery_alert_ready(&discovery,"2026-09-30"));
         discovery["failed"]=json!([]);discovery["candidates"][0]["as_of"]=json!("2026-09-29");
         assert!(!discovery_alert_ready(&discovery,"2026-09-30"));
+    }
+    #[tokio::test]
+    #[ignore = "read-only online current-sector acceptance; no StockDB or accounts"]
+    async fn live_recent_sector_scan_without_stockdb() {
+        let root=std::env::temp_dir().join(format!("bull-mainline-online-{}",uuid::Uuid::new_v4()));
+        let db=Database::open(root.clone()).unwrap();db.set_setting("local_history_url","http://127.0.0.1:1").unwrap();
+        assert_eq!(db.get_setting("local_history_enabled").unwrap().as_deref(),Some("0"));
+        let value=scan(&db,"industry","SW801010","农林牧渔").await.unwrap();
+        assert_eq!(value["member_history_source"],"在线近期前复权日线");assert_eq!(value["historical_research_available"],false);
+        assert!(value["covered_members"].as_u64().unwrap()>0,"Online history must cover actual members");
+        assert_eq!(value["total_members"].as_u64().unwrap(),value["covered_members"].as_u64().unwrap()+value["excluded_members"].as_u64().unwrap()+value["missing_members"].as_array().unwrap().len() as u64);
+        assert!(value["leaders"].as_array().unwrap().iter().all(|row|row["plan"]["status"]=="reference_unavailable"));
+        println!("ONLINE_MAINLINE_OK date={} total={} covered={} missing={} complete={}",value["as_of"],value["total_members"],value["covered_members"],value["missing_members"].as_array().unwrap().len(),value["complete"]);
+        drop(db);std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
     #[ignore = "requires restored loopback StockDB and complete Eastmoney sector network"]
