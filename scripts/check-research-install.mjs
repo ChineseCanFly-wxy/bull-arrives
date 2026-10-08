@@ -41,8 +41,14 @@ try {
   const started=Date.now();
   while(Date.now()-started<600000){final=await invoke('research_job_get',{id:job.id});if(['complete','failed','cancelled','interrupted'].includes(final.state))break;await new Promise(r=>setTimeout(r,1000));}
   assert.equal(final.state,'complete',JSON.stringify(final));assert.equal(final.completed,5);assert.equal(final.results.length,5);
-  const result={state:'passed',installed_directory:dir,external_python:false,stockdb_enabled:false,job_id:job.id,completed:final.completed,models:final.results.map(r=>({model_id:r.model_id,as_of:r.group.as_of,candidates:r.group.candidates.length}))};
-  await evaluate('Array.from(document.querySelectorAll("button")).find(b=>b.innerText.includes("研究中心"))?.click()');
+  assert.ok(final.results.every(r=>r.group.scored_stocks>0&&r.group.as_of===final.context.requested_day),'installed models must actually score the requested day');
+  const result={state:'passed',installed_directory:dir,external_python:false,stockdb_enabled:false,job_id:job.id,completed:final.completed,models:final.results.map(r=>({model_id:r.model_id,as_of:r.group.as_of,scored_stocks:r.group.scored_stocks,candidates:r.group.candidates.length}))};
+  await evaluate('Array.from(document.querySelectorAll("button.nav-primary")).find(b=>b.innerText.trim()==="研究中心")?.click()');
+  for(let i=0;i<80;i++){if(await evaluate('!!document.querySelector(".research-center")'))break;await new Promise(r=>setTimeout(r,100));}
+  assert.ok(await evaluate('!!document.querySelector(".research-center")'),'research center did not render');
+  await evaluate('Array.from(document.querySelectorAll(".research-nav button")).find(b=>b.innerText.includes("记录"))?.click()');
+  await evaluate('const panel=document.querySelector(".research-background-jobs");if(panel)panel.open=true');
+  for(let i=0;i<80;i++){if(await evaluate('document.querySelector(".research-background-jobs")?.innerText.includes("5/5")'))break;await new Promise(r=>setTimeout(r,100));}
   const screenshot=await call('Page.captureScreenshot',{format:'png'});writeFileSync(path.join(dir,'research-install.png'),Buffer.from(screenshot.data,'base64'));
   writeFileSync(path.join(dir,'research-install-result.json'),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));
 } finally {ws?.close();if(app.exitCode===null){const exited=new Promise(r=>app.once('exit',r));app.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,3000))]);}}

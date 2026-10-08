@@ -767,6 +767,20 @@ mod tests {
         assert!(!discovery_alert_ready(&discovery,"2026-09-30"));
     }
     #[tokio::test]
+    #[ignore = "read-only online current-sector acceptance; no StockDB or accounts"]
+    async fn live_recent_sector_scan_without_stockdb() {
+        let root=std::env::temp_dir().join(format!("bull-mainline-online-{}",uuid::Uuid::new_v4()));
+        let db=Database::open(root.clone()).unwrap();db.set_setting("local_history_url","http://127.0.0.1:1").unwrap();
+        assert_eq!(db.get_setting("local_history_enabled").unwrap().as_deref(),Some("0"));
+        let value=scan(&db,"industry","SW801010","农林牧渔").await.unwrap();
+        assert_eq!(value["member_history_source"],"在线近期前复权日线");assert_eq!(value["historical_research_available"],false);
+        assert!(value["covered_members"].as_u64().unwrap()>0,"Online history must cover actual members");
+        assert_eq!(value["total_members"].as_u64().unwrap(),value["covered_members"].as_u64().unwrap()+value["excluded_members"].as_u64().unwrap()+value["missing_members"].as_array().unwrap().len() as u64);
+        assert!(value["leaders"].as_array().unwrap().iter().all(|row|row["plan"]["status"]=="reference_unavailable"));
+        println!("ONLINE_MAINLINE_OK date={} total={} covered={} missing={} complete={}",value["as_of"],value["total_members"],value["covered_members"],value["missing_members"].as_array().unwrap().len(),value["complete"]);
+        drop(db);std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
     #[ignore = "requires restored loopback StockDB and complete Eastmoney sector network"]
     async fn live_complete_sector_scan() {
         let root=std::env::temp_dir().join(format!("bull-mainline-smoke-{}",uuid::Uuid::new_v4()));
