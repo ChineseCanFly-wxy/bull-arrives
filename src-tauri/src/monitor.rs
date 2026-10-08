@@ -99,7 +99,7 @@ pub fn evaluate_monitors<F>(
         return;
     }
 
-    let global_enabled = setting_flag(db, "alerts_enabled", true);
+    let global_enabled = setting_flag(db, "risk_notifications_enabled", true);
     if !global_enabled { return; }
     let monitors = match db.get_monitors() {
         Ok(monitors) => monitors,

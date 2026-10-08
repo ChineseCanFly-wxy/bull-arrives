@@ -226,6 +226,19 @@ impl Database {
             let previous = self.get_setting("alerts_enabled")?.unwrap_or_else(|| "1".into());
             self.set_setting("research_notifications_enabled", &previous)?;
         }
+        for key in ["mainline_notifications_enabled", "model_trade_notifications_enabled", "model_condition_notifications_enabled", "intraday_notifications_enabled"] {
+            if self.get_setting(key)?.is_none() {
+                let previous = self.get_setting("research_notifications_enabled")?.unwrap_or_else(|| "1".into());
+                self.set_setting(key, &previous)?;
+            }
+        }
+        if self.get_setting("risk_notifications_enabled")?.is_none() {
+            let previous = self.get_setting("alerts_enabled")?.unwrap_or_else(|| "1".into());
+            self.set_setting("risk_notifications_enabled", &previous)?;
+        }
+        for (key, value) in [("important_alerts_enabled", "1"), ("important_alerts_native_enabled", "0"), ("important_alerts_opacity", "95"), ("important_alerts_text_color", "#EEF5FF"), ("important_alerts_background", "#111821"), ("news_system_notifications_enabled", "1"), ("data_notifications_enabled", "1"), ("daily_briefs_enabled", "1")] {
+            if self.get_setting(key)?.is_none() { self.set_setting(key, value)?; }
+        }
         // 资讯只采集原文；升级后不再保留自动 AI 或混合模式。
         self.set_setting("news_notification_mode", "direct")?;
         self.set_setting("agent_provider", "claude")?;

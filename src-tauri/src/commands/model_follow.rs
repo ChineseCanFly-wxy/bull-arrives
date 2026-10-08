@@ -1712,7 +1712,7 @@ async fn automatic_worker(db: &Database, input: &AutomaticInput, started: DateTi
         })?;
         if row["state"]=="error" {
             log::warn!(target: "automation::model", "模型 {model}：{}",row["message"].as_str().unwrap_or("检查失败"));
-        } else { log::info!(target: "automation::model", "模型 {model}：{}",row["message"].as_str().unwrap_or("检查完成")); }
+        } else if row["state"]!="created" { log::info!(target: "automation::model", "模型 {model}：{}",row["message"].as_str().unwrap_or("检查完成")); }
         if deferred { break; }
     }
     if errors.is_empty() { Ok(!deferred) } else { Err(errors.join("；")) }

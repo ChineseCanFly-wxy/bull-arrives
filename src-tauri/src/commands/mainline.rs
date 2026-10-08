@@ -163,7 +163,7 @@ fn set_discovery_enabled(db:&Database,enabled:bool,restart:bool)->Result<Value,S
         db.set_setting("mainline_discovery_last_error","null").map_err(|e|e.to_string())?;
     }
     db.set_setting("mainline_discovery_enabled",if enabled{"1"}else{"0"}).map_err(|e|e.to_string())?;
-    log::info!(target: "automation::mainline", "{}",if enabled{"全市场扫描已开启，继续已有进度"}else{"全市场扫描已暂停，已有进度保留"});
+    log::info!("[mainline] {}",if enabled{"全市场扫描已开启，继续已有进度"}else{"全市场扫描已暂停，已有进度保留"});
     DISCOVERY_REVISION.fetch_add(1,Ordering::SeqCst);
     discovery_wake().notify_waiters();discovery_wake().notify_one();
     discovery_status(db)
@@ -192,10 +192,12 @@ fn save_discovery_progress(db:&Database,state:&Value,revision:u64)->Result<bool,
     if !discovery_enabled(db) || DISCOVERY_REVISION.load(Ordering::SeqCst)!=revision {return Ok(false);}
     db.set_setting(DISCOVERY_STATE,&state.to_string()).map_err(|e|e.to_string())?;
     db.set_setting("mainline_discovery_last_error","null").map_err(|e|e.to_string())?;
-    let failed=state["failed"].as_array().map_or(0,Vec::len);
-    log::info!(target: "automation::mainline", "行情 {}：已扫描 {}/{} 个板块，候选 {} 个，失败 {} 个{}",
-        state["as_of"].as_str().unwrap_or("待核实"),state["processed"].as_u64().unwrap_or(0),state["total"].as_u64().unwrap_or(0),
-        state["candidates"].as_array().map_or(0,Vec::len),failed,if state["finished"]==true{"；本轮完成"}else{"；继续后台扫描"});
+    if state["finished"]==true {
+        let failed=state["failed"].as_array().map_or(0,Vec::len);
+        log::info!(target: "automation::mainline", "行情 {}：已扫描 {}/{} 个板块，候选 {} 个，失败 {} 个；本轮完成",
+            state["as_of"].as_str().unwrap_or("待核实"),state["processed"].as_u64().unwrap_or(0),state["total"].as_u64().unwrap_or(0),
+            state["candidates"].as_array().map_or(0,Vec::len),failed);
+    }
     Ok(true)
 }
 fn start_discovery_chunk(db:&Database,revision:u64,chunk:&[Value],day:&str,index:&[KLineData])

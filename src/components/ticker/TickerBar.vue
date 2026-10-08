@@ -9,6 +9,7 @@ import { useQuoteStore } from '@/stores/quote';
 import { useWatchlistStore } from '@/stores/watchlist';
 import { useSettingsStore, SETTING_CHANGED_EVENT, type SettingChangedPayload } from '@/stores/settings';
 import { formatPrice } from '@/utils/format';
+import WindowResizeHandle from '@/components/common/WindowResizeHandle.vue';
 
 const quoteStore = useQuoteStore();
 const watchlist = useWatchlistStore();
@@ -37,6 +38,7 @@ onMounted(async () => {
     settings.applyTheme(settings.theme);
     await watchlist.fetchWatchlist();
     await quoteStore.startListening();
+    await invoke('resize_ticker_window', { visibleRows: Math.max(1, visibleItems.value.length) });
     startCycle();
   } catch (e) {
     initFailed.value = true;
@@ -105,10 +107,7 @@ watch(
   () => {
     page.value = 0;
     startCycle();
-    const rows = Math.max(1, visibleItems.value.length);
-    invoke('resize_ticker_window', { visibleRows: rows }).catch((e) => {
-      console.error('[TickerBar] resize failed:', e);
-    });
+
   },
   { immediate: true, flush: 'post' },
 );
@@ -286,6 +285,7 @@ async function showContextMenu() {
       @mousedown.stop
       @click.stop="openQuickAdd"
     >＋</button>
+    <WindowResizeHandle />
   </div>
 </template>
 
@@ -300,7 +300,7 @@ async function showContextMenu() {
   justify-content: center;
   user-select: none;
   cursor: grab;
-  overflow: hidden;
+  overflow: auto;
   padding: var(--space-1) var(--space-2);
   /* 右侧留出「＋」的位置，避免它压住涨跌幅那一列 */
   padding-right: 20px;
