@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import ConditionTreeEditor from '@/components/research/ConditionTreeEditor.vue';
-import {defaultConditionTree,describeCondition,usesRetiredMinutes,type ConditionTree} from '@/types/conditions';
+import {defaultConditionTree,describeCondition,isConditionTree,type ConditionTree} from '@/types/conditions';
 import HelpTooltip from '@/components/common/HelpTooltip.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
@@ -80,8 +80,9 @@ async function openObserve(candidate:ModelCandidate){
     const preset=existing?.config.preset??saved?.preset??'model_hit';
     if(preset==='custom'||value.presets.some(p=>p.id===preset))observePreset.value=preset;
     if(saved)autoUpdate.value=saved.autoUpdate;
-    conditionTree.value=JSON.parse(JSON.stringify(existing?.config.condition_tree??saved?.conditionTree??defaultConditionTree()));
-    if(usesRetiredMinutes(conditionTree.value)){observePreset.value='model_hit';conditionTree.value=defaultConditionTree();notice.value='旧分钟确认条件已停用；新提醒默认使用原模型命中，原提醒记录仍保留。';}
+    const tree=existing?.config.condition_tree??saved?.conditionTree??defaultConditionTree();
+    conditionTree.value=isConditionTree(tree)?JSON.parse(JSON.stringify(tree)):defaultConditionTree();
+    if(observePreset.value==='custom'&&!isConditionTree(tree))observePreset.value='model_hit';
     if(!value.presets.some(p=>p.id===observePreset.value)&&observePreset.value!=='custom')throw Error('原模型观察条件暂不可用，请刷新后重试。');
     observeAdvanced.value=observePreset.value==='custom';observeTarget.value=candidate;
   }catch(e){error.value=String(e);}

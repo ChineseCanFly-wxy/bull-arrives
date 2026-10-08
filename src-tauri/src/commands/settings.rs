@@ -10,6 +10,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::State;
 
+fn validate_notification_setting(key: &str, value: &str) -> Result<(), String> {
+    if matches!(key, "alerts_enabled" | "research_notifications_enabled" | "mainline_notifications_enabled" | "model_trade_notifications_enabled" | "model_condition_notifications_enabled" | "risk_notifications_enabled" | "daily_briefs_enabled" | "important_alerts_enabled" | "important_alerts_native_enabled" | "news_system_notifications_enabled" | "notification_desktop_always") && value != "0" && value != "1" {
+        return Err("提醒开关只能为 0 或 1".into());
+    }
+    if matches!(key, "important_alerts_text_color" | "important_alerts_background") && !(value.len() == 7 && value.starts_with('#') && value.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)) {
+        return Err("颜色必须为 #RRGGBB".into());
+    }
+    if key == "important_alerts_opacity" && !value.parse::<u32>().is_ok_and(|v| (5..=100).contains(&v)) {
+        return Err("透明度必须为 5–100 的整数".into());
+    }
+    Ok(())
+}
+
 fn validate_visual_style(value: &str) -> Result<(), String> {
     if matches!(value, "classic" | "modern" | "elegant") { Ok(()) }
     else { Err("界面风格只能为 classic、modern 或 elegant".into()) }
@@ -38,6 +51,20 @@ fn validate_manual_news_and_provider_setting(key: &str, value: &str) -> Result<(
 mod manual_news_setting_tests {
     use super::validate_manual_news_and_provider_setting as validate;
 
+    #[test]
+    fn independent_notification_settings_reject_invalid_switches_colors_and_opacity() {
+        for key in ["alerts_enabled", "mainline_notifications_enabled", "model_trade_notifications_enabled", "model_condition_notifications_enabled", "research_notifications_enabled", "risk_notifications_enabled", "daily_briefs_enabled", "important_alerts_enabled", "important_alerts_native_enabled", "news_system_notifications_enabled"] {
+            assert!(super::validate_notification_setting(key,"0").is_ok());
+            assert!(super::validate_notification_setting(key,"1").is_ok());
+            assert!(super::validate_notification_setting(key,"true").is_err());
+        }
+        for key in ["important_alerts_text_color", "important_alerts_background"] {
+            assert!(super::validate_notification_setting(key,"#aA09Ff").is_ok());
+            for value in ["red", "#fff", "#GG0000", "#aA09Ff;", "#色000"] { assert!(super::validate_notification_setting(key,value).is_err()); }
+        }
+        for value in ["5","95","100"] { assert!(super::validate_notification_setting("important_alerts_opacity",value).is_ok()); }
+        for value in ["0","4","101","NaN","5.5", "99999999999999"] { assert!(super::validate_notification_setting("important_alerts_opacity",value).is_err()); }
+    }
     #[test]
     fn visual_style_accepts_saved_elegant_and_rejects_unknown_values() {
         for style in ["classic", "modern", "elegant"] { assert!(super::validate_visual_style(style).is_ok()); }
@@ -219,6 +246,7 @@ pub fn get_settings(db: State<'_, Arc<Database>>) -> Result<HashMap<String, Stri
 
 #[tauri::command]
 pub fn set_setting(
+    app: tauri::AppHandle,
     operations: State<'_, Arc<crate::operations_log::OperationsLog>>,
     db: State<'_, Arc<Database>>,
     stockdb: State<'_, Arc<StockDbManager>>,
@@ -234,9 +262,8 @@ pub fn set_setting(
     ) {
         return Err("本地 stockdb 配置必须通过专用设置操作修改".into());
     }
-    if matches!(key.as_str(), "alerts_enabled" | "research_notifications_enabled") && value != "0" && value != "1" {
-        return Err("提醒开关只能为 0 或 1".into());
-    }
+    validate_notification_setting(&key, &value)?;
+    if key==crate::important_alerts::PENDING_KEY { return Err("未确认提醒由后台维护，不能手动覆盖".into()); }
     if key==crate::stockdb_schedule::RECORD_KEY{return Err("更新进度由后台任务维护，不能手动覆盖".into());}
     if key=="research_data_alerts_enabled"{return Err("缺行情提醒已移除；更新连续5次失败会自动提示".into());}
     if key=="local_history_auto_update_enabled" && !matches!(value.as_str(),"0"|"1"){return Err("自动更新开关只能为0或1".into());}
@@ -317,6 +344,13 @@ pub fn set_setting(
         return stockdb.set_service_url(&value);
     }
     db.set_setting(&key, &value).map_err(|e| e.to_string())?;
+    if key == "important_alerts_enabled" { crate::important_alerts::refresh_visibility(&app, value == "1")?; }
+    if key == "important_alerts_opacity" {
+        if let Some(window) = tauri::Manager::get_webview_window(&app, "important-alerts") {
+            let opacity = value.parse::<u32>().map_err(|e| e.to_string())?;
+            crate::apply_ticker_opacity(&window, ((opacity as f64 / 100.0) * 255.0).round() as u8).map_err(|e| format!("透明度已保存，但窗口应用失败：{e}"))?;
+        }
+    }
     if key == crate::operations_log::SETTING {
         operations.set_enabled(value=="1");
     }

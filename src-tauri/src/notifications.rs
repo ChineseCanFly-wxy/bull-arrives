@@ -54,6 +54,7 @@ struct DeliveryJob {
     body: String,
     history_version: u64,
     force_desktop: bool,
+    important_delivered: bool,
     response: Option<tokio::sync::oneshot::Sender<DeliveryStatus>>,
 }
 
@@ -96,7 +97,7 @@ fn execute_job(app: &tauri::AppHandle, job: &DeliveryJob) -> DeliveryStatus {
     #[cfg(not(target_os = "windows"))]
     let native_result = send_native_with_app(app, &job.title, &job.body);
 
-    let desktop_needed = job.force_desktop || native_result.is_err();
+    let desktop_needed = !job.important_delivered && (job.force_desktop || native_result.is_err());
     let desktop_result = if desktop_needed {
         crate::desktop_toast::enqueue(
             app,
@@ -120,7 +121,9 @@ fn execute_job(app: &tauri::AppHandle, job: &DeliveryJob) -> DeliveryStatus {
         }
         .into(),
         native_error: native_result.err(),
-        desktop: if !desktop_needed {
+        desktop: if job.important_delivered {
+            "queued"
+        } else if !desktop_needed {
             "not-requested"
         } else if desktop_result.is_ok() {
             "queued"
@@ -225,7 +228,7 @@ fn archive_news_payload(app: &tauri::AppHandle, payload: &Value) {
     if let Some(db) = app.try_state::<std::sync::Arc<crate::db::Database>>() {
         let result = match payload["signal_kind"].as_str() {
             Some("news") => db.archive_news(payload),
-            Some("price" | "risk" | "research") => db.archive_brief_alert(payload),
+            Some("price" | "risk" | "research" | "system") => db.archive_brief_alert(payload),
             _ => Ok(()),
         };
         if let Err(error) = result {
@@ -237,14 +240,46 @@ fn archive_news_payload(app: &tauri::AppHandle, payload: &Value) {
 fn is_model_notice(payload: &Value) -> bool {
     payload["signal_kind"] == "research"
         && (payload.get("model_snapshot").is_some_and(Value::is_object)
-            || payload.get("intraday_snapshot").is_some_and(Value::is_object)
             || payload.get("condition_event").is_some_and(Value::is_object))
 }
 
-fn delivery_policy(payload: &Value, research_enabled: bool, desktop_always: bool) -> Option<bool> {
-    if payload["stockdb_update_alert"]["schema"]=="stockdb-update-failed-v1" {return Some(true);}
-    let model = is_model_notice(payload);
-    if payload["signal_kind"] == "research" && !research_enabled { None } else { Some(model || desktop_always) }
+pub fn notice_category(payload: &Value) -> &'static str {
+    if payload["signal_kind"] == "news" { return "news"; }
+    if payload["stockdb_update_alert"]["schema"] == "stockdb-update-failed-v1" { return "data"; }
+    if payload["signal_kind"] == "research" {
+        if payload["sector_code"].as_str().is_some_and(|s| !s.is_empty()) { return "mainline"; }
+        if payload["model_snapshot"]["follow_account_id"].is_number() { return "trades"; }
+        if payload["condition_event"].is_object() || payload["condition_events"].as_array().is_some_and(|rows| !rows.is_empty()) { return "conditions"; }
+        return "research";
+    }
+    if payload["signal_kind"] == "risk" { "risk" } else { "price" }
+}
+fn notification_setting_key(category: &str) -> &'static str {
+    match category {
+        "news" => "news_notifications_enabled",
+        "mainline" => "mainline_notifications_enabled",
+        "trades" => "model_trade_notifications_enabled",
+        "conditions" => "model_condition_notifications_enabled",
+        "research" => "research_notifications_enabled",
+        "risk" => "risk_notifications_enabled",
+        _ => "alerts_enabled",
+    }
+}
+fn is_important(category: &str) -> bool {
+    matches!(category, "mainline" | "trades" | "conditions" | "price" | "risk")
+}
+pub(crate) fn is_current_notice(payload: &Value) -> bool {
+    if payload["notification_category"] == "intraday" || payload["intraday_snapshot"].is_object() { return false; }
+    let supported = |event: &Value| event["schema"] != "model-condition-event-v1"
+        || crate::model_conditions::active_condition(&event["config"]).is_ok();
+    if let Some(events) = payload["condition_events"].as_array().filter(|events| !events.is_empty()) {
+        events.iter().all(supported)
+    } else {
+        supported(&payload["condition_event"])
+    }
+}
+fn delivery_policy(payload: &Value, enabled: bool, desktop_always: bool) -> Option<bool> {
+    (enabled && is_current_notice(payload) && notice_category(payload) != "data").then(|| is_model_notice(payload) || desktop_always)
 }
 
 fn news_after_start(payload: &Value, started_at: i64, now: i64) -> bool {
@@ -258,23 +293,15 @@ fn current_news(app: &tauri::AppHandle, payload: &Value) -> bool {
     news_after_start(payload,started_at,chrono::Utc::now().timestamp_millis())
 }
 pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
+    if !is_current_notice(&payload) { return; }
     // 关机期间的积压和时间未核实的原文只归档，不进入本次提醒或通知队列。
     if payload["signal_kind"]=="news" && !current_news(app,&payload) {
         archive_news_payload(app,&payload); return;
     }
-    if payload["signal_kind"]=="research" {
-        let title=payload["title"].as_str().unwrap_or("研究状态更新");
-        let body=payload["body"].as_str().unwrap_or("");
-        if payload["model_snapshot"]["follow_account_id"].as_i64().is_some() {
-            log::info!(target: "automation::trading", "{title}：{body}");
-        } else { log::info!(target: "automation::research", "{title}：{body}"); }
-    }
-    // Muting research delivery preserves history and never pauses model computation/trading.
-    let research_enabled = app.try_state::<std::sync::Arc<crate::db::Database>>()
-        .map(|db| db.research_notifications_enabled().unwrap_or(false)).unwrap_or(true);
-
-    let Some(force_desktop) = delivery_policy(&payload,
-        research_enabled,
+    let category = notice_category(&payload);
+    payload["notification_category"] = category.into();
+    let Some(mut force_desktop) = delivery_policy(&payload,
+        setting_enabled(app, notification_setting_key(category), category != "news"),
         setting_enabled(app, "notification_desktop_always", false)) else {
         record_history(app, &mut payload, false);
         return;
@@ -290,12 +317,28 @@ pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
         .unwrap_or("股票已达到提醒条件")
         .to_string();
     let (id, version) = record_history(app, &mut payload, true);
+    let mut important_delivered = false;
+    if is_important(category) && setting_enabled(app, "important_alerts_enabled", true) {
+        match crate::important_alerts::enqueue(app, payload.clone()) {
+            Ok(()) => important_delivered = true,
+            Err(error) => { force_desktop = true; log::warn!("重要悬浮提醒失败，转用系统及桌面通知：{error}"); },
+        }
+        if important_delivered && !setting_enabled(app, "important_alerts_native_enabled", false) {
+            update_delivery_status(app, &DeliveryStatus { id, history_version: version, native: "not-requested".into(), native_error: None, desktop: "queued".into(), desktop_error: None });
+            return;
+        }
+    }
+    if category == "news" && !setting_enabled(app, "news_system_notifications_enabled", true) {
+        update_delivery_status(app, &DeliveryStatus { id, history_version: version, native: "not-requested".into(), native_error: None, desktop: "not-requested".into(), desktop_error: None });
+        return;
+    }
     let job = DeliveryJob {
         id: id.clone(),
         title,
         body,
         history_version: version,
         force_desktop,
+        important_delivered,
         response: None,
     };
     if let Err(error) = app.state::<NotificationDelivery>().sender.try_send(job) {
@@ -305,7 +348,9 @@ pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
         };
         // The bounded worker cannot accept this item. Record the explicit failure;
         // never block the market scheduler or silently report success.
-        update_delivery_status(app, &queue_failure(id, version, message));
+        let mut status = queue_failure(id, version, message);
+        if important_delivered { status.desktop = "queued".into(); status.desktop_error = None; }
+        update_delivery_status(app, &status);
     }
 }
 
@@ -337,6 +382,7 @@ pub fn news_analysis_updated(app: &tauri::AppHandle, payload: &Value, push: bool
             title: format!("AI 解读 · {}", updated["title"].as_str().unwrap_or("资讯")),
             body: updated["body"].as_str().unwrap_or_default().to_string(),
             force_desktop: setting_enabled(app, "notification_desktop_always", false),
+            important_delivered: false,
             response: None,
         };
         if let Err(error) = app.state::<NotificationDelivery>().sender.try_send(job) {
@@ -346,12 +392,19 @@ pub fn news_analysis_updated(app: &tauri::AppHandle, payload: &Value, push: bool
 }
 
 #[tauri::command]
-pub async fn test_notification(app: tauri::AppHandle, research: Option<bool>) -> Result<DeliveryStatus, String> {
+pub async fn test_notification(app: tauri::AppHandle, research: Option<bool>, category: Option<String>) -> Result<DeliveryStatus, String> {
     let id = format!(
         "test-{}-{}",
         chrono::Utc::now().timestamp_millis(),
         NEXT_ID.fetch_add(1, Ordering::Relaxed)
     );
+    if let Some(category) = category.as_deref() {
+        if !matches!(category, "news" | "mainline" | "trades" | "conditions" | "research" | "price" | "risk" | "floating") { return Err("提醒类别无效".into()); }
+        if (is_important(category) || category == "floating") && setting_enabled(&app, "important_alerts_enabled", true) {
+            crate::important_alerts::enqueue(&app, serde_json::json!({"id":id,"notification_category":category,"title":"重要操作提醒测试","body":"这是测试消息，不代表买入、卖出或成交。拖动标题栏移动窗口，拖动右下角调整大小；确认已读后移除此条。","received_at":chrono::Utc::now().timestamp_millis()}))?;
+            return Ok(DeliveryStatus { id, history_version: u64::MAX, native: "not-requested".into(), native_error: None, desktop: "queued".into(), desktop_error: None });
+        }
+    }
     let (response, receiver) = tokio::sync::oneshot::channel();
     let job = DeliveryJob {
         id: id.clone(),
@@ -360,6 +413,7 @@ pub async fn test_notification(app: tauri::AppHandle, research: Option<bool>) ->
         history_version: u64::MAX,
         // Test both channels, including the desktop channel required by model notices.
         force_desktop: true,
+        important_delivered: false,
         response: Some(response),
     };
     app.state::<NotificationDelivery>()
@@ -376,13 +430,22 @@ pub async fn test_notification(app: tauri::AppHandle, research: Option<bool>) ->
 }
 
 #[tauri::command]
+pub fn get_alert_archive(app: tauri::AppHandle, db: State<'_, std::sync::Arc<crate::db::Database>>) -> Result<Vec<Value>, String> {
+    let now = chrono::Utc::now();
+    let mut rows: Vec<Value> = db.brief_alerts_between(&(now-chrono::Duration::days(14)).to_rfc3339(), &now.to_rfc3339())?.into_iter().filter(is_current_notice).take(500).collect();
+    for pending in crate::important_alerts::get_important_alerts(app).entries {
+        if !pending["id"].as_str().is_some_and(|id| id.starts_with("test-")) && !rows.iter().any(|row| row["id"] == pending["id"]) { rows.push(pending); }
+    }
+    Ok(rows)
+}
+#[tauri::command]
 pub fn get_notification_history(
     history: State<'_, NotificationHistory>,
 ) -> NotificationHistorySnapshot {
     let inner = history.0.lock().unwrap_or_else(|e| e.into_inner());
     NotificationHistorySnapshot {
         version: inner.version,
-        entries: inner.entries.iter().cloned().collect(),
+        entries: inner.entries.iter().filter(|row| is_current_notice(row)).cloned().collect(),
     }
 }
 
@@ -421,9 +484,9 @@ mod tests {
         assert!(!news_after_start(&serde_json::json!({"published_date":"2026-10-07","received_at":now}),start,now));
     }
     #[test]
-    fn model_popups_only_apply_to_model_and_intraday_observations() {
+    fn model_popups_only_apply_to_active_research_observations() {
         assert!(is_model_notice(&serde_json::json!({"signal_kind":"research","model_snapshot":{}})));
-        assert!(is_model_notice(&serde_json::json!({"signal_kind":"research","intraday_snapshot":{}})));
+        assert!(!is_model_notice(&serde_json::json!({"signal_kind":"research","intraday_snapshot":{}})));
         assert!(is_model_notice(&serde_json::json!({"signal_kind":"research","condition_event":{"schema":"model-condition-event-v1"}})));
         assert!(!is_model_notice(&serde_json::json!({"signal_kind":"news","model_snapshot":{}})));
         assert!(!is_model_notice(&serde_json::json!({"signal_kind":"research","model_snapshot":null})));
@@ -441,10 +504,52 @@ mod tests {
         assert_eq!(delivery_policy(&other_research, false, true), None);
         assert_eq!(delivery_policy(&other_research, true, false), Some(false));
         let data_error=serde_json::json!({"signal_kind":"system","stockdb_update_alert":{"schema":"stockdb-update-failed-v1"}});
-        assert_eq!(delivery_policy(&data_error,false,false),Some(true));
+        assert_eq!(delivery_policy(&data_error,false,false),None);
+        assert_eq!(delivery_policy(&data_error,true,false),None);
+        assert_eq!(delivery_policy(&data_error,true,true),None);
+        let retired_intraday=serde_json::json!({"signal_kind":"research","intraday_snapshot":{}});
+        assert_eq!(delivery_policy(&retired_intraday,true,true),None);
         let news = serde_json::json!({"signal_kind":"news"});
-        assert_eq!(delivery_policy(&news, false, false), Some(false));
+        assert_eq!(delivery_policy(&news, false, false), None);
         assert_eq!(delivery_policy(&news, true, true), Some(true));
+    }
+
+    #[test]
+    fn category_switches_and_important_channels_do_not_mix_news_with_mainline_or_trades() {
+        let cases = [
+            (serde_json::json!({"signal_kind":"news","sector_code":"BK0001"}), "news", false),
+            (serde_json::json!({"signal_kind":"research","sector_code":"BK0001"}), "mainline", true),
+            (serde_json::json!({"signal_kind":"research","model_snapshot":{"follow_account_id":1}}), "trades", true),
+            (serde_json::json!({"signal_kind":"research","condition_events":[{}]}), "conditions", true),
+            (serde_json::json!({"signal_kind":"research","model_snapshot":{}}), "research", false),
+            (serde_json::json!({"signal_kind":"price"}), "price", true),
+            (serde_json::json!({"signal_kind":"risk"}), "risk", true),
+        ];
+        for (payload, category, important) in cases {
+            assert_eq!(notice_category(&payload), category);
+            assert_eq!(is_important(category), important);
+            assert_eq!(delivery_policy(&payload, false, true), None);
+        }
+        assert_ne!(notification_setting_key("mainline"), notification_setting_key("research"));
+        assert_ne!(notification_setting_key("trades"), notification_setting_key("conditions"));
+        assert_ne!(notification_setting_key("price"), notification_setting_key("risk"));
+    }
+    #[test]
+    fn removed_observations_are_excluded_from_history_pending_and_delivery() {
+        let removed = serde_json::json!({"signal_kind":"research","intraday_snapshot":{}});
+        let old_condition = serde_json::json!({"schema":"model-condition-event-v1","config":{"preset":"model_confirm"}});
+        let active_condition = serde_json::json!({"schema":"model-condition-event-v1","config":{"preset":"model_hit"}});
+        let legacy = serde_json::json!({"signal_kind":"research","condition_event":old_condition});
+        let active = serde_json::json!({"signal_kind":"research","condition_event":active_condition});
+        let removed_test = serde_json::json!({"id":"test-old","notification_category":"intraday"});
+        for row in [&removed, &legacy, &removed_test] {
+            assert!(!is_current_notice(row));
+            assert_eq!(delivery_policy(row, true, true), None);
+        }
+        assert!(is_current_notice(&active));
+        assert!(!is_current_notice(&serde_json::json!({"condition_events":[old_condition,active_condition]})));
+        let rows = vec![removed, legacy, active.clone()].into_iter().filter(is_current_notice).collect::<Vec<_>>();
+        assert_eq!(rows, vec![active]);
     }
 
     #[test]

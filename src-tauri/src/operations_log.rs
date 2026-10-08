@@ -107,9 +107,7 @@ fn source(target: &str) -> Option<&'static str> {
     match target {
         "automation::data" => Some("数据更新"),
         "automation::model" => Some("自动模型"),
-        "automation::trading" => Some("模拟交易"),
         "automation::mainline" => Some("市场主线"),
-        "automation::news" => Some("资讯采集"),
         "automation::research" => Some("自动研究"),
         _ => None,
     }
@@ -154,6 +152,34 @@ pub fn clear_automatic_operations_log(log: State<'_, Arc<OperationsLog>>) -> Sna
 mod tests {
     use super::*;
     #[test]
+    fn data_update_failure_uses_only_the_automatic_log_switch() {
+        let state = Arc::new(OperationsLog::default());
+        let logger = OperationsLogger(state.clone());
+        state.set_enabled(false);
+        logger.log(&Record::builder().args(format_args!("数据更新失败，等待重试")).level(Level::Error).target("automation::data").build());
+        assert!(state.snapshot().entries.is_empty());
+        state.set_enabled(true);
+        logger.log(&Record::builder().args(format_args!("数据更新失败，等待重试")).level(Level::Error).target("automation::data").build());
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].source, "数据更新");
+        assert_eq!(snapshot.entries[0].level, "失败");
+        assert_eq!(snapshot.entries[0].message, "数据更新失败，等待重试");
+    }
+    #[test]
+    fn automatic_log_only_records_task_execution() {
+        let state = Arc::new(OperationsLog::default());
+        let logger = OperationsLogger(state.clone());
+        for target in ["automation::news", "automation::trading", "notifications", "network"] {
+            logger.log(&Record::builder().args(format_args!("提醒不重复进入任务记录")).level(Level::Info).target(target).build());
+        }
+        assert!(state.snapshot().entries.is_empty());
+        for target in ["automation::data", "automation::model", "automation::mainline", "automation::research"] {
+            logger.log(&Record::builder().args(format_args!("后台任务已执行")).level(Level::Info).target(target).build());
+        }
+        assert_eq!(state.snapshot().entries.len(), 4);
+    }
+    #[test]
     fn automatic_log_is_independent_bounded_and_clear_does_not_disable_it() {
         let state = Arc::new(OperationsLog::default());
         let logger = OperationsLogger(state.clone());
@@ -164,6 +190,8 @@ mod tests {
                 .target("network")
                 .build(),
         );
+        assert!(state.snapshot().entries.is_empty());
+        logger.log(&Record::builder().args(format_args!("资讯采集不进入自动操作")).level(Level::Info).target("automation::news").build());
         assert!(state.snapshot().entries.is_empty());
         state.set_enabled(false);
         state.record("自动模型", Level::Info, "should not appear");

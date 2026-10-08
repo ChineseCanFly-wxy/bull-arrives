@@ -31,9 +31,11 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "dragDropEnabled": true,
-        "resizable": false,
+        "resizable": true,
         "focus": false,
-        "visible": false
+        "visible": false,
+        "minWidth": 160,
+        "minHeight": 32
       },
       {
         "label": "ticker-quick",
@@ -45,6 +47,21 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "resizable": false,
+        "visible": false
+      },
+      {
+        "label": "important-alerts",
+        "title": "Bull Arrives 重要操作提醒",
+        "url": "toast.html",
+        "width": 420,
+        "height": 300,
+        "minWidth": 280,
+        "minHeight": 160,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": true,
+        "focus": false,
         "visible": false
       }
     ],

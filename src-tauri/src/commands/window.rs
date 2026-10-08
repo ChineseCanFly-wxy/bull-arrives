@@ -4,6 +4,47 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 use crate::db::Database;
 
+fn clamp_floating_position(position: (i32, i32), size: (u32, u32), origin: (i32, i32), bounds: (u32, u32)) -> (i32, i32) {
+    (position.0.clamp(origin.0, (origin.0 + bounds.0 as i32 - size.0 as i32).max(origin.0)),
+     position.1.clamp(origin.1, (origin.1 + bounds.1 as i32 - size.1 as i32).max(origin.1)))
+}
+pub(crate) fn restore_floating_geometry<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, db: &Database, prefix: &'static str) -> Result<(), String> {
+    let saved = |suffix: &str| db.get_setting(&format!("{prefix}_{suffix}")).ok().flatten();
+    if let (Some(width), Some(height)) = (saved("width").and_then(|s| s.parse::<f64>().ok()), saved("height").and_then(|s| s.parse::<f64>().ok())) {
+        let min = if prefix == "ticker" { (160.0, 32.0) } else { (280.0, 160.0) };
+        if width.is_finite() && height.is_finite() { window.set_size(tauri::LogicalSize::new(width.clamp(min.0, 2000.0), height.clamp(min.1, 1600.0))).map_err(|e| e.to_string())?; }
+    }
+    let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+    let position = saved("x").and_then(|s| s.parse::<i32>().ok()).zip(saved("y").and_then(|s| s.parse::<i32>().ok()));
+    let monitor = position.and_then(|(x,y)| monitors.iter().find(|m| {
+        let area=m.work_area(); x>=area.position.x && y>=area.position.y && x<area.position.x+area.size.width as i32 && y<area.position.y+area.size.height as i32
+    })).cloned().or(window.primary_monitor().map_err(|e| e.to_string())?);
+    if let Some(monitor) = monitor {
+        let area = monitor.work_area(); let size = window.outer_size().map_err(|e| e.to_string())?;
+        let fallback = (area.position.x + area.size.width as i32 - size.width as i32 - 16,
+            if prefix == "ticker" { area.position.y + area.size.height as i32 - size.height as i32 - 60 } else { area.position.y + 32 });
+        let (x,y) = clamp_floating_position(position.unwrap_or(fallback), (size.width,size.height), (area.position.x,area.position.y), (area.size.width,area.size.height));
+        window.set_position(tauri::PhysicalPosition::new(x,y)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+pub(crate) fn track_floating_geometry<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, db: Arc<Database>, prefix: &'static str) {
+    let tracked = window.clone();
+    window.on_window_event(move |event| {
+        let values = match event {
+            tauri::WindowEvent::Resized(size) if size.width > 0 && size.height > 0 => {
+                let scale = tracked.scale_factor().unwrap_or(1.0);
+                vec![("width", (size.width as f64 / scale).to_string()), ("height", (size.height as f64 / scale).to_string())]
+            }
+            tauri::WindowEvent::Moved(position) => vec![("x",position.x.to_string()), ("y",position.y.to_string())],
+            _ => return,
+        };
+        for (suffix,value) in values {
+            if let Err(e)=db.set_setting(&format!("{prefix}_{suffix}"), &value) { log::warn!("保存悬浮窗位置或尺寸失败：{e}"); }
+        }
+    });
+}
+
 #[tauri::command]
 pub fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
     let window = app
@@ -165,7 +206,7 @@ fn ticker_height(visible_rows: u32, max_height: u32) -> u32 {
 
 /// 根据当前可见行情行数调整悬浮窗高度，最多占用显示器可用高度。
 #[tauri::command]
-pub fn resize_ticker_window(app: AppHandle, visible_rows: u32) -> Result<(), String> {
+pub fn resize_ticker_window(app: AppHandle, db: State<'_, Arc<Database>>, visible_rows: u32) -> Result<(), String> {
     let window = app
         .get_webview_window("ticker")
         .ok_or_else(|| "Ticker window not found".to_string())?;
@@ -177,6 +218,7 @@ pub fn resize_ticker_window(app: AppHandle, visible_rows: u32) -> Result<(), Str
         .unwrap_or(600)
         .saturating_sub(40)
         .max(38);
+    if db.get_setting("ticker_width").map_err(|e| e.to_string())?.is_some() { return Ok(()); }
     let height = ticker_height(visible_rows, max_height);
     window
         .set_size(tauri::LogicalSize::new(230_u32, height))
@@ -282,7 +324,13 @@ pub fn close_ticker_quick_add(app: AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod ticker_size_tests {
-    use super::ticker_height;
+    use super::{ticker_height, clamp_floating_position};
+    #[test]
+    fn floating_windows_restore_inside_current_work_area_including_negative_monitors() {
+        assert_eq!(clamp_floating_position((-1500,-200), (420,300), (-1920,0), (1920,1040)), (-1500,0));
+        assert_eq!(clamp_floating_position((1900,1000), (420,300), (0,0), (1920,1040)), (1500,740));
+        assert_eq!(clamp_floating_position((10,10), (3000,2000), (0,0), (1920,1040)), (0,0));
+    }
     #[test]
     fn adaptive_height_tracks_rows_and_never_exceeds_screen_limit() {
         assert_eq!(ticker_height(0, 800), 38);
