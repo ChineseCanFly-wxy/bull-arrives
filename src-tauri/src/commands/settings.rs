@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tauri::State;
 
 fn validate_notification_setting(key: &str, value: &str) -> Result<(), String> {
-    if matches!(key, "alerts_enabled" | "research_notifications_enabled" | "mainline_notifications_enabled" | "model_trade_notifications_enabled" | "model_condition_notifications_enabled" | "intraday_notifications_enabled" | "risk_notifications_enabled" | "data_notifications_enabled" | "daily_briefs_enabled" | "important_alerts_enabled" | "important_alerts_native_enabled" | "news_system_notifications_enabled" | "notification_desktop_always") && value != "0" && value != "1" {
+    if matches!(key, "alerts_enabled" | "research_notifications_enabled" | "mainline_notifications_enabled" | "model_trade_notifications_enabled" | "model_condition_notifications_enabled" | "risk_notifications_enabled" | "daily_briefs_enabled" | "important_alerts_enabled" | "important_alerts_native_enabled" | "news_system_notifications_enabled" | "notification_desktop_always") && value != "0" && value != "1" {
         return Err("提醒开关只能为 0 或 1".into());
     }
     if matches!(key, "important_alerts_text_color" | "important_alerts_background") && !(value.len() == 7 && value.starts_with('#') && value.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)) {
@@ -53,7 +53,7 @@ mod manual_news_setting_tests {
 
     #[test]
     fn independent_notification_settings_reject_invalid_switches_colors_and_opacity() {
-        for key in ["alerts_enabled", "mainline_notifications_enabled", "model_trade_notifications_enabled", "model_condition_notifications_enabled", "intraday_notifications_enabled", "research_notifications_enabled", "risk_notifications_enabled", "data_notifications_enabled", "daily_briefs_enabled", "important_alerts_enabled", "important_alerts_native_enabled", "news_system_notifications_enabled"] {
+        for key in ["alerts_enabled", "mainline_notifications_enabled", "model_trade_notifications_enabled", "model_condition_notifications_enabled", "research_notifications_enabled", "risk_notifications_enabled", "daily_briefs_enabled", "important_alerts_enabled", "important_alerts_native_enabled", "news_system_notifications_enabled"] {
             assert!(super::validate_notification_setting(key,"0").is_ok());
             assert!(super::validate_notification_setting(key,"1").is_ok());
             assert!(super::validate_notification_setting(key,"true").is_err());

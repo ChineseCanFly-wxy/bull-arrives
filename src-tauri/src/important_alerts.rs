@@ -44,8 +44,9 @@ fn save(app: &tauri::AppHandle, snapshot: &Snapshot) -> Result<(), String> {
 }
 pub fn restore(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(raw) = app.state::<std::sync::Arc<crate::db::Database>>().get_setting(PENDING_KEY).map_err(|e| e.to_string())? {
-        let snapshot: Snapshot = serde_json::from_str(&raw).map_err(|e| format!("未确认提醒记录损坏，请在分类归档中核对：{e}"))?;
+        let mut snapshot: Snapshot = serde_json::from_str(&raw).map_err(|e| format!("未确认提醒记录损坏，请在分类归档中核对：{e}"))?;
         if snapshot.entries.len() > LIMIT || snapshot.entries.iter().any(|row| !row["id"].is_string() || !row["title"].is_string() || !row["body"].is_string()) { return Err("未确认提醒记录格式无效".into()); }
+        snapshot.entries.retain(crate::notifications::is_current_notice);
         *app.state::<ImportantAlerts>().0.lock().unwrap_or_else(|e| e.into_inner()) = snapshot;
     }
     Ok(())

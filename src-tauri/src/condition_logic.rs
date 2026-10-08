@@ -5,14 +5,12 @@ use serde::{Deserialize, Serialize};
 pub enum ConditionTree {
     And { children: Vec<ConditionTree> },
     Or { children: Vec<ConditionTree> },
-    Intraday {},
     Mainline {},
     ChangeAbove { value: f64 },
     ChangeBelow { value: f64 },
 }
 #[derive(Default)]
 pub struct Facts {
-    pub intraday: Option<bool>,
     pub mainline: Option<bool>,
     pub change_pct: Option<f64>,
 }
@@ -42,15 +40,6 @@ impl ConditionTree {
             Ok(())
         }
         visit(self, 1, &mut 0)
-    }
-    pub fn needs_intraday(&self) -> bool {
-        match self {
-            Self::Intraday { .. } => true,
-            Self::And { children } | Self::Or { children } => {
-                children.iter().any(Self::needs_intraday)
-            }
-            _ => false,
-        }
     }
     pub fn needs_mainline(&self) -> bool {
         match self {
@@ -89,7 +78,6 @@ impl ConditionTree {
                     None
                 }
             }
-            Self::Intraday { .. } => facts.intraday,
             Self::Mainline { .. } => facts.mainline,
             Self::ChangeAbove { value } => facts
                 .change_pct
@@ -109,55 +97,27 @@ mod tests {
     fn unknown_is_not_false_and_scope_respects_grouping() {
         let node = ConditionTree::And {
             children: vec![
-                ConditionTree::Intraday {},
+                ConditionTree::ChangeBelow { value: 3.0 },
                 ConditionTree::Or {
-                    children: vec![
-                        ConditionTree::Mainline {},
-                        ConditionTree::ChangeAbove { value: 1.0 },
-                    ],
+                    children: vec![ConditionTree::Mainline {}, ConditionTree::ChangeAbove { value: 1.0 }],
                 },
             ],
         };
         node.validate().unwrap();
-        assert_eq!(
-            node.evaluate(&Facts {
-                intraday: Some(true),
-                mainline: None,
-                change_pct: Some(2.)
-            }),
-            Some(true)
-        );
-        assert_eq!(
-            node.evaluate(&Facts {
-                intraday: Some(true),
-                mainline: None,
-                change_pct: Some(0.)
-            }),
-            None
-        );
-        assert_eq!(
-            node.evaluate(&Facts {
-                intraday: Some(false),
-                mainline: None,
-                change_pct: None
-            }),
-            Some(false)
-        );
+        assert_eq!(node.evaluate(&Facts { mainline: None, change_pct: Some(2.0) }), Some(true));
+        assert_eq!(node.evaluate(&Facts { mainline: None, change_pct: Some(0.0) }), None);
+        assert_eq!(node.evaluate(&Facts { mainline: None, change_pct: Some(4.0) }), Some(false));
+        assert_eq!(node.evaluate(&Facts::default()), None);
     }
     #[test]
     fn bounds_and_unknown_fields_are_rejected() {
-        assert!(
-            serde_json::from_str::<ConditionTree>(r#"{"op":"intraday","script":"run"}"#).is_err()
-        );
+        assert!(serde_json::from_str::<ConditionTree>(r#"{"op":"intraday"}"#).is_err());
+        assert!(serde_json::from_str::<ConditionTree>(r#"{"op":"mainline","script":"run"}"#).is_err());
         assert!(ConditionTree::And { children: vec![] }.validate().is_err());
-        assert!(ConditionTree::ChangeAbove { value: f64::NAN }
-            .validate()
-            .is_err());
-        let mut tree = ConditionTree::Intraday {};
+        assert!(ConditionTree::ChangeAbove { value: f64::NAN }.validate().is_err());
+        let mut tree = ConditionTree::Mainline {};
         for _ in 0..5 {
-            tree = ConditionTree::Or {
-                children: vec![tree, ConditionTree::Mainline {}],
-            };
+            tree = ConditionTree::Or { children: vec![tree, ConditionTree::Mainline {}] };
         }
         assert!(tree.validate().is_err());
     }

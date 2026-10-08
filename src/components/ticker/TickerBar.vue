@@ -247,6 +247,7 @@ async function showContextMenu() {
     @wheel.stop
     @click="handleClick"
   >
+    <div class="ticker-items">
     <div v-if="groupFlash" class="ticker-empty">当前分组 · {{ groupName }}</div>
     <template v-else-if="initFailed">
       <div class="ticker-row ticker-error-row">
@@ -276,6 +277,7 @@ async function showContextMenu() {
       </div>
     </template>
     <div v-else class="ticker-empty">暂无自选</div>
+    </div>
     <button
       v-if="!initFailed"
       class="ticker-add"
@@ -283,6 +285,7 @@ async function showContextMenu() {
       title="快速自选：搜索添加 / 直接删除（不打开主界面）"
       aria-label="快速自选"
       @mousedown.stop
+      @keydown.stop
       @click.stop="openQuickAdd"
     >＋</button>
     <WindowResizeHandle />
@@ -300,21 +303,30 @@ async function showContextMenu() {
   justify-content: center;
   user-select: none;
   cursor: grab;
-  overflow: auto;
+  overflow: hidden;
   padding: var(--space-1) var(--space-2);
-  /* 右侧留出「＋」的位置，避免它压住涨跌幅那一列 */
-  padding-right: 20px;
+  /* 自选与拉伸各占一个热区，窄窗也不会叠在一起。 */
+  padding-right: 50px;
   transition: background var(--transition-fast);
 }
 .ticker-bar:hover {
   background: rgba(255, 255, 255, 0.03);
 }
-.ticker-bar.fixed {
-  justify-content: flex-start;
+.ticker-items {
+  display: flex;
+  flex-direction: column;
+  justify-content: safe center;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+}
+.ticker-bar.fixed .ticker-items {
+  justify-content: flex-start;
 }
 .ticker-row {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: var(--space-1);
   line-height: 1.4;
@@ -394,10 +406,10 @@ async function showContextMenu() {
 .ticker-add {
   position: absolute;
   top: 50%;
-  right: 3px;
+  right: 27px;
   transform: translateY(-50%);
-  width: 14px;
-  height: 14px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: none;
   border-radius: var(--radius-sm);
@@ -411,9 +423,13 @@ async function showContextMenu() {
   transition: opacity var(--transition-fast), background var(--transition-fast),
     color var(--transition-fast);
 }
-.ticker-bar:hover .ticker-add {
+.ticker-bar:hover .ticker-add,
+.ticker-bar:focus-within .ticker-add {
   opacity: 1;
   pointer-events: auto;
+}
+.ticker-add:focus-visible {
+  outline: 2px solid currentColor;
 }
 .ticker-add:hover {
   background: var(--color-accent-dim);

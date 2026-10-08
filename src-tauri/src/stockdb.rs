@@ -706,7 +706,9 @@ impl StockDbManager {
         let _guard=self.operation.try_lock().map_err(|_|"StockDB正在执行其他操作，请稍后再试")?;
         let now=chrono::Utc::now();let cfg=crate::stockdb_schedule::config(&self.db)?;
         crate::stockdb_schedule::claim(&self.db,&cfg,now,false,true)?;
-        self.perform_update(now).await
+        let result=self.perform_update(now).await;
+        self.record_update_failure(chrono::Utc::now())?;
+        result
     }
 
     pub async fn scheduled_update(&self,now:chrono::DateTime<chrono::Utc>,startup:bool)->Result<(),String>{
@@ -714,15 +716,16 @@ impl StockDbManager {
         let cfg=crate::stockdb_schedule::config(&self.db)?;
         let record=self.db.stockdb_update_record()?;
         let state=crate::stockdb_schedule::due(&cfg,&record,now,startup,record.running_owner.is_some_and(crate::stockdb_schedule::owner_alive))?;
-        if state!="due" {if state=="failed"{self.publish_update_failure(now)?;}return Ok(());}
+        if state!="due" {if state=="failed"{self.record_update_failure(now)?;}return Ok(());}
         let Ok(_guard)=self.operation.try_lock() else{return Ok(());};
-        if !crate::stockdb_schedule::claim(&self.db,&cfg,now,startup,false)?{self.publish_update_failure(now)?;return Ok(());}
+        if !crate::stockdb_schedule::claim(&self.db,&cfg,now,startup,false)?{self.record_update_failure(now)?;return Ok(());}
         log::info!(target: "automation::data", "开始定时数据更新，第 {} 次尝试；更新期间程序管理服务启停",record.failures.saturating_add(1));
         let result=self.perform_update(now).await;
         match &result {
             Ok(message)=>log::info!(target: "automation::data", "定时数据更新完成：{message}"),
-            Err(error)=>log::warn!(target: "automation::data", "定时数据更新失败：{error}；重试进度由后台维护"),
+            Err(error)=>log::error!(target: "automation::data", "定时数据更新失败：{error}"),
         }
+        self.record_update_failure(chrono::Utc::now())?;
         result.map(|_|())
     }
 
@@ -730,13 +733,12 @@ impl StockDbManager {
         let result=self.update_locked(now).await;
         crate::stockdb_schedule::finish(&self.db,now,chrono::Utc::now(),match &result{Ok((_,as_of))=>Ok(as_of.clone()),Err(error)=>Err(error.clone())})?;
         self.set_status(|status|{status.busy=false;status.phase=None;if matches!(status.state.as_str(),"updating"|"restarting"){status.state="error".into();}if let Err(error)=&result{status.last_error=Some(error.clone());status.message=error.clone();}else if let Ok((message,_))=&result{status.message=message.clone();status.last_error=None;}});
-        self.publish_update_failure(chrono::Utc::now())?;
         result.map(|(message,_)|message)
     }
 
-    fn publish_update_failure(&self,now:chrono::DateTime<chrono::Utc>)->Result<(),String>{
+    fn record_update_failure(&self,now:chrono::DateTime<chrono::Utc>)->Result<(),String>{
         if let Some(error)=crate::stockdb_schedule::claim_failure_notice(&self.db,now)?{
-            crate::notifications::publish(&self.app,serde_json::json!({"signal_kind":"system","signal_tag":"数据更新失败","title":"StockDB更新连续5次失败","body":format!("已每隔1分钟重试，今天的自动重试已停止。原因：{}。请检查网络和本地数据设置，修复后可点击更新数据重试。近期行情源兜底仍保留，模型会继续核对数据日期。",error.chars().take(600).collect::<String>()),"stockdb_update_alert":{"schema":"stockdb-update-failed-v1","day":crate::stockdb_schedule::day(now),"failures":5}}));
+            log::error!(target: "automation::data", "StockDB更新连续5次失败，今天的自动重试已停止。原因：{}；修复后可点击更新数据重试。", error.chars().take(600).collect::<String>());
         }
         Ok(())
     }

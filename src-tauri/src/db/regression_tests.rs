@@ -166,10 +166,12 @@ fn research_notification_migration_preserves_mute_and_then_is_independent() {
 fn category_notification_migration_preserves_old_mute_and_independent_choices() {
     let db = database();
     db.set_setting("research_notifications_enabled", "0").unwrap();
-    let keys = ["mainline_notifications_enabled", "model_trade_notifications_enabled", "model_condition_notifications_enabled", "intraday_notifications_enabled"];
+    let keys = ["mainline_notifications_enabled", "model_trade_notifications_enabled", "model_condition_notifications_enabled"];
     for key in keys { db.conn.lock().unwrap().execute("DELETE FROM settings WHERE key=?1", [key]).unwrap(); }
     db.init_defaults().unwrap();
     for key in keys { assert_eq!(db.get_setting(key).unwrap().as_deref(), Some("0")); }
+    assert!(db.get_setting("intraday_notifications_enabled").unwrap().is_none());
+    assert!(db.get_setting("data_notifications_enabled").unwrap().is_none());
     db.set_setting("mainline_notifications_enabled", "1").unwrap();
     db.set_setting("model_trade_notifications_enabled", "1").unwrap();
     db.init_defaults().unwrap();

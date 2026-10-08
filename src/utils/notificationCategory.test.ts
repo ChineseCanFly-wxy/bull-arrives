@@ -8,7 +8,6 @@ test('资讯、主线与每种研究提醒各归其位', () => {
   assert.equal(noticeCategory({signal_kind:'research', model_snapshot:{follow_account_id:1}}), 'trades');
   assert.equal(noticeCategory({signal_kind:'research', condition_event:{}}), 'conditions');
   assert.equal(noticeCategory({signal_kind:'research', condition_events:[{}]}), 'conditions');
-  assert.equal(noticeCategory({signal_kind:'research', intraday_snapshot:{}}), 'intraday');
   assert.equal(noticeCategory({signal_kind:'research', model_snapshot:{}}), 'research');
   assert.equal(noticeCategory({signal_kind:'risk'}), 'risk');
   assert.equal(noticeCategory({signal_kind:'price'}), 'price');
@@ -17,7 +16,7 @@ test('资讯、主线与每种研究提醒各归其位', () => {
 
 test('合并入口保留每种提醒的独立分类', () => {
   assert.deepEqual(
-    ['news', 'mainline', 'trades', 'conditions', 'intraday', 'research', 'price', 'risk', 'data', 'briefs', 'operations', 'floating'].map(noticeSection),
-    ['news', 'mainline', 'research', 'research', 'research', 'research', 'price', 'price', 'price', 'news', 'operations', 'floating'],
+    ['news', 'mainline', 'trades', 'conditions', 'research', 'price', 'risk', 'data', 'briefs', 'operations', 'floating'].map(noticeSection),
+    ['news', 'mainline', 'research', 'research', 'research', 'price', 'price', 'operations', 'news', 'operations', 'floating'],
   );
 });

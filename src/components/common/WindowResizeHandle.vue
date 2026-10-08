@@ -14,5 +14,5 @@ async function keyResize(event: KeyboardEvent) {
   } catch (error) { emit('error', String(error)); console.error('悬浮窗缩放失败', error); }
 }
 </script>
-<template><button class="window-resize-handle" type="button" title="拖动缩放；方向键微调" aria-label="调整悬浮窗大小" @mousedown.left.stop.prevent="resize" @click.stop @keydown="keyResize">◢</button></template>
-<style scoped>.window-resize-handle{position:absolute;right:1px;bottom:1px;width:16px;height:16px;padding:0;border:0;background:transparent;color:inherit;opacity:.65;cursor:nwse-resize;line-height:16px;font-size:13px}.window-resize-handle:focus-visible{outline:2px solid currentColor;opacity:1}</style>
+<template><button class="window-resize-handle" type="button" title="拖动缩放；方向键微调" aria-label="调整悬浮窗大小" @mousedown.left.stop.prevent="resize" @click.stop @keydown.stop="keyResize">◢</button></template>
+<style scoped>.window-resize-handle{position:absolute;right:2px;bottom:2px;width:22px;height:22px;padding:0;border:0;background:transparent;color:inherit;opacity:.65;cursor:nwse-resize;line-height:22px;font-size:15px;border-radius:3px}.window-resize-handle:hover{opacity:1;background:color-mix(in srgb,currentColor 12%,transparent)}.window-resize-handle:focus-visible{outline:2px solid currentColor;opacity:1}</style>

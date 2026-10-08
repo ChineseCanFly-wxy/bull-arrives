@@ -152,6 +152,21 @@ pub fn clear_automatic_operations_log(log: State<'_, Arc<OperationsLog>>) -> Sna
 mod tests {
     use super::*;
     #[test]
+    fn data_update_failure_uses_only_the_automatic_log_switch() {
+        let state = Arc::new(OperationsLog::default());
+        let logger = OperationsLogger(state.clone());
+        state.set_enabled(false);
+        logger.log(&Record::builder().args(format_args!("数据更新失败，等待重试")).level(Level::Error).target("automation::data").build());
+        assert!(state.snapshot().entries.is_empty());
+        state.set_enabled(true);
+        logger.log(&Record::builder().args(format_args!("数据更新失败，等待重试")).level(Level::Error).target("automation::data").build());
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].source, "数据更新");
+        assert_eq!(snapshot.entries[0].level, "失败");
+        assert_eq!(snapshot.entries[0].message, "数据更新失败，等待重试");
+    }
+    #[test]
     fn automatic_log_only_records_task_execution() {
         let state = Arc::new(OperationsLog::default());
         let logger = OperationsLogger(state.clone());

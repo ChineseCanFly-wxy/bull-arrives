@@ -34,12 +34,11 @@ fn presets() -> Value {
         {"id":"model_hit","name":"模型新命中 / 失效","description":"下一次完成日重新筛选后，模型条件新成立或失效时提醒"}
     ])
 }
-const RETIRED_MINUTE: &str = "分钟走势确认已停用；请从筛选结果重新添加模型命中或可用自定义提醒，旧记录仍保留";
-fn active_condition(config:&Value)->Result<Option<crate::condition_logic::ConditionTree>,String>{
+pub(crate) fn active_condition(config:&Value)->Result<Option<crate::condition_logic::ConditionTree>,String>{
     match config["preset"].as_str(){
         Some("model_hit")=>Ok(None),
-        Some("custom")=>{let node:crate::condition_logic::ConditionTree=serde_json::from_value(config["condition_tree"].clone()).map_err(|_|"自定义条件已损坏")?;node.validate()?;if node.needs_intraday(){Err(RETIRED_MINUTE.into())}else{Ok(Some(node))}},
-        _=>Err(RETIRED_MINUTE.into()),
+        Some("custom")=>{let node:crate::condition_logic::ConditionTree=serde_json::from_value(config["condition_tree"].clone()).map_err(|_|"自定义条件已损坏")?;node.validate()?;Ok(Some(node))},
+        _=>Err("观察条件无效，请重新添加".into()),
     }
 }
 fn scan_hit(db: &Database, request: &WatchRequest) -> Result<(Value, Value), String> {
@@ -159,7 +158,7 @@ pub fn model_condition_auto_update(
 #[tauri::command]
 pub fn model_condition_watches(db: State<'_, Arc<Database>>) -> Result<Value, String> {
     Ok(
-        json!({"presets":presets(),"watches":db.condition_watches()?,"limit_per_tick":LIMIT,"status":db.get_setting("model_condition_watch_status").map_err(|e|e.to_string())?.and_then(|s|serde_json::from_str::<Value>(&s).ok())}),
+        json!({"presets":presets(),"watches":db.condition_watches()?.into_iter().filter(|w|active_condition(&w["config"]).is_ok()).collect::<Vec<_>>(),"limit_per_tick":LIMIT,"status":db.get_setting("model_condition_watch_status").map_err(|e|e.to_string())?.and_then(|s|serde_json::from_str::<Value>(&s).ok())}),
     )
 }
 #[tauri::command]
@@ -182,7 +181,9 @@ pub fn get_model_condition_event(
     db: State<'_, Arc<Database>>,
     event_key: String,
 ) -> Result<Value, String> {
-    db.condition_event(&event_key)
+    let event = db.condition_event(&event_key)?;
+    active_condition(&event["config"])?;
+    Ok(event)
 }
 pub(crate) fn latest_group(
     db: &Database,
@@ -261,7 +262,6 @@ fn edge(
     previous: &Value,
     model_hit: Option<bool>,
     combined: Option<bool>,
-    shape: Option<&str>,
 ) -> (Option<&'static str>, Value) {
     let mut next = previous.clone();
     let mut event = None;
@@ -282,15 +282,6 @@ fn edge(
         }
         next["last_known_combined"] = json!(value);
     }
-    if matches!(shape, Some("invalidated" | "weakened"))
-        && previous["last_shape"].as_str() != shape
-        && previous["last_shape"].as_str() == Some("confirmed")
-    {
-        event = Some("shape_invalidated");
-    }
-    if let Some(shape) = shape {
-        next["last_shape"] = json!(shape);
-    }
     (event, next)
 }
 pub async fn tick(
@@ -301,7 +292,7 @@ pub async fn tick(
     let mut watches = db
         .condition_watches()?
         .into_iter()
-        .filter(|w| w["enabled"] == true)
+        .filter(|w| w["enabled"] == true && active_condition(&w["config"]).is_ok())
         .collect::<Vec<_>>();
     if watches.is_empty() {
         return Ok(vec![]);
@@ -366,9 +357,9 @@ pub async fn tick(
             let group=latest_group(db,config,&day)?.ok_or("缺最近完成日该模型计算；点筛选更新，或在研究中心开启原模型自动观察")?;
             let candidate=group["candidates"].as_array().ok_or("模型候选集合损坏")?.iter().find(|c|c["symbol"]==symbol).cloned();
             let mut group=group; if let Some(fields)=group.as_object_mut(){fields.remove("candidates");fields.remove("current_scores");}
-            if candidate.is_none(){return Ok::<_,String>((Some(false),Some(false),None,json!({"model_group":group,"message":"最新模型已计算，该股票不再满足冻结阈值与资格条件"})));}
+            if candidate.is_none(){return Ok::<_,String>((Some(false),Some(false),json!({"model_group":group,"message":"最新模型已计算，该股票不再满足冻结阈值与资格条件"})));}
             let candidate=candidate.unwrap();
-            if config["preset"]=="model_hit"{return Ok((Some(true),Some(true),None,json!({"candidate":candidate,"model_group":group,"message":"最近完成日满足该冻结模型条件；下一开盘可成交性未知"})));}
+            if config["preset"]=="model_hit"{return Ok((Some(true),Some(true),json!({"candidate":candidate,"model_group":group,"message":"最近完成日满足该冻结模型条件；下一开盘可成交性未知"})));}
             if !continuous{return Err("等待交易时段和新鲜报价；休市不发送当前条件确认".into());}
             let (quote,source)=quotes.get(symbol).ok_or("缺当日新鲜报价，暂停盘中条件")?;
             if quote.name.is_empty()||crate::market_rules::is_st(&quote.name)||crate::market_rules::is_delisting(&quote.name)||crate::market_rules::is_new_listing(&quote.name){return Err("当前股票名称未知或ST/退市/新股，停止观察".into());}
@@ -377,16 +368,16 @@ pub async fn tick(
             let node=custom.ok_or("自定义条件缺失")?;
             let checked=Utc::now();datasource::a_share_calendar::continuous(checked)?;if !crate::alerts::is_fresh_trading_quote(quote,checked.with_timezone(&cst())){return Err("组合核验后报价已过期，状态未知".into());}
             let (sector,mainline_error)=if node.needs_mainline(){match mainline_for_symbol(db,symbol,&day,watch["observation"]["last_mainline_code"].as_str()){Ok(value)=>(value,None),Err(e)=>(None,Some(e))}}else{(None,None)};
-            let facts=crate::condition_logic::Facts{intraday:None,mainline:sector.as_ref().map(|s|s["strong"]==true&&s["leaders"].as_array().is_some_and(|rows|rows.iter().any(|r|r["symbol"]==symbol))),change_pct:Some((quote.price/quote.prev_close-1.)*100.)};
+            let facts=crate::condition_logic::Facts{mainline:sector.as_ref().map(|s|s["strong"]==true&&s["leaders"].as_array().is_some_and(|rows|rows.iter().any(|r|r["symbol"]==symbol))),change_pct:Some((quote.price/quote.prev_close-1.)*100.)};
             let combined=node.evaluate(&facts);let message=match combined{Some(true)=>"模型命中且自定义组合成立",Some(false)=>"模型命中，自定义组合尚未成立或已失效",None=>"模型命中，自定义组合缺少必要证据，状态未知"};
-            Ok((Some(true),combined,None::<String>,json!({"candidate":candidate,"model_group":group,"condition_tree":node,"condition_scope":"single_stock_with_frozen_model_gate","condition_facts":{"mainline":facts.mainline,"change_pct":facts.change_pct},"mainline_snapshot":sector,"missing_evidence":{"mainline":mainline_error},"quote":{"price":quote.price,"prev_close":quote.prev_close,"timestamp":quote.timestamp,"source":source},"message":message})))
+            Ok((Some(true),combined,json!({"candidate":candidate,"model_group":group,"condition_tree":node,"condition_scope":"single_stock_with_frozen_model_gate","condition_facts":{"mainline":facts.mainline,"change_pct":facts.change_pct},"mainline_snapshot":sector,"missing_evidence":{"mainline":mainline_error},"quote":{"price":quote.price,"prev_close":quote.prev_close,"timestamp":quote.timestamp,"source":source},"message":message})))
         }.await;
-        let (hit, combined, shape, evidence) = match observed {
+        let (hit, combined, evidence) = match observed {
             Ok(v) => v,
-            Err(message) => (None, None, None, json!({"message":message})),
+            Err(message) => (None, None, json!({"message":message})),
         };
         let previous = &watch["observation"];
-        let (transition, mut next) = edge(previous, hit, combined, shape.as_deref());
+        let (transition, mut next) = edge(previous, hit, combined);
         next["checked_at"] = json!(now.to_rfc3339());
         next["last_scan_day"] = json!(day);
         next["message"] = evidence["message"].clone();
@@ -524,12 +515,12 @@ mod tests {
     #[test]
     fn model_hit_remains_quiet_across_days_until_real_loss_or_reentry() {
         let previous = json!({"last_known_model_hit":true,"last_known_combined":true});
-        let (event, same) = edge(&previous, Some(true), Some(true), None);
+        let (event, same) = edge(&previous, Some(true), Some(true));
         assert!(event.is_none());
-        let (event, lost) = edge(&same, Some(false), Some(false), None);
+        let (event, lost) = edge(&same, Some(false), Some(false));
         assert_eq!(event, Some("model_invalidated"));
         assert_eq!(
-            edge(&lost, Some(true), Some(true), None).0,
+            edge(&lost, Some(true), Some(true)).0,
             Some("conditions_confirmed")
         );
     }
@@ -575,39 +566,39 @@ mod tests {
     }
     #[test]
     fn known_combination_loss_notifies_but_missing_data_stays_unknown() {
-        let old = json!({"last_known_model_hit":true,"last_known_combined":true,"last_shape":"confirmed"});
-        assert!(edge(&old, Some(true), None, Some("confirmed")).0.is_none());
-        let (event, lost) = edge(&old, Some(true), Some(false), Some("confirmed"));
+        let old = json!({"last_known_model_hit":true,"last_known_combined":true});
+        assert!(edge(&old, Some(true), None).0.is_none());
+        let (event, lost) = edge(&old, Some(true), Some(false));
         assert_eq!(event, Some("conditions_invalidated"));
-        assert!(edge(&lost, Some(true), Some(false), Some("confirmed"))
+        assert!(edge(&lost, Some(true), Some(false))
             .0
             .is_none());
     }
     #[test]
     fn unknown_is_neither_confirmation_nor_loss_of_last_known_state() {
-        let previous = json!({"last_known_model_hit":true,"last_known_combined":false,"last_shape":"waiting_retest"});
-        let (event, next) = edge(&previous, None, None, None);
+        let previous = json!({"last_known_model_hit":true,"last_known_combined":false});
+        let (event, next) = edge(&previous, None, None);
         assert!(event.is_none());
         assert_eq!(next["last_known_model_hit"], true);
-        let (event, next) = edge(&next, Some(true), Some(true), Some("confirmed"));
+        let (event, next) = edge(&next, Some(true), Some(true));
         assert_eq!(event, Some("conditions_confirmed"));
-        assert!(edge(&next, Some(true), Some(true), Some("confirmed"))
+        assert!(edge(&next, Some(true), Some(true))
             .0
             .is_none());
         assert_eq!(
-            edge(&next, Some(true), Some(false), Some("invalidated")).0,
-            Some("shape_invalidated")
+            edge(&next, Some(true), Some(false)).0,
+            Some("conditions_invalidated")
         );
         assert_eq!(
-            edge(&next, Some(false), Some(false), None).0,
+            edge(&next, Some(false), Some(false)).0,
             Some("model_invalidated")
         );
     }
     #[test]
-    fn retired_minute_conditions_are_rejected_without_changing_model_or_custom_gates(){
+    fn unsupported_conditions_are_rejected_without_changing_model_or_custom_gates(){
         assert!(active_condition(&json!({"preset":"model_hit"})).unwrap().is_none());
-        for preset in ["model_confirm","model_mainline_confirm"] {assert!(active_condition(&json!({"preset":preset})).unwrap_err().contains("已停用"));}
-        assert!(active_condition(&json!({"preset":"custom","condition_tree":{"op":"or","children":[{"op":"intraday"},{"op":"mainline"}]}})).unwrap_err().contains("已停用"));
+        for preset in ["model_confirm","model_mainline_confirm"] {assert!(active_condition(&json!({"preset":preset})).is_err());}
+        assert!(active_condition(&json!({"preset":"custom","condition_tree":{"op":"or","children":[{"op":"intraday"},{"op":"mainline"}]}})).is_err());
         assert!(active_condition(&json!({"preset":"custom","condition_tree":{"op":"and","children":[{"op":"mainline"},{"op":"change_above","value":1}]}})).unwrap().is_some());
         assert_eq!(presets().as_array().unwrap().len(),1);
     }

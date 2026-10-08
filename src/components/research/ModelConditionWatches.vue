@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import {describeCondition,usesRetiredMinutes} from '@/types/conditions';
+import {describeCondition} from '@/types/conditions';
 import HelpTooltip from '@/components/common/HelpTooltip.vue';
 import { MODEL_CATALOG, type ConditionWatchView } from '@/types/research';
 const view = ref<ConditionWatchView | null>(null); const error = ref(''); const busy = ref<number | null>(null); const expanded = ref(false);
@@ -9,7 +9,6 @@ let disposed = false; let refreshSequence = 0; let timer: ReturnType<typeof setI
 const rows = computed(() => (view.value?.watches ?? []).slice(0, expanded.value ? 200 : 5));
 const state = (value?: string) => ({ watching: '观察中', confirmed: '已确认', invalidated: '已失效', waiting_data: '等待数据' }[value ?? ''] ?? '待核验');
 const name = (id: string) => MODEL_CATALOG.find(m => m.id === id)?.name ?? id;
-const retired = (item:ConditionWatchView['watches'][number]) => ['model_confirm','model_mainline_confirm'].includes(item.config.preset) || !!(item.config.condition_tree && usesRetiredMinutes(item.config.condition_tree));
 async function refresh(force = false) {
   if (disposed || (busy.value !== null && !force)) return;
   const sequence = ++refreshSequence;
@@ -35,15 +34,14 @@ defineExpose({ refresh });
 </script>
 <template>
   <section class="condition-manager" aria-label="手动条件提醒清单">
-    <header><b>手动条件提醒清单</b><HelpTooltip label="手动条件提醒说明">手动观察只检查你选定股票的条件，不下买卖单、不需要交易账户，不会影响自动模型的候选池、资金或持仓。应用运行且研究提醒开启时，条件新成立或失效会提醒。当前命中在加入时静默登记。盘后模型需重新筛选，或由研究中心对应信号来源账本开启盘后更新；实时涨跌幅条件需要交易时段的新鲜报价。主线组合需先在“市场主线”完成扫描。数据未知会等待，不当作满足或失效。不需要的提醒可删除，已产生的触发证据仍可在提醒记录查看。每轮最多检查20条观察，股票多或数据慢会延后；只观察你加入的股票。</HelpTooltip><button :disabled="busy !== null" @click="refresh()">刷新状态</button></header>
+    <header><b>手动条件提醒清单</b><HelpTooltip label="手动条件提醒说明">手动观察只检查你选定股票的条件，不下买卖单、不需要交易账户，不会影响自动模型的候选池、资金或持仓。应用运行且模型条件提醒开启时，条件新成立或失效会提醒。当前命中在加入时静默登记。盘后模型需重新筛选，或由研究中心对应信号来源账本开启盘后更新；实时涨跌幅条件需要交易时段的新鲜报价。主线组合需先在“市场主线”完成扫描。数据未知会等待，不当作满足或失效。不需要的提醒可删除，已产生的触发证据仍可在提醒记录查看。每轮最多检查20条观察，股票多或数据慢会延后；只观察你加入的股票。</HelpTooltip><button :disabled="busy !== null" @click="refresh()">刷新状态</button></header>
     <p class="manual-watch-scope">这里仅发送条件提醒，不自动买卖，也不使用任何交易账户。自动模型账户只供对应模型交易。</p>
     <p v-if="error" class="error">{{ error }}</p><p v-if="!rows.length" class="muted">从下方模型筛选结果点击“观察”，默认条件已按模型预选；保存后加入这份提醒清单，条件改变时通知你。</p>
     <article v-for="item in rows" :key="item.id">
-      <div><b>{{ item.config.symbol.slice(2) }} · {{ name(item.config.model_id) }}</b><span :class="['state', item.observation.state]">{{ retired(item) ? '已停用' : item.enabled ? state(item.observation.state) : '已暂停' }}</span><button class="delete-watch" :disabled="busy !== null" :aria-label="'删除 ' + item.config.symbol.slice(2) + ' 的手动提醒'" @click="removeWatch(item.id)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M7 5V3h6v2M5 5l1 12h8l1-12M8 8v6m4-6v6" /></svg>{{ busy === item.id ? '删除中…' : '删除' }}</button></div>
-      <p>{{ item.config.preset==='custom'?'自定义组合':view?.presets.find(p => p.id === item.config.preset)?.name || '已停用的分钟条件' }} · 核验日期 {{ item.observation.last_scan_day || '--' }}</p>
+      <div><b>{{ item.config.symbol.slice(2) }} · {{ name(item.config.model_id) }}</b><span :class="['state', item.observation.state]">{{ item.enabled ? state(item.observation.state) : '已暂停' }}</span><button class="delete-watch" :disabled="busy !== null" :aria-label="'删除 ' + item.config.symbol.slice(2) + ' 的手动提醒'" @click="removeWatch(item.id)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M7 5V3h6v2M5 5l1 12h8l1-12M8 8v6m4-6v6" /></svg>{{ busy === item.id ? '删除中…' : '删除' }}</button></div>
+      <p>{{ item.config.preset==='custom'?'自定义组合':view?.presets.find(p => p.id === item.config.preset)?.name || '未知条件' }} · 核验日期 {{ item.observation.last_scan_day || '--' }}</p>
       <p v-if="item.config.condition_tree">模型命中 且 {{describeCondition(item.config.condition_tree)}}</p>
-      <p v-if="retired(item)" class="paused-watch-note">旧分钟条件已停用；可重新从筛选结果添加可用提醒，或删除这条历史记录。</p>
-      <p v-else-if="!item.enabled" class="paused-watch-note">这条旧提醒已暂停；重新从筛选结果点击“观察”可恢复，或直接删除。</p>
+      <p v-if="!item.enabled" class="paused-watch-note">这条旧提醒已暂停；重新从筛选结果点击“观察”可恢复，或直接删除。</p>
       <p>{{ item.observation.message || '等待后台第一次核验' }}</p>
     </article>
     <button v-if="(view?.watches.length ?? 0) > 5" @click="expanded = !expanded">{{ expanded ? '收起' : '全部手动提醒（' + view?.watches.length + '）' }}</button>

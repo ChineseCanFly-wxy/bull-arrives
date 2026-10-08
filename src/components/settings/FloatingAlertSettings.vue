@@ -30,7 +30,7 @@ async function help(register = false) {
 </script>
 <template>
 <section class="floating-settings" aria-label="悬浮提醒设置">
-  <div class="row"><div><b>重要操作提醒悬浮窗</b><p>只显示模拟买卖、模型条件、盘中确认、市场主线和行情/风险提醒。置顶、逐条保留，确认已读后移除；关闭只隐藏窗口，任务继续运行。</p></div><NSwitch :value="settings.settings.important_alerts_enabled !== '0'" :disabled="busy" aria-label="重要操作提醒悬浮窗" @update:value="save('important_alerts_enabled',$event?'1':'0')" /></div>
+  <div class="row"><div><b>重要操作提醒悬浮窗</b><p>只显示模拟买卖、模型条件、市场主线和行情/风险提醒。置顶、逐条保留，确认已读后移除；关闭只隐藏窗口，任务继续运行。</p></div><NSwitch :value="settings.settings.important_alerts_enabled !== '0'" :disabled="busy" aria-label="重要操作提醒悬浮窗" @update:value="save('important_alerts_enabled',$event?'1':'0')" /></div>
   <div class="row"><span>重要提醒也发送 Windows 系统通知</span><NSwitch :value="settings.settings.important_alerts_native_enabled === '1'" :disabled="busy" aria-label="重要提醒系统通知" @update:value="save('important_alerts_native_enabled',$event?'1':'0')" /></div>
   <div class="appearance-grid">
     <label>文字颜色<input type="color" :value="settings.settings.important_alerts_text_color || '#EEF5FF'" :disabled="busy" @change="change('important_alerts_text_color',$event)" /></label>

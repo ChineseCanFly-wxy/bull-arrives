@@ -240,7 +240,6 @@ fn archive_news_payload(app: &tauri::AppHandle, payload: &Value) {
 fn is_model_notice(payload: &Value) -> bool {
     payload["signal_kind"] == "research"
         && (payload.get("model_snapshot").is_some_and(Value::is_object)
-            || payload.get("intraday_snapshot").is_some_and(Value::is_object)
             || payload.get("condition_event").is_some_and(Value::is_object))
 }
 
@@ -251,7 +250,6 @@ pub fn notice_category(payload: &Value) -> &'static str {
         if payload["sector_code"].as_str().is_some_and(|s| !s.is_empty()) { return "mainline"; }
         if payload["model_snapshot"]["follow_account_id"].is_number() { return "trades"; }
         if payload["condition_event"].is_object() || payload["condition_events"].as_array().is_some_and(|rows| !rows.is_empty()) { return "conditions"; }
-        if payload["intraday_snapshot"].is_object() { return "intraday"; }
         return "research";
     }
     if payload["signal_kind"] == "risk" { "risk" } else { "price" }
@@ -262,18 +260,26 @@ fn notification_setting_key(category: &str) -> &'static str {
         "mainline" => "mainline_notifications_enabled",
         "trades" => "model_trade_notifications_enabled",
         "conditions" => "model_condition_notifications_enabled",
-        "intraday" => "intraday_notifications_enabled",
         "research" => "research_notifications_enabled",
         "risk" => "risk_notifications_enabled",
-        "data" => "data_notifications_enabled",
         _ => "alerts_enabled",
     }
 }
 fn is_important(category: &str) -> bool {
-    matches!(category, "mainline" | "trades" | "conditions" | "intraday" | "price" | "risk")
+    matches!(category, "mainline" | "trades" | "conditions" | "price" | "risk")
+}
+pub(crate) fn is_current_notice(payload: &Value) -> bool {
+    if payload["notification_category"] == "intraday" || payload["intraday_snapshot"].is_object() { return false; }
+    let supported = |event: &Value| event["schema"] != "model-condition-event-v1"
+        || crate::model_conditions::active_condition(&event["config"]).is_ok();
+    if let Some(events) = payload["condition_events"].as_array().filter(|events| !events.is_empty()) {
+        events.iter().all(supported)
+    } else {
+        supported(&payload["condition_event"])
+    }
 }
 fn delivery_policy(payload: &Value, enabled: bool, desktop_always: bool) -> Option<bool> {
-    enabled.then(|| is_model_notice(payload) || notice_category(payload) == "data" || desktop_always)
+    (enabled && is_current_notice(payload) && notice_category(payload) != "data").then(|| is_model_notice(payload) || desktop_always)
 }
 
 fn news_after_start(payload: &Value, started_at: i64, now: i64) -> bool {
@@ -287,6 +293,7 @@ fn current_news(app: &tauri::AppHandle, payload: &Value) -> bool {
     news_after_start(payload,started_at,chrono::Utc::now().timestamp_millis())
 }
 pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
+    if !is_current_notice(&payload) { return; }
     // 关机期间的积压和时间未核实的原文只归档，不进入本次提醒或通知队列。
     if payload["signal_kind"]=="news" && !current_news(app,&payload) {
         archive_news_payload(app,&payload); return;
@@ -392,7 +399,7 @@ pub async fn test_notification(app: tauri::AppHandle, research: Option<bool>, ca
         NEXT_ID.fetch_add(1, Ordering::Relaxed)
     );
     if let Some(category) = category.as_deref() {
-        if !matches!(category, "news" | "mainline" | "trades" | "conditions" | "intraday" | "research" | "price" | "risk" | "data" | "floating") { return Err("提醒类别无效".into()); }
+        if !matches!(category, "news" | "mainline" | "trades" | "conditions" | "research" | "price" | "risk" | "floating") { return Err("提醒类别无效".into()); }
         if (is_important(category) || category == "floating") && setting_enabled(&app, "important_alerts_enabled", true) {
             crate::important_alerts::enqueue(&app, serde_json::json!({"id":id,"notification_category":category,"title":"重要操作提醒测试","body":"这是测试消息，不代表买入、卖出或成交。拖动标题栏移动窗口，拖动右下角调整大小；确认已读后移除此条。","received_at":chrono::Utc::now().timestamp_millis()}))?;
             return Ok(DeliveryStatus { id, history_version: u64::MAX, native: "not-requested".into(), native_error: None, desktop: "queued".into(), desktop_error: None });
@@ -425,7 +432,7 @@ pub async fn test_notification(app: tauri::AppHandle, research: Option<bool>, ca
 #[tauri::command]
 pub fn get_alert_archive(app: tauri::AppHandle, db: State<'_, std::sync::Arc<crate::db::Database>>) -> Result<Vec<Value>, String> {
     let now = chrono::Utc::now();
-    let mut rows: Vec<Value> = db.brief_alerts_between(&(now-chrono::Duration::days(14)).to_rfc3339(), &now.to_rfc3339())?.into_iter().take(500).collect();
+    let mut rows: Vec<Value> = db.brief_alerts_between(&(now-chrono::Duration::days(14)).to_rfc3339(), &now.to_rfc3339())?.into_iter().filter(is_current_notice).take(500).collect();
     for pending in crate::important_alerts::get_important_alerts(app).entries {
         if !pending["id"].as_str().is_some_and(|id| id.starts_with("test-")) && !rows.iter().any(|row| row["id"] == pending["id"]) { rows.push(pending); }
     }
@@ -438,7 +445,7 @@ pub fn get_notification_history(
     let inner = history.0.lock().unwrap_or_else(|e| e.into_inner());
     NotificationHistorySnapshot {
         version: inner.version,
-        entries: inner.entries.iter().cloned().collect(),
+        entries: inner.entries.iter().filter(|row| is_current_notice(row)).cloned().collect(),
     }
 }
 
@@ -477,9 +484,9 @@ mod tests {
         assert!(!news_after_start(&serde_json::json!({"published_date":"2026-10-07","received_at":now}),start,now));
     }
     #[test]
-    fn model_popups_only_apply_to_model_and_intraday_observations() {
+    fn model_popups_only_apply_to_active_research_observations() {
         assert!(is_model_notice(&serde_json::json!({"signal_kind":"research","model_snapshot":{}})));
-        assert!(is_model_notice(&serde_json::json!({"signal_kind":"research","intraday_snapshot":{}})));
+        assert!(!is_model_notice(&serde_json::json!({"signal_kind":"research","intraday_snapshot":{}})));
         assert!(is_model_notice(&serde_json::json!({"signal_kind":"research","condition_event":{"schema":"model-condition-event-v1"}})));
         assert!(!is_model_notice(&serde_json::json!({"signal_kind":"news","model_snapshot":{}})));
         assert!(!is_model_notice(&serde_json::json!({"signal_kind":"research","model_snapshot":null})));
@@ -498,7 +505,10 @@ mod tests {
         assert_eq!(delivery_policy(&other_research, true, false), Some(false));
         let data_error=serde_json::json!({"signal_kind":"system","stockdb_update_alert":{"schema":"stockdb-update-failed-v1"}});
         assert_eq!(delivery_policy(&data_error,false,false),None);
-        assert_eq!(delivery_policy(&data_error,true,false),Some(true));
+        assert_eq!(delivery_policy(&data_error,true,false),None);
+        assert_eq!(delivery_policy(&data_error,true,true),None);
+        let retired_intraday=serde_json::json!({"signal_kind":"research","intraday_snapshot":{}});
+        assert_eq!(delivery_policy(&retired_intraday,true,true),None);
         let news = serde_json::json!({"signal_kind":"news"});
         assert_eq!(delivery_policy(&news, false, false), None);
         assert_eq!(delivery_policy(&news, true, true), Some(true));
@@ -511,7 +521,6 @@ mod tests {
             (serde_json::json!({"signal_kind":"research","sector_code":"BK0001"}), "mainline", true),
             (serde_json::json!({"signal_kind":"research","model_snapshot":{"follow_account_id":1}}), "trades", true),
             (serde_json::json!({"signal_kind":"research","condition_events":[{}]}), "conditions", true),
-            (serde_json::json!({"signal_kind":"research","intraday_snapshot":{}}), "intraday", true),
             (serde_json::json!({"signal_kind":"research","model_snapshot":{}}), "research", false),
             (serde_json::json!({"signal_kind":"price"}), "price", true),
             (serde_json::json!({"signal_kind":"risk"}), "risk", true),
@@ -525,6 +534,24 @@ mod tests {
         assert_ne!(notification_setting_key("trades"), notification_setting_key("conditions"));
         assert_ne!(notification_setting_key("price"), notification_setting_key("risk"));
     }
+    #[test]
+    fn removed_observations_are_excluded_from_history_pending_and_delivery() {
+        let removed = serde_json::json!({"signal_kind":"research","intraday_snapshot":{}});
+        let old_condition = serde_json::json!({"schema":"model-condition-event-v1","config":{"preset":"model_confirm"}});
+        let active_condition = serde_json::json!({"schema":"model-condition-event-v1","config":{"preset":"model_hit"}});
+        let legacy = serde_json::json!({"signal_kind":"research","condition_event":old_condition});
+        let active = serde_json::json!({"signal_kind":"research","condition_event":active_condition});
+        let removed_test = serde_json::json!({"id":"test-old","notification_category":"intraday"});
+        for row in [&removed, &legacy, &removed_test] {
+            assert!(!is_current_notice(row));
+            assert_eq!(delivery_policy(row, true, true), None);
+        }
+        assert!(is_current_notice(&active));
+        assert!(!is_current_notice(&serde_json::json!({"condition_events":[old_condition,active_condition]})));
+        let rows = vec![removed, legacy, active.clone()].into_iter().filter(is_current_notice).collect::<Vec<_>>();
+        assert_eq!(rows, vec![active]);
+    }
+
     #[test]
     fn clear_watermark_rejects_old_delivery() {
         let mut inner = HistoryInner::default();
