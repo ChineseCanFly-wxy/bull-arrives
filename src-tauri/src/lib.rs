@@ -324,6 +324,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            commands::research::initialize_runtime(app.path().resource_dir()?);
             // Data directory:
             // - Portable mode (portable.dat exists next to exe) → <exe_dir>/data/
             // - Normal mode → %APPDATA%/bull-arrives/

@@ -1,10 +1,11 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export const targetDir = resolve(root, 'src-tauri/target');
+mkdirSync(resolve(root, 'src-tauri/target'), { recursive: true });
+export const targetDir = realpathSync(resolve(root, 'src-tauri/target'));
 export const tempDir = resolve(targetDir, 'tmp');
 mkdirSync(tempDir, { recursive: true });
 export const buildEnv = { ...process.env, CARGO_TARGET_DIR: targetDir, TMP: tempDir, TEMP: tempDir, TMPDIR: tempDir };

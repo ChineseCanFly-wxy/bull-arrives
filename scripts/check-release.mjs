@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 本地和CI共用的只读发版检查；不暂存、不提交、不联网。
-import { readFileSync, statSync, lstatSync, readdirSync } from 'node:fs';
+import { readFileSync, statSync, lstatSync, readdirSync, existsSync } from 'node:fs';
 import { resolve, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -42,6 +42,15 @@ function sourceIncludes(base) {
     }
   }
   walk(resolve(base, 'src-tauri/src'));
+  if (existsSync(resolve(base, 'research-assets.json'))) {
+    needed.add('research-assets.json');
+    for (const file of ['scripts/research-bundle.py','scripts/check-research-runtime.py','scripts/research-requirements.txt']) needed.add(file);
+    for (const manifest of ['research/research-center-runner/registry.json','research/ashare-fundamental-2026-10-01/replay-sources.json']) {
+      for (const row of Object.values(json(base, manifest).files)) {
+        if (row.path.endsWith('.py')) needed.add(row.path);
+      }
+    }
+  }
   return [...needed].sort();
 }
 export function checkRelease(base = root, { version, tracked = false } = {}) {

@@ -46,6 +46,7 @@ jobs:
           node scripts/check-release.mjs "$RELEASE_TAG" --tracked
           node scripts/test-release.mjs
           python3 scripts/check-portable.py --self-test
+          python3 scripts/research-bundle.py self-check
           test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$(git rev-parse HEAD)"
       - name: Verify source builds before publish-only retry
         if: github.event_name == 'workflow_dispatch' && inputs.verify_run != ''
@@ -133,6 +134,23 @@ jobs:
       - name: Install macOS Rust targets
         if: matrix.platform == 'macos-latest'
         run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.7'
+      - name: Prepare and verify private research environment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p src-tauri/target/research-assets
+          ASSET_TAG=$(node -p 'JSON.parse(require("fs").readFileSync("research-assets.json")).tag')
+          ASSET_FILE=$(node -p 'JSON.parse(require("fs").readFileSync("research-assets.json")).asset')
+          gh release download "$ASSET_TAG" --pattern "$ASSET_FILE" --dir src-tauri/target/research-assets
+          python scripts/research-bundle.py self-check
+          python scripts/research-bundle.py prepare "src-tauri/target/research-assets/$ASSET_FILE" src-tauri/target/research-runtime
       - name: Build frontend and run offline unit tests
         shell: bash
         run: |
@@ -140,6 +158,14 @@ jobs:
           npm run release:check -- "$RELEASE_TAG" --tracked
           npm run build
           npm run test:rust -- --lib --locked
+      - name: Run installed frozen model acceptance
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $env:BULL_TEST_RESEARCH_ROOT = (Resolve-Path 'src-tauri/target/research-runtime').Path
+          $env:BULL_RESEARCH_TEST_WORKSPACE = Join-Path (Resolve-Path 'src-tauri/target').Path 'research-acceptance/workspace'
+          npm run test:rust -- --lib --locked installed_runtime_executes_every_model_without_stockdb_or_developer_python -- --ignored --nocapture --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw '实际随包研究模型验收失败' }
       - name: Extract exact updater notes
         id: changelog
         shell: bash
@@ -170,6 +196,7 @@ jobs:
           $staging = Join-Path $env:RUNNER_TEMP 'portable/BullArrives'
           New-Item -ItemType Directory -Force -Path $staging | Out-Null
           Copy-Item -LiteralPath $exe -Destination $staging
+          Copy-Item -LiteralPath 'src-tauri/target/research-runtime' -Destination (Join-Path $staging 'research-runtime') -Recurse
           New-Item -ItemType File -Path (Join-Path $staging 'portable.dat') | Out-Null
           Copy-Item -LiteralPath 'docs/发布流程.md' -Destination (Join-Path $staging 'RELEASE-GUIDE.md')
           Copy-Item -LiteralPath 'README.md' -Destination (Join-Path $staging 'README.md')
