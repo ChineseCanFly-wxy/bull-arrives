@@ -359,7 +359,7 @@ mod tests {
         let bundled = bundled_config(&root).unwrap();
         assert_eq!(bundled.python, python.to_string_lossy());
         let advanced = root.join("advanced"); std::fs::create_dir(&advanced).unwrap(); std::fs::write(advanced.join("matrices.npz"), "newer").unwrap();
-        let saved = ModelRunnerConfig { research_root: "D:/a/bull-arrives/bull-arrives".into(), python: "missing-python".into(), snapshot:advanced.to_string_lossy().into_owned(), index:index.to_string_lossy().into_owned() };
+        let saved = ModelRunnerConfig { research_root: root.join("missing-ci-build-directory").to_string_lossy().into_owned(), python: "missing-python".into(), snapshot:advanced.to_string_lossy().into_owned(), index:index.to_string_lossy().into_owned() };
         let fixed = resolve_saved_config(Some(saved), Some(bundled.clone())).unwrap();
         assert_eq!(fixed.research_root, bundled.research_root); assert_eq!(fixed.snapshot, advanced.to_string_lossy());
         let runner = root.join("research/research-center-runner/model_runner.py"); std::fs::create_dir_all(runner.parent().unwrap()).unwrap(); std::fs::write(&runner, "manual").unwrap();
