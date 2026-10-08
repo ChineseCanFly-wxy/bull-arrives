@@ -31,7 +31,7 @@ for name in files:
         with (root/name).open("rb") as source:
             fitted = pickle.load(source)
         # Every annual frozen sklearn object must load and run with the shipped ABI.
-        prediction = np.full(2, fitted[0]) if isinstance(fitted, np.ndarray) else fitted.predict(np.zeros((2, fitted.n_features_in_), dtype=np.float32))
+        prediction = np.column_stack((np.ones(2), np.zeros((2, len(fitted)-1)))) @ fitted if isinstance(fitted, np.ndarray) else fitted.predict(np.zeros((2, fitted.n_features_in_), dtype=np.float32))
         assert prediction.shape == (2,) and np.all(np.isfinite(prediction)), name
         models += 1
 sys.path.insert(0, str(root/"research/research-center-runner"))
