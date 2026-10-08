@@ -9,7 +9,7 @@ import MainlineResearch from '@/components/sector/MainlineResearch.vue';
 import ModelConditionEvidence from '@/components/research/ModelConditionEvidence.vue';
 import ModelFollowTrading from '@/components/research/ModelFollowTrading.vue';
 import type { SectorKind } from '@/types/sector';
-import { noticeCategory } from '@/utils/notificationCategory';
+import { noticeCategory, noticeSection } from '@/utils/notificationCategory';
 import ReminderControls from './ReminderControls.vue';
 import FloatingAlertSettings from './FloatingAlertSettings.vue';
 interface Delivery { id: string; history_version: number; native: string; native_error?: string; desktop: string; desktop_error?: string }
@@ -26,21 +26,24 @@ const message = useMessage();
 const entries = ref<AlertNotice[]>([]); const version = ref(0); const showHistory = ref(false);
 const settings=useSettingsStore();const archive=ref<AlertNotice[]>([]);const category=ref('news');const keyword=ref('');
 const briefs=ref<DailyBrief[]>([]);
-const tabs = [
+const reminders = [
  {id:'news',label:'市场资讯',key:'news_notifications_enabled',defaultValue:'0',description:'只采集和推送市场资讯原文；首次开启只建立水位，不补推历史消息。AI 解读需要手动点击。'},
  {id:'mainline',label:'市场主线',key:'mainline_notifications_enabled',description:'只控制主线发现与观察变化提醒；主线扫描照常运行，与研究中心和资讯开关独立。'},
  {id:'trades',label:'模拟买卖',key:'model_trade_notifications_enabled',description:'研究中心自动跟随账户的委托、成交和拒单提醒。成交会标明买卖方向、股数与价格；关闭提醒不会暂停自动账户。'},
- {id:'conditions',label:'模型条件',key:'model_condition_notifications_enabled',description:'只控制研究中心模型条件触发提醒。候选信号不代表已买入，关闭后条件检查继续运行。'},
+ {id:'conditions',label:'模型条件',key:'model_condition_notifications_enabled',description:'从模型筛选结果点击“观察”后，所选股票的条件新成立或失效时提醒。不需要交易账户，也不下单；关闭通知后仍检查已加入的条件。'},
  {id:'intraday',label:'盘中确认',key:'intraday_notifications_enabled',description:'只控制研究中心盘中形态与仓位观察提醒；研究观察不等于下单或成交。'},
- {id:'research',label:'模型观察',key:'research_notifications_enabled',description:'只控制研究中心完成行情日的模型研究记录更新；不再联动主线、模拟买卖或模型条件。'},
+ {id:'research',label:'模型观察',key:'research_notifications_enabled',description:'信号来源账本开启盘后更新后，新增完成交易日、候选及研究账本变化时提醒。研究记录不等于自动账户成交；关闭通知不暂停盘后更新。'},
  {id:'price',label:'行情提醒',key:'alerts_enabled',description:'控制逐票价格与涨跌幅提醒。双击自选股票或右键“设置行情提醒”修改每条规则与开关；仅监控当前分组。'},
  {id:'risk',label:'风险提醒',key:'risk_notifications_enabled',description:'控制智能监控的止损与止盈提醒，与普通行情提醒独立；仍遵循智能监控和逐票监控设置。'},
- {id:'data',label:'数据更新',key:'data_notifications_enabled',description:'控制数据更新连续失败的通知；关闭提醒不会停止更新和重试。'},
- {id:'briefs',label:'每日简报',key:'daily_briefs_enabled',description:'独立控制本机盘前与盘后简报生成；这里只展示简报，不发送买卖通知。已保存的简报仍可查看。'},
- {id:'operations',label:'自动操作',key:'',description:''},
- {id:'floating',label:'悬浮提醒',key:'',description:''},
+ {id:'data',label:'数据更新异常',key:'data_notifications_enabled',description:'控制数据更新连续失败的通知；关闭提醒不会停止更新和重试。'},
+ ];
+const tabs = [
+ {id:'news',label:'市场资讯'}, {id:'mainline',label:'市场主线'},
+ {id:'research',label:'研究中心'}, {id:'price',label:'行情与风险'},
+ {id:'operations',label:'自动操作'}, {id:'floating',label:'悬浮提醒'},
 ];
-const currentTab = computed(() => tabs.find(tab => tab.id === category.value) || tabs[0]);
+const currentReminders = computed(() => reminders.filter(row => noticeSection(row.id) === category.value && (category.value !== 'research' || row.id === 'trades')));
+const otherResearchReminders = reminders.filter(row => noticeSection(row.id) === 'research' && row.id !== 'trades');
 
 interface OperationEntry { id:number; at:number; level:string; source:string; message:string; repeats:number }
 interface OperationSnapshot { enabled:boolean; version:number; entries:OperationEntry[] }
@@ -71,7 +74,7 @@ const archiveById=computed(()=>new Map(archive.value.map(entry=>[entry.signal_id
 const aiBusyId=ref('');
 const selectedId=ref('');
 const shown=computed(()=>{
- const rows=category.value==='news'?archive.value.filter(e=>noticeCategory(e)==='news'):[...new Map([...researchArchive.value,...entries.value].filter(e=>noticeCategory(e)===category.value).map(e=>[e.id,e])).values()].sort((a,b)=>b.received_at-a.received_at);
+ const rows=category.value==='news'?archive.value.filter(e=>noticeCategory(e)==='news'):[...new Map([...researchArchive.value,...entries.value].filter(e=>noticeSection(noticeCategory(e))===category.value).map(e=>[e.id,e])).values()].sort((a,b)=>b.received_at-a.received_at);
  return rows.filter(e=>!keyword.value||`${e.title} ${e.body}`.includes(keyword.value));
 });
 function normalizeNotice(row:RawNotice):AlertNotice{const at=typeof row.received_at==='number'?row.received_at:Date.parse(row.received_at);return {...row,received_at:Number.isFinite(at)?at:0};}
@@ -87,7 +90,7 @@ function briefNewsBody(item:BriefNews){const current=archiveById.value.get(item.
 function analyzeBriefNews(item:BriefNews){const current=archiveById.value.get(item.signal_id);if(current)void analyzeNews(current);}
 async function analyzeNews(entry:AlertNotice){if(!entry.signal_id||aiBusyId.value)return;aiBusyId.value=entry.signal_id;try{await invoke('analyze_archived_news',{signalId:entry.signal_id});await refreshNews();message.success('AI 解读已保存');}catch(e){message.error(`AI 解读失败：${e}`);}finally{aiBusyId.value='';}}
 watch(showHistory,open=>{if(open){void refreshNews();void refreshBriefs();void refreshResearch();}});
-watch(category,value=>{if(value==='briefs')void refreshBriefs();});
+watch(category,value=>{if(value==='news')void refreshBriefs();});
 const unlisteners: UnlistenFn[] = []; let disposed = false;
 function watermark(value: number) {
   const next = applyHistoryWatermark({ version: version.value, entries: entries.value }, value);
@@ -104,12 +107,12 @@ onMounted(async () => {
   unlisteners.push(await listen<RawNotice>('price-alert-triggered', ({payload}) => { if(payload.history_version < version.value)return; merge([normalizeNotice(payload)]); if(showHistory.value){void refreshNews();void refreshResearch();} }));
   unlisteners.push(await listen<Delivery>('notification-delivery-status', ({payload}) => { if(payload.history_version !== version.value)return; const item=entries.value.find(x=>x.id===payload.id); if(item)item.delivery=payload; if(payload.native_error) message.warning('系统通知发送失败，已尝试桌面提醒兜底。',{duration:10000,closable:true}); }));
   unlisteners.push(await listen<number>('notification-history-cleared', ({payload}) => { watermark(payload); }));
-  unlisteners.push(await listen<string>('notification-open-settings', ({payload}) => { category.value=tabs.some(tab=>tab.id===payload)?payload:'trades'; keyword.value=''; showHistory.value=true; }));
+  unlisteners.push(await listen<string>('notification-open-settings', ({payload}) => { const section=noticeSection(payload); category.value=tabs.some(tab=>tab.id===section)?section:'research'; keyword.value=''; showHistory.value=true; }));
   unlisteners.push(await listen<string>('notification-open-history', async ({payload}) => {
     keyword.value=''; selectedId.value=payload; showHistory.value=true;
     await Promise.all([refreshResearch(),refreshNews()]);
     const entry=[...entries.value,...researchArchive.value,...archive.value].find(e=>e.id===payload);
-    category.value=entry?noticeCategory(entry):'price';
+    category.value=entry?noticeSection(noticeCategory(entry)):'price';
     await nextTick(); document.querySelector(`[data-notice-id="${CSS.escape(payload)}"]`)?.scrollIntoView({block:'nearest'});
   }));
   unlisteners.push(await listen<AlertNotice>('news-analysis-updated', ({payload}) => { const current=entries.value.find(entry=>entry.signal_id===payload.signal_id);if(current)Object.assign(current,payload);if(showHistory.value){void refreshNews();} }));
@@ -121,18 +124,21 @@ onUnmounted(()=>{disposed=true;if(operationsTimer)clearInterval(operationsTimer)
 <template>
 <NButton class="alert-history-button" size="small" @click="showHistory=true">资讯与提醒</NButton>
 <NModal v-model:show="showHistory" preset="card" title="资讯与提醒" style="width:760px;max-width:94vw">
- <div class="news-tabs" role="tablist" aria-label="提醒分类"><button v-for="tab in tabs" :key="tab.id" type="button" role="tab" :aria-selected="category===tab.id" :class="{active:category===tab.id}" @click="category=tab.id">{{tab.label}}</button><input v-if="!['briefs','floating'].includes(category)" v-model="keyword" :placeholder="category==='operations'?'搜索操作或来源':'搜索本类标题或摘要'"/><NButton size="small" @click="refreshCurrent">刷新</NButton></div>
- <ReminderControls v-if="currentTab.key" :key="category" :category="category" :label="currentTab.label" :setting-key="currentTab.key" :default-value="currentTab.defaultValue" :description="currentTab.description" />
+ <div class="news-tabs" role="tablist" aria-label="提醒分类"><button v-for="tab in tabs" :key="tab.id" type="button" role="tab" :aria-selected="category===tab.id" :class="{active:category===tab.id}" @click="category=tab.id">{{tab.label}}</button><input v-if="category!=='floating'" v-model="keyword" :placeholder="category==='operations'?'搜索任务或执行结果':'搜索本类标题或摘要'"/><NButton size="small" @click="refreshCurrent">刷新</NButton></div>
+ <div v-if="currentReminders.length" class="reminder-grid" :class="{grouped:currentReminders.length>1}"><ReminderControls v-for="reminder in currentReminders" :key="reminder.id" :category="reminder.id" :label="reminder.label" :setting-key="reminder.key" :default-value="reminder.defaultValue" :description="reminder.description" /></div>
+ <details v-if="category==='research'" class="other-research-reminders"><summary>其他研究提醒 · 模型条件、模型观察、盘中确认</summary><div class="reminder-grid"><ReminderControls v-for="reminder in otherResearchReminders" :key="reminder.id" :category="reminder.id" :label="reminder.label" :setting-key="reminder.key" :description="reminder.description" /></div></details>
  <FloatingAlertSettings v-if="category==='floating'" />
- <p v-if="['mainline','trades','conditions','intraday','research'].includes(category)" class="notice-hint">按通知当时快照留存14日，重启仍可查看。查看记录不会执行买卖；候选、委托和实际模拟成交是不同状态。</p>
+ <p v-if="['mainline','research'].includes(category)" class="notice-hint">按通知当时快照留存14日，重启仍可查看。查看记录不会执行买卖；候选、委托和实际模拟成交是不同状态。</p>
  <section v-if="category==='operations'" class="operations-panel">
-  <div class="operations-heading"><div><b>自动操作记录</b><p>只监控研究中心、主线和相关数据更新，不包含资讯采集。只记录本次运行，最多200条；关闭记录不影响自动任务与提醒。</p></div><label class="operations-toggle"><span>记录自动操作</span><NSwitch :value="operations.enabled" :disabled="operationsToggleBusy" :loading="operationsToggleBusy" aria-label="记录自动操作" @update:value="toggleOperations" /></label></div>
+  <div class="operations-heading"><div><b>自动操作记录</b><p>用于确认后台任务是否执行：记录每日数据更新、自动建账、主线扫描完成与定时研究的时间和结果。只保留本次运行，最多200条；关闭记录不影响任务执行。</p></div><label class="operations-toggle"><span>记录自动操作</span><NSwitch :value="operations.enabled" :disabled="operationsToggleBusy" :loading="operationsToggleBusy" aria-label="记录自动操作" @update:value="toggleOperations" /></label></div>
   <div class="operations-toolbar"><span>{{operations.enabled?'记录已开启':'记录已关闭'}} · {{operations.entries.length}} 条 · 页面打开时自动刷新</span><NButton size="small" :disabled="!operations.entries.length" @click="clearOperations">清空记录</NButton></div>
   <p v-if="operationsError" class="operations-error" role="alert">{{operationsError}}</p>
   <ol v-if="shownOperations.length" class="operations-list" aria-label="自动操作记录列表"><li v-for="row in shownOperations" :key="row.id" :data-operation-id="row.id"><header><time>{{new Date(row.at).toLocaleString('zh-CN',{hour12:false})}}</time><span class="operation-source">{{row.source}}</span><span class="operation-level" :data-level="row.level">{{row.level}}</span><small v-if="row.repeats>1">重复 {{row.repeats}} 次</small></header><p>{{row.message}}</p></li></ol>
-  <div v-else class="empty"><b>{{keyword?'没有匹配的自动操作':operations.enabled?'等待下一次自动操作':'自动操作记录已关闭'}}</b><p>数据更新与重试、模型检查与建账、模拟买卖、主线扫描和自动研究会在这里显示。连续相同内容合并；记录不会弹出系统通知，也不会补记关闭期间的操作。</p></div>
+  <div v-else class="empty"><b>{{keyword?'没有匹配的自动操作':operations.enabled?'等待下一次自动操作':'自动操作记录已关闭'}}</b><p>任务开始、完成、失败或等待重试会显示在这里；买卖提醒、模型信号、主线发现和资讯在各自页面查看。连续相同结果合并，不补记关闭期间的操作。</p></div>
  </section>
- <section v-if="category==='briefs'" class="brief-list">
+ <details v-if="category==='news'" class="news-briefs"><summary>每日简报</summary>
+  <ReminderControls category="briefs" label="每日简报" setting-key="daily_briefs_enabled" description="独立控制本机盘前与盘后简报生成；这里只展示简报，不发送买卖通知。已保存的简报仍可查看。" />
+ <section class="brief-list">
   <p class="brief-caveat">交易日盘前 09:10、盘后 15:15 后，从本机已保存的记录生成。关闭资讯采集时不会纳入新资讯；离线时段无法补齐。简报不会自动调用 AI。</p>
   <article v-for="brief in briefs" :key="`${brief.day}-${brief.stage}`" class="brief-card">
    <header><h3>{{brief.day}} · {{brief.stage==='preopen'?'盘前简报':'盘后简报'}}</h3><small>生成于 {{new Date(brief.generated_at).toLocaleString()}}</small></header>
@@ -144,10 +150,10 @@ onUnmounted(()=>{disposed=true;if(operationsTimer)clearInterval(operationsTimer)
    <div v-if="brief.alerts.length" class="brief-group"><h4>当天价格与风险提醒 · 最近 10 条</h4><ol><li v-for="alert in brief.alerts" :key="`${alert.received_at}-${alert.title}`"><strong>{{alert.title}}</strong><small>{{new Date(alert.received_at).toLocaleString()}}</small><p>{{alert.body}}</p></li></ol></div>
   </article>
   <div v-if="!briefs.length" class="empty"><b>还没有每日简报</b><p>交易日运行到盘前或盘后时段后，会根据本机已有的资讯与价格/风险提醒生成；没有记录时不会创建空简报。</p></div>
- </section>
- <template v-else-if="!['operations','floating'].includes(category)">
+ </section></details>
+ <template v-if="!['operations','floating'].includes(category)">
   <ol v-if="shown.length" class="notice-list"><li v-for="entry in shown" :key="entry.id" :data-notice-id="entry.id" :class="{selected:entry.id===selectedId}"><span v-if="entry.signal_tag" class="signal-tag" :data-kind="entry.signal_kind">{{entry.signal_tag}}</span><strong>{{entry.title}}</strong><time>{{entry.received_at?new Date(entry.received_at).toLocaleString():'接收时间未核实'}}</time><p>{{entry.body}}</p><small v-if="entry.news_source">{{entry.news_source}} · {{entry.agent_summary?'已保存 AI 解读':'原文通知'}} · 发布时间 {{entry.published_at||'未核实'}} · 接收时间 {{entry.source_received_at||new Date(entry.received_at).toLocaleString()}}</small><div class="notice-mainlines"><button v-if="followSnapshot(entry)" class="notice-follow-open" type="button" @click="openFollow(entry)">查看跟随账户 #{{entry.model_snapshot?.follow_account_id}} · 操作单 #{{entry.model_snapshot?.order_id}}</button><button v-for="target in mainlines(entry)" :key="`${target.kind}-${target.sector_code}-${target.fingerprint}`" type="button" @click="openMainline(target)">查看 {{target.sector_name}} · {{target.as_of||'日期未核实'}} {{target.fingerprint?'通知快照':'当前观察'}} <small v-if="target.match_basis">关联依据 {{target.match_basis}}</small></button><button v-for="event in conditionEvents(entry)" :key="event.event_key" class="notice-condition-open" type="button" @click="openCondition(event.event_key)">查看 {{event.model_name}} 触发条件证据</button><button v-if="intradaySnapshot(entry)" class="notice-intraday-open" type="button" @click="openIntraday(entry)">查看分钟形态与仓位研究 · {{entry.intraday_snapshot?.symbol}}</button><button v-if="modelSnapshot(entry)" class="notice-model-open" type="button" @click="openModel(entry)">查看模型账户 #{{entry.model_snapshot?.run_id}} · {{entry.model_snapshot?.as_of}} 通知快照</button></div><button v-if="entry.signal_kind==='news'&&!entry.agent_summary" type="button" class="manual-ai-btn" :disabled="!!aiBusyId" @click="analyzeNews(entry)">{{aiBusyId===entry.signal_id?'AI 解读中…':'手动 AI 解读'}}</button><details v-if="entry.original_title||entry.original_body"><summary>查看采集原文</summary><b>{{entry.original_title}}</b><p>{{entry.original_body||'来源未提供正文'}}</p></details><small v-if="entry.delivery&&entries.some(item=>item.id===entry.id)">系统：{{entry.delivery.native==='accepted'?'已受理':entry.delivery.native==='failed'?'失败':entry.delivery.native==='not-requested'?'仅记录':'等待中'}} · 桌面：{{entry.delivery.desktop==='queued'?'已排队':entry.delivery.desktop==='failed'?'失败':entry.delivery.desktop==='not-requested'?'未启用':'等待中'}}</small></li></ol>
-  <div v-else class="empty"><b>暂时没有匹配的内容</b><p>{{currentTab.description}}</p></div>
+  <div v-else class="empty"><b>暂时没有匹配的内容</b><p>可在上方独立开启或测试提醒，之后的记录会显示在这里。</p></div>
  </template>
 </NModal>
 <NModal v-model:show="showResearch" preset="card" :title="`${mainlineTarget?.sector_name||'主线'} · 通知证据`" style="width:1000px;max-width:96vw"><MainlineResearch v-if="showResearch&&mainlineTarget" :kind="mainlineTarget.kind" :sector-code="mainlineTarget.sector_code" :sector-name="mainlineTarget.sector_name" :snapshot-fingerprint="mainlineTarget.fingerprint||undefined" /></NModal>
@@ -157,6 +163,7 @@ onUnmounted(()=>{disposed=true;if(operationsTimer)clearInterval(operationsTimer)
 <ModelConditionEvidence :show="showCondition" :event-key="conditionEventKey" @update:show="showCondition=$event" />
 </template>
 <style scoped>
+.other-research-reminders,.news-briefs{font-size:13px;color:var(--color-text-secondary)}.other-research-reminders summary,.news-briefs summary{cursor:pointer;padding:6px 0}.reminder-grid{display:grid;gap:10px;margin:14px 0}.reminder-grid.grouped{grid-template-columns:repeat(2,minmax(0,1fr))}.reminder-grid :deep(.reminder-controls){margin:0;padding:12px}.reminder-grid.grouped :deep(.control-row b){font-size:14px}.reminder-grid.grouped :deep(.control-row p),.reminder-grid.grouped :deep(.control-status){font-size:12px}@media(max-width:620px){.reminder-grid.grouped{grid-template-columns:1fr}}
 .operations-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin:16px 0}.operations-heading b{font-size:15px}.operations-heading p{font-size:13px;line-height:1.7;color:var(--color-text-secondary);max-width:470px;margin:6px 0}.operations-toggle{display:flex;align-items:center;gap:10px;font-size:13px;white-space:nowrap}.operations-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px;color:var(--color-text-secondary)}.operations-error{color:var(--color-error);font-size:13px}.operations-list{list-style:none;margin:12px 0 0;padding:0;max-height:52vh;overflow:auto}.operations-list li{padding:12px;border:1px solid var(--color-border-0);border-radius:6px;margin-bottom:8px;background:var(--color-surface-1)}.operations-list header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:var(--color-text-secondary)}.operations-list time{font-variant-numeric:tabular-nums}.operation-source{color:var(--color-accent);font-weight:600}.operation-level[data-level="失败"]{color:var(--color-error)}.operation-level[data-level="注意"]{color:var(--color-warning)}.operations-list p{font-size:14px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0;color:var(--color-text-primary)}
 
 .notice-model-snapshot{line-height:1.7;font-size:13px}.notice-model-snapshot article{padding:10px;margin-top:8px;border:1px solid var(--color-border-0);border-radius:6px}.notice-model-snapshot pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto;font-size:var(--text-xs);font-family:var(--font-sans)}

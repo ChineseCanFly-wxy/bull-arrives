@@ -433,7 +433,7 @@ pub fn run() {
                 timer.tick().await;
                 match model_conditions::tick(&condition_db,&condition_manager,chrono::Utc::now()).await {
                     Ok(notices)=>for notice in notices{notifications::publish(&condition_app,notice);},
-                    Err(error)=>log::warn!(target: "automation::research", "条件检查失败：{error}"),
+                    Err(error)=>log::warn!("[model-conditions] 条件检查失败：{error}"),
                 }
             }});
 

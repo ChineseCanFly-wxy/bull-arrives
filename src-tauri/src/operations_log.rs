@@ -107,7 +107,6 @@ fn source(target: &str) -> Option<&'static str> {
     match target {
         "automation::data" => Some("数据更新"),
         "automation::model" => Some("自动模型"),
-        "automation::trading" => Some("模拟交易"),
         "automation::mainline" => Some("市场主线"),
         "automation::research" => Some("自动研究"),
         _ => None,
@@ -152,6 +151,19 @@ pub fn clear_automatic_operations_log(log: State<'_, Arc<OperationsLog>>) -> Sna
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn automatic_log_only_records_task_execution() {
+        let state = Arc::new(OperationsLog::default());
+        let logger = OperationsLogger(state.clone());
+        for target in ["automation::news", "automation::trading", "notifications", "network"] {
+            logger.log(&Record::builder().args(format_args!("提醒不重复进入任务记录")).level(Level::Info).target(target).build());
+        }
+        assert!(state.snapshot().entries.is_empty());
+        for target in ["automation::data", "automation::model", "automation::mainline", "automation::research"] {
+            logger.log(&Record::builder().args(format_args!("后台任务已执行")).level(Level::Info).target(target).build());
+        }
+        assert_eq!(state.snapshot().entries.len(), 4);
+    }
     #[test]
     fn automatic_log_is_independent_bounded_and_clear_does_not_disable_it() {
         let state = Arc::new(OperationsLog::default());

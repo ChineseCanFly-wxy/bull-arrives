@@ -292,14 +292,6 @@ pub fn publish(app: &tauri::AppHandle, mut payload: Value) {
         archive_news_payload(app,&payload); return;
     }
     let category = notice_category(&payload);
-    if payload["signal_kind"]=="research" {
-        let title=payload["title"].as_str().unwrap_or("研究状态更新");
-        let body=payload["body"].as_str().unwrap_or("");
-        if payload["model_snapshot"]["follow_account_id"].as_i64().is_some() {
-            log::info!(target: "automation::trading", "{title}：{body}");
-        } else if category == "mainline" { log::info!(target: "automation::mainline", "{title}：{body}"); }
-        else { log::info!(target: "automation::research", "{title}：{body}"); }
-    }
     payload["notification_category"] = category.into();
     let Some(mut force_desktop) = delivery_policy(&payload,
         setting_enabled(app, notification_setting_key(category), category != "news"),

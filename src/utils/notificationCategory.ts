@@ -1,4 +1,10 @@
 export type NoticeCategory = 'news' | 'mainline' | 'trades' | 'conditions' | 'intraday' | 'research' | 'price' | 'risk' | 'data';
+export function noticeSection(category: string): string {
+  if (['trades', 'conditions', 'intraday'].includes(category)) return 'research';
+  if (category === 'risk') return 'price';
+  if (category === 'briefs') return 'news';
+  return category === 'data' ? 'price' : category;
+}
 export function noticeCategory(row: { signal_kind?: string; sector_code?: unknown; model_snapshot?: { follow_account_id?: unknown } | null; condition_event?: unknown; condition_events?: unknown[]; intraday_snapshot?: unknown; stockdb_update_alert?: { schema?: string } }): NoticeCategory {
   if (row.signal_kind === 'news') return 'news';
   if (row.stockdb_update_alert?.schema === 'stockdb-update-failed-v1') return 'data';
