@@ -109,7 +109,6 @@ fn source(target: &str) -> Option<&'static str> {
         "automation::model" => Some("自动模型"),
         "automation::trading" => Some("模拟交易"),
         "automation::mainline" => Some("市场主线"),
-        "automation::news" => Some("资讯采集"),
         "automation::research" => Some("自动研究"),
         _ => None,
     }
@@ -164,6 +163,8 @@ mod tests {
                 .target("network")
                 .build(),
         );
+        assert!(state.snapshot().entries.is_empty());
+        logger.log(&Record::builder().args(format_args!("资讯采集不进入自动操作")).level(Level::Info).target("automation::news").build());
         assert!(state.snapshot().entries.is_empty());
         state.set_enabled(false);
         state.record("自动模型", Level::Info, "should not appear");

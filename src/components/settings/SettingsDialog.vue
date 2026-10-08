@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { NAlert, NModal } from 'naive-ui';
 import { invoke } from '@tauri-apps/api/core';
+import { emit as emitAppEvent } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useSettingsStore, REFRESH_INTERVAL_AUTO } from '@/stores/settings';
 import { useUniverseStore } from '@/stores/universe';
@@ -10,6 +11,7 @@ import GroupHotkeySettings from './GroupHotkeySettings.vue';
 import { eventToHotkey, formatHotkeyLabel } from '@/utils/hotkey';
 import { displayPath } from '@/utils/pathDisplay';
 
+async function openReminderSettings() { if (close()) await emitAppEvent('notification-open-settings','price'); }
 const props = defineProps<{ show: boolean; initialSection?: string }>();
 const emit = defineEmits<{ 'update:show': [value: boolean] }>();
 const settings = useSettingsStore();
@@ -50,8 +52,6 @@ watch(activeSection, section => {
 });
 const actionError = ref<string | null>(null);
 const savingKeys = ref(new Set<string>());
-interface NotificationIdentityStatus { supported: boolean; registered: boolean; shortcut_path?: string; detail: string }
-interface NotificationTestStatus { native: 'accepted' | 'failed'; native_error?: string; desktop: string; desktop_error?: string }
 interface BuildInfo { version: string; built_at: string; profile: string; exe_path: string }
 interface DataPaths { data_dir: string; database: string; interactive_tasks: string }
 interface LocalHistoryStatus {
@@ -64,8 +64,6 @@ interface LocalHistoryStatus {
   candidates: string[];
 }
 interface AgentStatus { installed: boolean; state: string; path: string | null; message: string; guidance: string; run_dir: string | null }
-const notificationIdentity = ref<NotificationIdentityStatus | null>(null);
-const notificationResult = ref<NotificationTestStatus | null>(null);
 const buildInfo = ref<BuildInfo | null>(null);
 const dataPaths = ref<DataPaths | null>(null);
 const systemPaths = computed(() => [
@@ -124,8 +122,7 @@ async function loadActiveSection() {
       await settings.fetchMarketSession();
       await settings.fetchStockDbStatus();
       if (settings.localHistoryEnabled) await loadLocalHistoryStatus();
-    } else if (section === 'alerts') {
-      await loadNotificationIdentity();
+
     } else if (section === 'ai') {
       await loadAgentStatus();
     } else if (section === 'system') {
@@ -260,10 +257,6 @@ function resetTickerAppearance() {
     return settings.setTickerSingleColor(false);
   }).catch(() => undefined);
 }
-async function loadNotificationIdentity() {
-  try { notificationIdentity.value = await invoke<NotificationIdentityStatus>('get_notification_identity_status'); }
-  catch (error) { notificationIdentity.value = { supported: true, registered: false, detail: String(error) }; }
-}
 /// 读取构建信息，用于确认当前运行的确实是刚构建出来的版本
 async function loadBuildInfo() {
   try { buildInfo.value = await invoke<BuildInfo>('get_build_info'); }
@@ -311,12 +304,6 @@ function stockDbStateLabel() {
     updating: '正在更新', restarting: '正在重启', error: '异常', unsupported: '不支持',
   };
   return labels[settings.stockDbStatus?.state || ''] || '正在检测';
-}
-async function registerNotificationIdentity() {
-  notificationIdentity.value = await invoke<NotificationIdentityStatus>('register_notification_identity');
-}
-async function sendTestNotification() {
-  notificationResult.value = await invoke<NotificationTestStatus>('test_notification');
 }
 async function loadAgentStatus() {
   try { agentStatus.value = await invoke<AgentStatus>('get_agent_status'); }
@@ -506,39 +493,8 @@ onBeforeUnmount(stopCapture);
         </section>
 
         <section v-else-if="activeSection === 'alerts'" class="settings-panel">
-          <header class="panel-heading"><span>02</span><div><h2>行情提醒</h2><p>总开关只控制提醒是否运行，不覆盖逐票规则。</p></div></header>
-          <article class="setting-card accent-card">
-            <div class="card-title-row">
-              <div><h3>启用行情提醒</h3><p>控制行情与自选股提醒，逐票阈值和开关保持不变。研究提醒在研究中心单独设置。</p></div>
-              <button class="switch" :class="{ on: settings.alertsEnabled }" role="switch" aria-label="启用行情提醒" :aria-checked="settings.alertsEnabled" :disabled="isSaving('alerts')" @click="safelyRun('alerts', () => settings.setSetting('alerts_enabled', settings.alertsEnabled ? '0' : '1'))"><span /></button>
-            </div>
-            <div class="alert-guidance">
-              <b>逐票设置入口</b>
-              <p>在自选表格双击股票，或右键选择“设置行情提醒”。涨跌幅按昨收每日重新计数；固定价格规则长期有效。</p>
-              <p>仅监控当前分组中的股票，切换分组后其他股票暂停监控。</p>
-            </div>
-          </article>
-          <article class="setting-card">
-            <div class="card-title-row">
-              <div><h3>全市场重要资讯</h3><p>默认关闭。重要快讯和公告直接通知原文，自选股重点标记；需要解读时在资讯或简报中手动点击 Claude Code 解读。</p></div>
-              <button class="switch" :class="{ on: settings.newsNotificationsEnabled }" role="switch" aria-label="全市场重要资讯" :aria-checked="settings.newsNotificationsEnabled" :disabled="isSaving('news-notifications')" @click="safelyRun('news-notifications', () => settings.setSetting('news_notifications_enabled', settings.newsNotificationsEnabled ? '0' : '1'))"><span /></button>
-            </div>
-            <p class="card-desc">来源：东方财富上市公司快讯与全市场公司公告。仅命中重要事件规则才通知；首次开启只建立当前水位，不推送历史内容。</p>
-          </article>
-          <article class="setting-card compact-card">
-            <h3>Windows 通知身份</h3>
-            <p>绿色版需要当前用户开始菜单快捷方式声明本应用 AUMID。只会在您点击后注册，不需要管理员权限，也不会修改勿扰或系统策略。</p>
-            <p v-if="notificationIdentity">{{ notificationIdentity.detail }}</p>
-            <button v-if="notificationIdentity?.supported" class="minor-btn notification-action" :disabled="isSaving('identity')" @click="safelyRun('identity', registerNotificationIdentity)">{{ notificationIdentity.registered ? '修复 Windows 通知身份' : '启用 Windows 通知' }}</button>
-            <h3 style="margin-top: 16px">通知通道</h3>
-            <p>普通通知优先使用系统通知，发送失败用独立桌面提醒兜底；模型观察与盘中确认由研究中心的独立提醒开关控制，开启时同时显示桌面弹窗。系统“已受理”不代表横幅一定可见。</p>
-            <div class="inline-setting"><div><h3>同时显示桌面提醒</h3><p>适合勿扰或企业策略会隐藏 Windows 横幅的电脑。</p></div><button class="switch" :class="{ on: settings.notificationDesktopAlways }" role="switch" aria-label="同时显示桌面提醒" :aria-checked="settings.notificationDesktopAlways" :disabled="isSaving('desktop-toast')" @click="safelyRun('desktop-toast', () => settings.setSetting('notification_desktop_always', settings.notificationDesktopAlways ? '0' : '1'))"><span /></button></div>
-            <button class="minor-btn notification-action" :disabled="isSaving('notification')" @click="safelyRun('notification', sendTestNotification)">测试系统通知和桌面弹框</button>
-            <p v-if="notificationResult">Windows：{{ notificationResult.native === 'accepted' ? '已受理' : `失败（${notificationResult.native_error || '未知错误'}）` }}；桌面：{{ notificationResult.desktop === 'queued' ? '已排队' : notificationResult.desktop === 'not-requested' ? '未启用' : `失败（${notificationResult.desktop_error || '未知错误'}）` }}</p>
-            <button v-if="notificationResult?.native === 'accepted' && !settings.notificationDesktopAlways" class="minor-btn notification-action" @click="safelyRun('desktop-toast', () => settings.setSetting('notification_desktop_always', '1'))">没看到系统通知，启用桌面兜底</button>
-            <h3 style="margin-top: 16px">重复方式说明</h3>
-            <div class="explain-grid"><div><b>重新穿越</b><span>回到阈值另一侧，再次穿越才提醒</span></div><div><b>冷却间隔</b><span>N 分钟内最多提醒一次</span></div><div><b>每日一次</b><span>当天触发一次，次日重新生效</span></div></div>
-          </article>
+          <header class="panel-heading"><span>02</span><div><h2>提醒</h2><p>所有提醒记录和独立开关集中在“资讯与提醒”。</p></div></header>
+          <article class="setting-card"><h3>资讯与提醒</h3><p>市场资讯、市场主线、研究中心、行情与风险、数据更新分别控制；重要操作悬浮窗的颜色和透明度也在这里调整。</p><button class="minor-btn" @click="openReminderSettings">打开资讯与提醒</button></article>
         </section>
 
         <section v-else-if="activeSection === 'ai'" class="settings-panel">

@@ -9,7 +9,7 @@ import { displayPath } from '@/utils/pathDisplay';
 import ResearchEvidence from './ResearchEvidence.vue';
 import ResearchExtensions from './ResearchExtensions.vue';
 import ResearchJobPanel from './ResearchJobPanel.vue';
-import ResearchNotifications from './ResearchNotifications.vue';
+import { emit as emitAppEvent } from '@tauri-apps/api/event';
 import DailyResearch from './DailyResearch.vue';
 import ModelFollowTrading from './ModelFollowTrading.vue';
 import NestedResearch from './NestedResearch.vue';
@@ -17,8 +17,7 @@ import { jobActive, type ResearchJob } from '@/types/research';
 const props=defineProps<{show:boolean}>();
 const emit=defineEmits<{'update:show':[boolean];'open-settings':[string]}>();
 const appSettings=useSettingsStore();
-const notificationPanel=ref<InstanceType<typeof ResearchNotifications>|null>(null);
-async function openSetting(section:string){if(section==='alerts'||section==='notifications'){tab.value='records';await nextTick();await notificationPanel.value?.focus();}else emit('open-settings',section);}
+async function openSetting(section:string){if(section==='alerts'||section==='notifications')await emitAppEvent('notification-open-settings','trades');else emit('open-settings',section);}
 interface Config {auto_research:boolean;observation_days:number;min_samples:number;max_drawdown_bps:number;min_return_bps:number;initial_cash:string;max_active:number;stock_count:number;commission_bps:number;min_commission:string;stamp_tax_bps:number;transfer_fee_bps:number;slippage_bps:number}
 interface Metrics {total_return_bps:number;max_drawdown_bps:number;sample_count:number;win_rate_bps:number;benchmark_return_bps:number|null;equity:string}
 interface Experiment {id:number;version_id:number;name:string;hypothesis:string;rule:string;state:string;account_id:number|null;created_at:string;last_message:string;selection_json:string;filter:Record<string,unknown>;config:Config;remaining_days:number;remaining_samples:number;elapsed_days:number;verdict:string;detail:null|{metrics:Metrics;targets:Array<{symbol:string;name:string}>;orders:Array<{id:number;signal_date:string;symbol:string;side:string;quantity:number;status:string;reject_reason:string|null;decision_reason:string|null}>};curve:Array<{date:string;equity:string;return_bps:number;drawdown_bps:number}>}
@@ -120,7 +119,7 @@ const chart=computed(()=>{const rows=selected.value?.curve??[];const values=[0,.
     <p v-if="error" class="banner error" role="alert">{{error}}</p><p v-if="notice" class="banner success">{{notice}}</p>
     <p v-if="busy" class="banner" role="status">{{busy==='update-history'?'正在后台更新并校验数据，完成后自动恢复服务…':'正在处理…'}}</p>
     <section v-if="tab==='records'" class="research-records-intro"><h3>提醒与记录</h3><p>统一管理研究消息、查看后台任务；深入研究的实验资料也在本页。切换页面会保留任务进度。</p></section>
-    <ResearchNotifications v-if="show" v-show="tab==='records'" ref="notificationPanel" />
+    <button class="minor-btn" type="button" @click="openSetting('notifications')">提醒设置 · 资讯与提醒</button>
     <ModelFollowTrading v-if="tab==='tracking'" ref="followPanel" :source-runs="modelRuns" :active="show" @refresh-sources="loadModels()" />
     <DailyResearch v-if="tab==='daily'" ref="dailyPanel" page="daily" :busy="jobsBusy" @job="startedJob" @records="openRecords" @evidence="openEvidence" @open-settings="openSetting" />
     <ResearchEvidence v-if="tab==='evidence'" />

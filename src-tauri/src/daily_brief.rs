@@ -78,6 +78,7 @@ fn build_brief(db: &Database, now: DateTime<Utc>, stage: &str) -> Result<Option<
 }
 
 pub fn ensure_due_brief(db: &Database, now: DateTime<Utc>) -> Result<(), String> {
+    if db.get_setting("daily_briefs_enabled").map_err(|e| e.to_string())?.as_deref() == Some("0") { return Ok(()); }
     let local = now.with_timezone(&china());
     if !crate::datasource::trading_calendar::is_trading_day_at(now, local.date_naive())? { return Ok(()); }
     let minute = local.hour() * 60 + local.minute();
@@ -120,6 +121,10 @@ mod tests {
         let holiday = Utc.with_ymd_and_hms(2026, 10, 1, 7, 16, 0).single().unwrap();
         ensure_due_brief(&db, holiday).unwrap();
         assert!(db.daily_briefs().unwrap().is_empty());
+        db.set_setting("daily_briefs_enabled", "0").unwrap();
+        ensure_due_brief(&db, now).unwrap();
+        assert!(db.daily_briefs().unwrap().is_empty());
+        db.set_setting("daily_briefs_enabled", "1").unwrap();
         ensure_due_brief(&db, now).unwrap();
         let brief = db.daily_brief("2026-09-28", "postclose").unwrap().unwrap();
         assert_eq!(brief["news_count"], 1);

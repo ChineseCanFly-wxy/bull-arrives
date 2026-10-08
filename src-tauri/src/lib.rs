@@ -5,6 +5,7 @@ pub mod commands;
 pub mod datasource;
 pub mod db;
 pub mod desktop_toast;
+pub mod important_alerts;
 pub mod domain;
 pub mod dynamic_filter;
 pub mod group_hotkeys;
@@ -240,37 +241,8 @@ pub fn toggle_ticker_window<R: Runtime>(app: &tauri::AppHandle<R>, db: &Database
         let _ = window.set_skip_taskbar(true);
         apply_tool_window_style(&window);
         restore_ticker_opacity(&window, db);
-        // Try saved position first, fall back to bottom-right
-        let mon = window.primary_monitor().ok().flatten();
-        let (mon_w, mon_h) = mon
-            .as_ref()
-            .map(|m| {
-                let s = m.size();
-                (s.width as i32, s.height as i32)
-            })
-            .unwrap_or((1920, 1080));
-        let win_size = window.outer_size().unwrap_or(tauri::PhysicalSize::new(
-            crate::datasource::TICKER_WIDTH,
-            crate::datasource::TICKER_HEIGHT,
-        ));
-        let tw = win_size.width as i32;
-        let th = win_size.height as i32;
-
-        let mut restored = false;
-        if let Ok(Some(x)) = db.get_setting("ticker_x") {
-            if let Ok(Some(y)) = db.get_setting("ticker_y") {
-                if let (Ok(sx), Ok(sy)) = (x.parse::<i32>(), y.parse::<i32>()) {
-                    if sx + tw > 0 && sy + th > 0 && sx < mon_w && sy < mon_h {
-                        let _ = window.set_position(tauri::PhysicalPosition::new(sx, sy));
-                        restored = true;
-                    }
-                }
-            }
-        }
-        if !restored {
-            let x = (mon_w).saturating_sub(tw + 10);
-            let y = (mon_h).saturating_sub(th + 60);
-            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+        if let Err(error) = commands::window::restore_floating_geometry(&window, db, "ticker") {
+            log::warn!("恢复行情悬浮窗位置失败：{error}");
         }
     }
     // Persist the ticker's visibility so it restores the same state on next
@@ -290,6 +262,7 @@ pub fn run() {
         .manage(notifications::NotificationHistory::default())
         .manage(navigation::PendingNavigation::default())
         .manage(desktop_toast::DesktopToastState::default())
+        .manage(important_alerts::ImportantAlerts::default())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -374,6 +347,7 @@ pub fn run() {
             // `state not managed for field \`db\``，前端初始化随之失败、界面停在空白。
             // 这里的初始化最多几百毫秒，但慢盘 / 杀软扫描下足以让启动必现失败。
             app.manage(db.clone());
+            if let Err(error) = important_alerts::restore(app.handle()) { log::warn!("恢复未确认提醒失败：{error}"); }
             operations.set_enabled(db.get_setting(operations_log::SETTING).ok().flatten().as_deref()!=Some("0"));
             let interactive_root = crate::agent::long_path(&app_dir).join("agent-interactive");
             app.manage(crate::agent::interactive::InteractiveRoot(interactive_root));
@@ -871,78 +845,11 @@ pub fn run() {
             if let Some(ticker) = app.get_webview_window("ticker") {
                 let _ = ticker.set_always_on_top(true);
 
-                // Capture monitor bounds and ticker size for clamping on move
-                let mon = ticker.primary_monitor().ok().flatten();
-                let (mon_w, mon_h) = mon
-                    .as_ref()
-                    .map(|m| {
-                        let s = m.size();
-                        (s.width as i32, s.height as i32)
-                    })
-                    .unwrap_or((1920, 1080));
-                let ticker_size = ticker.outer_size().unwrap_or(tauri::PhysicalSize::new(
-                    crate::datasource::TICKER_WIDTH,
-                    crate::datasource::TICKER_HEIGHT,
-                ));
-                let tw = ticker_size.width as i32;
-                let th = ticker_size.height as i32;
-
-                // Save ticker position on move.  Only persist if enough of the
-                // ticker is actually visible — if the user drags it way off
-                // screen, we skip saving so the next launch falls back to the
-                // default bottom-right position.
-                let db_clone = db.clone();
-                let _ = ticker.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Moved(pos) = event {
-                        // How much of the ticker is inside the monitor bounds?
-                        let visible_left = pos.x.max(0);
-                        let visible_right = (pos.x + tw).min(mon_w);
-                        let visible_w = (visible_right - visible_left).max(0);
-                        let visible_top = pos.y.max(0);
-                        let visible_bottom = (pos.y + th).min(mon_h);
-                        let visible_h = (visible_bottom - visible_top).max(0);
-
-                        // Require at least 50×20 px visible — otherwise it's
-                        // too far off-screen to be easily found.
-                        if visible_w < 50 || visible_h < 20 {
-                            return;
-                        }
-
-                        let clamped_x = pos.x.max(0).min(mon_w - tw);
-                        let clamped_y = pos.y.max(0).min(mon_h - th);
-                        if let Err(e) = db_clone.set_setting("ticker_x", &clamped_x.to_string()) {
-                            log::warn!("Failed to save ticker_x: {}", e);
-                        }
-                        if let Err(e) = db_clone.set_setting("ticker_y", &clamped_y.to_string()) {
-                            log::warn!("Failed to save ticker_y: {}", e);
-                        }
-                    }
-                });
-
-                // Restore saved position, fall back to bottom-right
-                let (mut saved_x, mut saved_y) = (0i32, 0i32);
-                let mut has_pos = false;
-                if let Ok(Some(x)) = db.get_setting("ticker_x") {
-                    if let Ok(Some(y)) = db.get_setting("ticker_y") {
-                        if let (Ok(x_val), Ok(y_val)) = (x.parse::<i32>(), y.parse::<i32>()) {
-                            saved_x = x_val;
-                            saved_y = y_val;
-                            has_pos = true;
-                        }
-                    }
+                if let Err(error) = commands::window::restore_floating_geometry(&ticker, &db, "ticker") {
+                    log::warn!("恢复行情悬浮窗位置或尺寸失败：{error}");
                 }
-                if has_pos
-                    && saved_x + tw > 0
-                    && saved_y + th > 0
-                    && saved_x < mon_w
-                    && saved_y < mon_h
-                {
-                    let _ = ticker.set_position(tauri::PhysicalPosition::new(saved_x, saved_y));
-                } else {
-                    let x = (mon_w).saturating_sub(tw + 10);
-                    let y = (mon_h).saturating_sub(th + 60);
-                    let _ = ticker.set_position(tauri::PhysicalPosition::new(x, y));
-                }
+
+                commands::window::track_floating_geometry(&ticker, db.clone(), "ticker");
 
                 // Remove ticker from taskbar at both levels:
                 //   set_skip_taskbar  → ITaskbarList::DeleteTab (immediate, one-shot)
@@ -969,6 +876,16 @@ pub fn run() {
                     restore_ticker_opacity(&ticker, &db);
                 }
             }
+
+            if let Some(window) = app.get_webview_window("important-alerts") {
+                if let Err(error) = commands::window::restore_floating_geometry(&window, &db, "important_alerts") { log::warn!("恢复重要提醒悬浮窗失败：{error}"); }
+                commands::window::track_floating_geometry(&window, db.clone(), "important_alerts");
+                apply_tool_window_style(&window);
+                let opacity = db.get_setting("important_alerts_opacity").ok().flatten().and_then(|s| s.parse::<u32>().ok()).unwrap_or(95).clamp(5,100);
+                if let Err(error) = apply_ticker_opacity(&window, ((opacity as f64 / 100.0) * 255.0).round() as u8) { log::warn!("恢复重要提醒透明度失败：{error}"); }
+            }
+
+            if let Err(error) = important_alerts::refresh_visibility(app.handle(), db.get_setting("important_alerts_enabled").ok().flatten().as_deref() != Some("0")) { log::warn!("恢复重要提醒显示失败：{error}"); }
 
             // Register the global hotkey for toggling the ticker.
             // Default: Alt+Q.  Persisted value wins if present and parseable.
@@ -1117,10 +1034,14 @@ pub fn run() {
             commands::watchlist::move_watch_down,
             commands::watchlist::search_stocks,
             notifications::get_notification_history,
+            notifications::get_alert_archive,
             operations_log::get_automatic_operations_log,
             operations_log::clear_automatic_operations_log,
             notifications::clear_notification_history,
             notifications::test_notification,
+            important_alerts::get_important_alerts,
+            important_alerts::dismiss_important_alert,
+            important_alerts::view_important_alert,
             news::analyze_archived_news,
             notification_identity::get_notification_identity_status,
             notification_identity::register_notification_identity,
