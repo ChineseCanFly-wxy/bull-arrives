@@ -81,7 +81,7 @@ try{
   await t.evaluate('window.__controlsMock.health={state:"ready",expected_as_of:"2026-09-30",enabled_accounts:1,missing_accounts:0,accounts:[{account_id:3,model_name:"模型广度",as_of:"2026-09-30",ready:true}],last_refresh:{mode:"provider_fallback",as_of:"2026-09-30",coverage:4400,required_coverage:4300,providers:{sina:4300,tencent:100}},limitation:"备用只补相邻完成日，跨多日缺口需历史数据"};window.__controlsApp.mode="data"');
   await t.wait('document.querySelector(".research-market-data")?.innerText.includes("已齐备")');await t.evaluate('document.querySelector(".research-market-data details").open=true');
   const dataText=await t.evaluate('document.querySelector(".research-market-data").innerText');
-  assert.match(dataText,/近期行情备用[\s\S]*4400/);assert.match(dataText,/09:00[\s\S]*启动[\s\S]*每1分钟[\s\S]*连续5次[\s\S]*只弹一次/);
+  assert.match(dataText,/近期行情备用[\s\S]*4400/);assert.match(dataText,/09:00[\s\S]*启动[\s\S]*只自动执行一次[\s\S]*不自动重试[\s\S]*重启也不重复/);assert.doesNotMatch(dataText,/每1分钟|连续5次/);
   assert.doesNotMatch(dataText,/16:30与次日交易日|按关键时点提醒/);
   for(const theme of ['light','dark'])for(const [width,height]of[[1280,900],[390,640]]){await t.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});await t.evaluate('window.__controlsApp.theme='+JSON.stringify(theme)+';document.documentElement.dataset.theme='+JSON.stringify(theme));await t.evaluate('new Promise(r=>setTimeout(r,120))');assert.equal(await t.evaluate('(()=>{const s=document.querySelector(".research-market-data");return s.scrollWidth<=s.clientWidth+1;})()'),true);await t.screenshot('data-'+theme+'-'+width);}
  });

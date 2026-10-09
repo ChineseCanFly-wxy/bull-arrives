@@ -14,7 +14,12 @@
 
 ## 当前版本
 
-当前版本为 **v3.0.3**（2026-10-09）。本版补齐跨电脑研究环境，近期主线观察直接获取在线行情，并整理独立提醒与悬浮窗；下载请认准 [Releases](https://github.com/ChineseCanFly-wxy/bull-arrives/releases) 中非草稿、非预发布的版本。
+当前版本为 **v3.0.4**（2026-10-09）。StockDB 数据更新每个交易日只自动执行一次，失败后不自动重试；下载请认准 [Releases](https://github.com/ChineseCanFly-wxy/bull-arrives/releases) 中非草稿、非预发布的版本。
+
+### v3.0.4 更新
+
+- **数据更新只执行一次**：失败、超时或中断后，当天不再自动重试，重启应用也不重复执行；保留失败原因和手动更新入口，下一交易日按设定时间重新执行一次。
+- **发布平台**：后续仅提供 Windows x64 和 macOS universal（Intel + Apple Silicon）安装包及更新包。
 
 ### v3.0.3 更新
 

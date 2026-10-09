@@ -265,7 +265,7 @@ pub fn set_setting(
     validate_notification_setting(&key, &value)?;
     if key==crate::important_alerts::PENDING_KEY { return Err("未确认提醒由后台维护，不能手动覆盖".into()); }
     if key==crate::stockdb_schedule::RECORD_KEY{return Err("更新进度由后台任务维护，不能手动覆盖".into());}
-    if key=="research_data_alerts_enabled"{return Err("缺行情提醒已移除；更新连续5次失败会自动提示".into());}
+    if key=="research_data_alerts_enabled"{return Err("缺行情提醒已移除；更新失败原因可在数据状态与自动操作记录查看".into());}
     if key=="local_history_auto_update_enabled" && !matches!(value.as_str(),"0"|"1"){return Err("自动更新开关只能为0或1".into());}
     if key=="local_history_auto_update_time"{crate::stockdb_schedule::validate_time(&value)?;}
     // AI / 量化智能相关开关同样只允许 0/1，避免前端写入其它值后判断语义含糊。

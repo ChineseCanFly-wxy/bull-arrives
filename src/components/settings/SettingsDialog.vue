@@ -483,7 +483,7 @@ onBeforeUnmount(stopCapture);
                 <summary>自动更新时间与高级连接设置</summary>
                  <label class="history-field"><span>交易日自动更新</span><button class="switch" :class="{ on: settings.localHistoryAutoUpdateEnabled }" role="switch" aria-label="StockDB交易日自动更新" :aria-checked="settings.localHistoryAutoUpdateEnabled" :disabled="isSaving('stockdb-auto-enabled')" @click="safelyRun('stockdb-auto-enabled', () => settings.setSetting('local_history_auto_update_enabled', settings.localHistoryAutoUpdateEnabled ? '0' : '1'))"><span /></button></label>
                  <label class="history-field"><span>北京时间</span><input v-model="stockDbUpdateTimeDraft" type="time" /><button class="minor-btn" :disabled="isSaving('stockdb-auto-time')" @click="safelyRun('stockdb-auto-time', () => settings.setSetting('local_history_auto_update_time', stockDbUpdateTimeDraft))">保存时间</button></label>
-                 <small>默认在A股交易日09:00更新，休市日不自动执行；当天已成功不重复。失败后每隔1分钟重试，连续5次失败只弹一次提醒。应用须保持运行，真正退出后在下次启动补做。</small>
+                 <small>默认在A股交易日09:00更新，休市日不自动执行；当天只执行一次，失败或中断后不自动重试，重启也不重复。可手动更新；未执行时，超过时间启动会补做一次。</small>
                 <label class="history-field"><span>服务地址</span><input v-model="localHistoryUrlDraft" type="url" placeholder="http://127.0.0.1:7899" /><button class="minor-btn" :disabled="settings.stockDbStatus?.busy || isSaving('local-history-url')" @click="safelyRun('local-history-url', saveLocalHistoryUrl)">保存并测试</button></label>
                 <small v-if="localHistoryStatus?.start_date && localHistoryStatus?.end_date">样本区间 {{ localHistoryStatus.start_date }} → {{ localHistoryStatus.end_date }} · {{ localHistoryStatus.sample_count }} 根 · {{ localHistoryStatus.source_format }}</small>
               </details>

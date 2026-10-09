@@ -17,7 +17,7 @@ const paths={
 const extraChecks=[];
 const mock=`
 const paths=${JSON.stringify(paths)};
-const state=window.__stockdbClock={settings:{theme:'light',local_history_enabled:'1',local_history_auto_update_enabled:'1',local_history_auto_update_time:'09:00',ai_enabled:'1',ai_monitor_enabled:'1',agent_claude_path:paths.agent,agent_run_root:paths.agentRoot,agent_timeout_seconds:'180',agent_budget_usd:'10.00'},calls:[],copied:[],dialogPaths:[],confirmations:[],enginePath:paths.engine,updaterPath:paths.updater};
+const state=window.__stockdbClock={settings:{theme:'light',local_history_enabled:'1',local_history_auto_update_enabled:'1',local_history_auto_update_time:'09:00',ai_enabled:'1',ai_monitor_enabled:'1',agent_claude_path:paths.agent,agent_run_root:paths.agentRoot,agent_timeout_seconds:'180',agent_budget_usd:'10.00'},calls:[],events:[],copied:[],dialogPaths:[],confirmations:[],enginePath:paths.engine,updaterPath:paths.updater};
 Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{if(state.copyFails)throw Error('隔离复制失败');state.copied.push(text);}}});
 window.confirm=message=>{state.confirmations.push(message);return false;};
 const stockdbStatus=()=>({enabled:true,platformSupported:true,state:'running_owned',phase:null,enginePath:state.enginePath,updaterPath:state.updaterPath,updaterAvailable:true,owned:true,busy:false,message:'隔离状态，未启动服务',lastError:null,candidates:[{source:'长盘符候选',enginePath:paths.candidateDrive,updaterPath:paths.updater},{source:'长UNC候选',enginePath:paths.candidateUnc,updaterPath:paths.updater}],autoUpdate:{enabled:true,time:state.settings.local_history_auto_update_time,timezone:'Asia/Shanghai',state:'complete',message:'今天已更新，重启应用不会重复执行',dataAsOf:'2026-09-30',lastError:null,failures:0}});
@@ -39,7 +39,7 @@ export async function invoke(command,args={}){state.calls.push({command,args:JSO
  if(command==='set_setting'){if(args.key==='local_history_auto_update_time'&&!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(args.value))throw Error('自动更新时间须为HH:mm');state.settings[args.key]=args.value;return;}
  throw Error('Unexpected IPC '+command);
 }
-export async function listen(){return ()=>{};}export async function emit(){}export async function isEnabled(){return false;}export async function enable(){}export async function disable(){}export async function open(){return state.dialogPaths.shift()??null;}
+export async function listen(){return ()=>{};}export async function emit(event,payload){state.events.push({event,payload});}export async function isEnabled(){return false;}export async function enable(){}export async function disable(){}export async function open(){return state.dialogPaths.shift()??null;}
 `;
 const entry=`
 import {createApp,h,ref} from 'vue';import {createPinia} from 'pinia';import {NConfigProvider,NMessageProvider,darkTheme,lightTheme} from 'naive-ui';import TopBar from '/src/components/layout/TopBar.vue';import SettingsDialog from '/src/components/settings/SettingsDialog.vue';import {useSettingsStore} from '/src/stores/settings.ts';import '/src/assets/styles/variables.css';
@@ -48,12 +48,12 @@ const show=ref(true);window.__settingsShow=show;const app=createApp({render:()=>
 `;
 const t=await uiHarness({name:'stockdb-schedule',entry,mock});
 try{
- await t.wait('document.body.innerText.includes("交易日自动更新 · 北京时间 09:00")');
+ await t.wait('document.body?.innerText.includes("交易日自动更新 · 北京时间 09:00")');
  assert.match(await t.evaluate('document.body.innerText'),/今天已更新.*2026-09-30/s);
  await t.evaluate('document.querySelector("details.history-advanced").open=true');
  assert.equal(await t.evaluate('document.querySelector("input[type=time]").value'),'09:00');
  assert.equal(await t.evaluate(`document.querySelector('[aria-label="StockDB交易日自动更新"]').getAttribute("aria-checked")`),'true');
- const text=await t.evaluate('document.querySelector("details.history-advanced").innerText');assert.match(text,/1分钟.*5次.*一次/s);
+ const text=await t.evaluate('document.querySelector("details.history-advanced").innerText');assert.match(text,/只执行一次.*不自动重试.*重启也不重复/s);assert.doesNotMatch(text,/1分钟|连续5次/);
  assert.equal(await t.evaluate('document.querySelectorAll("details.history-advanced input[type=number]").length'),0,'Retry policy has no user settings');
  await t.evaluate('(()=>{const el=document.querySelector("input[type=time]");el.value="09:15";el.dispatchEvent(new Event("input",{bubbles:true}));})()');await t.click('保存时间');
  await t.wait('window.__clockSettings.localHistoryAutoUpdateTime==="09:15"');
@@ -139,9 +139,10 @@ try{
  await t.evaluate('window.__clockSettings.applyVisualStyle("classic");window.__clockSettings.applyTheme("light")');
 
  await t.evaluate(`[...document.querySelectorAll('.section-nav button')].find(button=>button.innerText.includes('提醒')).click()`);
- await t.wait('document.querySelector(".settings-panel .explain-grid") && window.__stockdbClock.calls.some(c=>c.command==="get_notification_identity_status")');
- assert.match(await t.evaluate('document.querySelector(".settings-panel .explain-grid").innerText'),/重新穿越.*冷却间隔.*每日一次/s,'Shared explanation grid is retained for actionable reminder settings');
- assert.ok(await t.evaluate('document.querySelector(".settings-panel .compact-card").getBoundingClientRect().height>0'),'Shared compact-card styling remains available on the reminder page');
+ await t.wait('document.querySelector(".settings-panel .setting-card h3")?.innerText==="资讯与提醒"');
+ assert.match(await t.evaluate('document.querySelector(".settings-panel .setting-card").innerText'),/市场资讯.*市场主线.*研究中心.*行情与风险.*数据更新/s,'Reminder categories remain accessible from the central settings entry');
+ await t.click("打开资讯与提醒");
+ await t.wait('window.__settingsShow.value===false && window.__stockdbClock.events.some(e=>e.event==="notification-open-settings" && e.payload==="price")');
  await t.evaluate('window.__clockSettings.stockDbStatus.state="running_external"');
  assert.equal(await t.evaluate(`document.querySelector('[aria-label="更新本地 stockdb 数据"]').disabled`),false,'Manual update remains enabled for an external local service with auto update off');
  await t.evaluate(`document.querySelector('[aria-label="更新本地 stockdb 数据"]').click()`);
@@ -150,5 +151,5 @@ try{
  assert.equal(commands.filter(c=>c==='run_stockdb_update').length,1,'One explicit manual click invokes one isolated update');
  assert.ok(!commands.some(c=>/research_follow|simulation|start_stockdb|test_agent_connection|analyze|run_mainline_discovery/.test(c)),'No trading, Claude calls, discovery or real service starts');
  assert.deepEqual(t.errors,[]);
- const baseChecks=['Default09:00 trading-day text and verified completed date','fixed1minute/fivefailure text/no retry settings','valid time committed','auto switch saves0','failed time save preserves previous value','manual TopBar update retained and enabled for external service with automatic update paused','AI page has no redundant automatic-feature or manual-trigger cards','master switch saves without losing existing monitor preference','Claude path/directory saves and status read remain','Claude timeout/budget save and manual connection control remain','reminder shared compact-card/explain-grid remain','one manual synthetic update and no trading/Claude/discovery calls' ];const checks=[...baseChecks,...extraChecks];t.save({result:'passed',cases:checks.length,checks,commands,pathCases:pathCases.length,themeWidths:{styles:['classic','modern','elegant'],brightness:['light','dark'],widths:[360,1280]},limitation:'Real browser, Vue components and stores; IPC/dialog/clipboard are isolated fixtures. Native services, user DB/StockDB and Claude connection are not invoked.'});console.log('StockDB schedule, readable settings and path display UI passed: '+checks.length+' checks; '+t.output);
+ const baseChecks=['Default09:00 trading-day text and verified completed date','one daily automatic attempt without retries or repeats on restart','valid time committed','auto switch saves0','failed time save preserves previous value','manual TopBar update retained and enabled for external service with automatic update paused','AI page has no redundant automatic-feature or manual-trigger cards','master switch saves without losing existing monitor preference','Claude path/directory saves and status read remain','Claude timeout/budget save and manual connection control remain','reminder settings entry closes the dialog and opens the central reminder controls','one manual synthetic update and no trading/Claude/discovery calls' ];const checks=[...baseChecks,...extraChecks];t.save({result:'passed',cases:checks.length,checks,commands,pathCases:pathCases.length,themeWidths:{styles:['classic','modern','elegant'],brightness:['light','dark'],widths:[360,1280]},limitation:'Real browser, Vue components and stores; IPC/dialog/clipboard are isolated fixtures. Native services, user DB/StockDB and Claude connection are not invoked.'});console.log('StockDB schedule, readable settings and path display UI passed: '+checks.length+' checks; '+t.output);
 }finally{await t.close();}

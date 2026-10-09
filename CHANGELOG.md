@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## v3.0.4 (2026-10-09)
+
+### 修复
+- StockDB 数据更新每个交易日只自动执行一次，失败、超时或中断后不自动重试，重启也不重复；保留失败原因和手动更新入口，下一交易日重新执行。
 
 ### 发布
 - 后续正式发布仅提供 Windows x64 和 macOS universal（Intel + Apple Silicon）；移除 Linux 构建和必需产物检查，保留两个平台的更新签名校验，并支持复用旧运行中已成功的 Windows、macOS 构建。

@@ -716,10 +716,17 @@ impl StockDbManager {
         let cfg=crate::stockdb_schedule::config(&self.db)?;
         let record=self.db.stockdb_update_record()?;
         let state=crate::stockdb_schedule::due(&cfg,&record,now,startup,record.running_owner.is_some_and(crate::stockdb_schedule::owner_alive))?;
-        if state!="due" {if state=="failed"{self.record_update_failure(now)?;}return Ok(());}
+        if state != "due" {
+            if state == "failed" {
+                // Clear an abandoned owner without starting another update today.
+                crate::stockdb_schedule::claim(&self.db, &cfg, now, startup, false)?;
+                self.record_update_failure(now)?;
+            }
+            return Ok(());
+        }
         let Ok(_guard)=self.operation.try_lock() else{return Ok(());};
         if !crate::stockdb_schedule::claim(&self.db,&cfg,now,startup,false)?{self.record_update_failure(now)?;return Ok(());}
-        log::info!(target: "automation::data", "开始定时数据更新，第 {} 次尝试；更新期间程序管理服务启停",record.failures.saturating_add(1));
+        log::info!(target: "automation::data", "开始定时数据更新，今天只执行一次；更新期间程序管理服务启停");
         let result=self.perform_update(now).await;
         match &result {
             Ok(message)=>log::info!(target: "automation::data", "定时数据更新完成：{message}"),
@@ -738,7 +745,7 @@ impl StockDbManager {
 
     fn record_update_failure(&self,now:chrono::DateTime<chrono::Utc>)->Result<(),String>{
         if let Some(error)=crate::stockdb_schedule::claim_failure_notice(&self.db,now)?{
-            log::error!(target: "automation::data", "StockDB更新连续5次失败，今天的自动重试已停止。原因：{}；修复后可点击更新数据重试。", error.chars().take(600).collect::<String>());
+            log::error!(target: "automation::data", "StockDB更新失败或中断，今天不自动重试。原因：{}；可手动更新或等待下一交易日。", error.chars().take(600).collect::<String>());
         }
         Ok(())
     }
@@ -852,7 +859,7 @@ impl StockDbManager {
                             if started.elapsed()>Duration::from_secs(1800){
                                 if let Some(job)=runtime.updater_job.take(){job.terminate();}
                                 if let Some(mut child)=runtime.updater_child.take(){let _=child.kill();let _=child.wait();}
-                                Some(Err("StockDB更新超过30分钟，本次停止；后续按重试规则处理".into()))
+                                Some(Err("StockDB更新超过30分钟，本次停止；今天不自动重试".into()))
                             }else{None}
                         },
                         Err(error) => {

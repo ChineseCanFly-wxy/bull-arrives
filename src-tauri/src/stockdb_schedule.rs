@@ -4,8 +4,6 @@ use chrono::{DateTime, FixedOffset, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 
 pub const RECORD_KEY: &str = "local_history_update_record";
-pub const RETRY_SECONDS: i64 = 60;
-pub const MAX_FAILURES: u32 = 5;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UpdateRecord {
@@ -132,22 +130,10 @@ pub fn due(
     if record.running_owner.is_some() && owner_is_alive {
         return Ok("running");
     }
-    if record.last_attempt_day.as_deref() == Some(day(now).as_str())
-        && record.failures >= MAX_FAILURES
-    {
+    // A durable attempt consumes today's automatic update, even after a crash.
+    // Manual updates can still be explicitly claimed below.
+    if record.last_attempt_day.as_deref() == Some(day(now).as_str()) {
         return Ok("failed");
-    }
-    if record
-        .last_finished_at
-        .as_ref()
-        .or(record.last_attempt_at.as_ref())
-        .and_then(|v| DateTime::parse_from_rfc3339(v).ok())
-        .is_some_and(|last| {
-            let seconds = now.signed_duration_since(last).num_seconds();
-            (0..RETRY_SECONDS).contains(&seconds)
-        })
-    {
-        return Ok("retry_wait");
     }
     Ok("due")
 }
@@ -169,8 +155,7 @@ pub fn status(db: &Database, now: DateTime<Utc>) -> Result<UpdateStatus, String>
         "waiting_calendar" => "交易日历证据不足，取得证据后再自动更新",
         "complete" => "今天已更新，重启应用不会重复执行",
         "running" => "StockDB正在自动更新",
-        "retry_wait" => "本次未完成，1分钟后后台重试",
-        "failed" => "今天已连续5次失败，可修正原因后手动重试",
+        "failed" => "今天已执行一次，失败或中断后不自动重试；可手动更新或等待下一交易日",
         _ => "已到更新时间，程序将自动更新",
     };
     Ok(UpdateStatus {
@@ -208,7 +193,7 @@ pub fn claim(
             record.failures = 0;
         } else if record.running_owner.is_some() {
             record.failures = record.failures.saturating_add(1);
-            record.last_error = Some("上次更新异常中断，后台将按重试规则恢复".into());
+            record.last_error = Some("上次更新异常中断，今天不自动重试；可手动更新或等待下一交易日".into());
         }
         record.running_owner = None;
         if !manual && due(cfg, record, now, startup, false)? != "due" {
@@ -254,7 +239,7 @@ pub fn claim_failure_notice(db: &Database, now: DateTime<Utc>) -> Result<Option<
     db.change_stockdb_update_record(|record| {
         let today = day(now);
         if record.last_attempt_day.as_deref() != Some(&today)
-            || record.failures < MAX_FAILURES
+            || record.failures == 0
             || record.failure_notice_day.as_deref() == Some(&today)
         {
             return Ok(None);
@@ -299,7 +284,7 @@ mod tests {
         assert_eq!(validate_time("23:59").unwrap(), 1439);
     }
     #[test]
-    fn success_suppresses_restarts_failure_retries_and_running_owner_blocks_duplicates() {
+    fn each_day_runs_once_even_after_failure_or_interruption() {
         let mut record = UpdateRecord {
             last_success_day: Some("2026-09-29".into()),
             ..Default::default()
@@ -309,23 +294,26 @@ mod tests {
             "complete"
         );
         record.last_success_day = None;
+        record.last_attempt_day = Some("2026-09-29".into());
         record.last_attempt_at = Some(at(9, 0).to_rfc3339());
         record.last_error = Some("网络暂不可用".into());
         assert_eq!(
             due(&cfg(), &record, at(9, 0), false, false).unwrap(),
-            "retry_wait"
+            "failed"
         );
-        assert_eq!(due(&cfg(), &record, at(9, 1), false, false).unwrap(), "due");
-        assert_eq!(due(&cfg(), &record, at(9, 4), true, false).unwrap(), "due");
+        assert_eq!(due(&cfg(), &record, at(9, 1), false, false).unwrap(), "failed");
+        assert_eq!(due(&cfg(), &record, at(19, 0), true, false).unwrap(), "failed");
         record.running_owner = Some(1);
         assert_eq!(
             due(&cfg(), &record, at(10, 0), true, true).unwrap(),
             "running"
         );
-        assert_eq!(due(&cfg(), &record, at(10, 0), true, false).unwrap(), "due");
+        assert_eq!(due(&cfg(), &record, at(10, 0), true, false).unwrap(), "failed");
+        let tomorrow = at(9, 0) + chrono::Duration::days(1);
+        assert_eq!(due(&cfg(), &record, tomorrow, true, false).unwrap(), "due");
     }
     #[test]
-    fn durable_claims_retry_from_failure_completion_and_stop_after_five() {
+    fn failure_blocks_automatic_restarts_but_allows_manual_updates_and_next_day() {
         let root =
             std::env::temp_dir().join(format!("bull-stockdb-clock-{}", uuid::Uuid::new_v4()));
         let db = Database::open(root.clone()).unwrap();
@@ -343,22 +331,25 @@ mod tests {
                 false
             )
             .unwrap(),
-            "retry_wait"
+            "failed"
         );
         for minute in 3..=6 {
-            let time = at(9, minute);
-            assert!(claim(&other, &cfg(), time, false, false).unwrap());
-            finish(&other, time, time, Err("断网".into())).unwrap();
+            assert!(!claim(&other, &cfg(), at(9, minute), false, false).unwrap());
         }
-        assert_eq!(db.stockdb_update_record().unwrap().failures, 5);
+        assert_eq!(db.stockdb_update_record().unwrap().failures, 1);
         assert!(!claim(&db, &cfg(), at(9, 8), true, false).unwrap());
         assert!(claim_failure_notice(&db, at(9, 8)).unwrap().is_some());
         drop(other);
         let reopened = Database::open(root.clone()).unwrap();
+        assert!(!claim(&reopened, &cfg(), at(9, 9), true, false).unwrap());
         assert!(claim_failure_notice(&reopened, at(9, 9)).unwrap().is_none());
         let retry = at(9, 10);
         assert!(claim(&reopened, &cfg(), retry, false, true).unwrap());
-        finish(&reopened, retry, retry, Ok(Some("2026-09-30".into()))).unwrap();
+        finish(&reopened, retry, retry, Err("手动更新失败".into())).unwrap();
+        assert!(!claim(&db, &cfg(), at(9, 11), false, false).unwrap());
+        let manual = at(9, 12);
+        assert!(claim(&reopened, &cfg(), manual, false, true).unwrap());
+        finish(&reopened, manual, manual, Ok(Some("2026-09-30".into()))).unwrap();
         assert!(!claim(&db, &cfg(), at(19, 0), true, false).unwrap());
         assert_eq!(db.stockdb_update_record().unwrap().failures, 0);
         let tomorrow = at(9, 0) + chrono::Duration::days(1);
@@ -366,6 +357,35 @@ mod tests {
         assert_eq!(db.stockdb_update_record().unwrap().failures, 0);
         drop(db);
         drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interrupted_update_is_not_relaunched_after_restart() {
+        let root = std::env::temp_dir().join(format!(
+            "bull-stockdb-interrupted-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let db = Database::open(root.clone()).unwrap();
+        db.change_stockdb_update_record(|record| {
+            record.last_attempt_day = Some(day(at(9, 0)));
+            record.last_attempt_at = Some(at(9, 0).to_rfc3339());
+            record.running_owner = Some(u32::MAX);
+            Ok(())
+        })
+        .unwrap();
+        assert!(!claim(&db, &cfg(), at(9, 2), true, false).unwrap());
+        let record = db.stockdb_update_record().unwrap();
+        assert!(record.running_owner.is_none());
+        assert_eq!(record.failures, 1);
+        assert!(record.last_error.unwrap().contains("不自动重试"));
+        assert!(claim_failure_notice(&db, at(9, 2)).unwrap().is_some());
+        assert!(!claim(&db, &cfg(), at(19, 0), true, false).unwrap());
+        assert_eq!(db.stockdb_update_record().unwrap().failures, 1);
+        let tomorrow = at(9, 0) + chrono::Duration::days(1);
+        assert!(claim(&db, &cfg(), tomorrow, true, false).unwrap());
+        assert_eq!(db.stockdb_update_record().unwrap().failures, 0);
+        drop(db);
         std::fs::remove_dir_all(root).unwrap();
     }
 

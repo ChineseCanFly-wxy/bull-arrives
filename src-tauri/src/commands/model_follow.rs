@@ -1488,6 +1488,7 @@ fn view(db: &Database, b: &FollowBinding) -> Result<Value, String> {
 
 const AUTOMATIC_DELAY_SECONDS: i64 = 600;
 const AUTOMATIC_RETRY_SECONDS: i64 = 300;
+const AUTOMATIC_MAX_FAILURES: u32 = 5;
 const AUTOMATIC_RESEARCH_BUSY: &str = "原模型研究正在运行，等待下一轮自动检查";
 
 fn automatic_enabled(db: &Database) -> Result<bool, String> {
@@ -1534,7 +1535,7 @@ fn automatic_input(db: &Database, now: DateTime<Utc>) -> Result<AutomaticInput, 
     let update = db.stockdb_update_record()?;
     if !cfg.stockdb_enabled || update.running_owner.is_some_and(crate::stockdb_schedule::owner_alive)
         || update.last_success_day.as_deref() != Some(input.day.as_str()) || update.last_error.is_some() {
-        input.state = "waiting_update"; input.message = "等待今天的数据更新成功；程序按原重试规则处理，近期行情兜底保留".into(); return Ok(input);
+        input.state = "waiting_update"; input.message = "等待今天的数据更新成功；数据更新每天只执行一次，失败后可手动更新，近期行情兜底保留".into(); return Ok(input);
     }
     input.as_of = match super::research::model_completed_day(now) {
         Ok(day) => day.to_string(),
@@ -1560,7 +1561,7 @@ fn automatic_record_state(record: &AutomaticRecord, input: &AutomaticInput, now:
     if record.running_owner.is_some_and(crate::stockdb_schedule::owner_alive) { return "running"; }
     if record.day == input.day && record.as_of == input.as_of && record.runner_sha256 == automatic_revision() {
         if record.last_completed_day.as_deref() == Some(input.day.as_str()) { return "complete"; }
-        if record.failures >= crate::stockdb_schedule::MAX_FAILURES { return "failed"; }
+        if record.failures >= AUTOMATIC_MAX_FAILURES { return "failed"; }
         if record.retry_at.as_ref().and_then(|value| DateTime::parse_from_rfc3339(value).ok()).is_some_and(|retry| now < retry) { return "retry_wait"; }
     }
     "due"
