@@ -405,7 +405,7 @@
 
 ### 🔄 应用内自动更新
 
-Windows / Linux 版本支持**应用内自动更新** —— 发现新版本后按提示下载安装即可，无需手动去 GitHub 下载。交易时段内启动检查不会弹出提示，避免打断看盘。
+Windows / macOS 安装版支持**应用内自动更新** —— 发现新版本后按提示下载安装即可，无需手动去 GitHub 下载。交易时段内启动检查不会弹出提示，避免打断看盘。
 
 ### 📦 便携模式
 
@@ -428,13 +428,12 @@ Windows / Linux 版本支持**应用内自动更新** —— 发现新版本后�
 
 ### 下载
 
-前往 [GitHub Releases](https://github.com/ChineseCanFly-wxy/bull-arrives/releases) 下载最新版本：
+前往 [GitHub Releases](https://github.com/ChineseCanFly-wxy/bull-arrives/releases) 下载最新版本；后续正式发布仅提供 Windows 和 macOS：
 
 | 平台 | 安装包格式 |
 |------|-----------|
-| Windows | `.exe`（安装版）/ `.msi` / `.zip`（免安装绿色版） |
+| Windows x64 | `.exe`（安装版）/ `.zip`（免安装绿色版） |
 | macOS | `.dmg`（Intel + Apple Silicon 通用） |
-| Linux | `.deb` / `.rpm` / `.AppImage` |
 
 ### 三步开始看盘
 

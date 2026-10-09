@@ -18,8 +18,8 @@ export function verifyRelease(release, folder, { tag, repository, notes, publish
   if (names.size !== assets.length) throw new Error('Release有重复文件名');
   const required = ['BullArrives_' + version + '_x64-setup.exe', 'BullArrives_' + version + '_x64-portable.zip', 'latest.json'];
   for (const file of required) if (!names.has(file)) throw new Error('缺少产物：' + file);
-  if (!assets.some(a => a.name.endsWith('.dmg')) || !assets.some(a => a.name.endsWith('.deb')) || !assets.some(a => a.name.endsWith('.AppImage')))
-    throw new Error('macOS/Linux产物不完整');
+  if (!assets.some(a => a.name.endsWith('.dmg')))
+    throw new Error('macOS产物不完整');
   const lines = [];
   for (const asset of assets) {
     if (basename(asset.name) !== asset.name || asset.name.includes('\\') || !asset.size || asset.state !== 'uploaded') throw new Error('产物名称、大小或上传状态无效');
@@ -32,7 +32,7 @@ export function verifyRelease(release, folder, { tag, repository, notes, publish
   const updater = JSON.parse(readFileSync(resolve(folder, 'latest.json'), 'utf8'));
   if (updater.version?.replace(/^v/, '') !== version || updater.notes?.trim() !== notes.trim()) throw new Error('latest.json版本或更新说明不符');
   if (!Number.isFinite(Date.parse(updater.pub_date))) throw new Error('latest.json缺少有效发布日期');
-  for (const key of ['windows-x86_64', 'darwin-x86_64', 'darwin-aarch64', 'linux-x86_64']) {
+  for (const key of ['windows-x86_64', 'darwin-x86_64', 'darwin-aarch64']) {
     const item = updater.platforms?.[key];
     if (!item || typeof item.signature !== 'string' || item.signature.trim().length < 40) throw new Error('更新平台或签名内容缺失：' + key);
     const url = new URL(item.url);

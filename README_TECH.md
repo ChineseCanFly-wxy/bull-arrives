@@ -86,7 +86,7 @@ npm run build
 npm run test:rust -- --lib --locked
 ```
 
-`release:prepare` 只同步五处版本及转换更新说明，不提交、不推送。`release:check` 只做静态发版检查，不代替构建、测试和远端产物验证。审核后按路径提交、推送 main 及 `vX.Y.Z` 标签；GitHub 为三平台打包，草稿通过产物验证后正式发布。
+`release:prepare` 只同步五处版本及转换更新说明，不提交、不推送。`release:check` 只做静态发版检查，不代替构建、测试和远端产物验证。审核后按路径提交、推送 main 及 `vX.Y.Z` 标签；GitHub 仅为 Windows x64 和 macOS universal 打包，草稿通过产物验证后正式发布，不再发布 Linux 安装包。
 
 ### 构建
 
@@ -104,9 +104,8 @@ node scripts/build.mjs
 
 | 平台 | 产物 |
 |------|------|
-| Windows | NSIS `.exe` / `.msi` |
-| macOS | `.dmg` + `.app` |
-| Linux | `.deb` + `.AppImage` |
+| Windows x64 | NSIS `.exe` + 便携 `.zip` |
+| macOS universal（Intel + Apple Silicon） | `.dmg` + `.app` 更新包 |
 
 > 构建与测试产物统一位于 `src-tauri/target/`：安装包在 `release/bundle/`，前端在 `frontend/`，Vite 缓存在 `vite-cache/`，临时文件在 `tmp/`。共用 Cargo 缓存，不为各项任务新建完整编译目录。`npm run test:build-paths` 可检查目录配置。
 
@@ -145,7 +144,7 @@ Compress-Archive -Path "$staging\*" -DestinationPath "$src\bundle\BullArrives_${
 
 #### CI 自动打包
 
-CI（`.github/workflows/release.yml`）在 Windows 构建后自动生成便携包，并与三平台安装包及更新产物一起上传草稿 Release。推版本标签触发构建；只有全部目标和产物验证通过才正式发布，不能将「已推标签」当作发版完成。
+CI（`.github/workflows/release.yml`）在 Windows 构建后自动生成便携包，并与 Windows、macOS 安装包及更新产物一起上传草稿 Release。推版本标签触发构建；只有这两个平台和产物验证通过才正式发布，不能将「已推标签」当作发版完成。
 
 #### 绿色版 vs 安装版
 

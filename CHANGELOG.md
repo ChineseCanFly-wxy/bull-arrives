@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### 发布
+- 后续正式发布仅提供 Windows x64 和 macOS universal（Intel + Apple Silicon）；移除 Linux 构建和必需产物检查，保留两个平台的更新签名校验，并支持复用旧运行中已成功的 Windows、macOS 构建。
+
 ## v3.0.3 (2026-10-09)
 
 ### 修复

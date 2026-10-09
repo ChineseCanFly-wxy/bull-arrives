@@ -76,13 +76,13 @@ try {
   const folder = resolve(work, 'assets'); mkdirSync(folder);
   const notes = '## v2.2.7\n\n### 修复\n- 本次修复';
   const repository = 'example/bull-arrives', tag = 'v2.2.7';
-  const files = ['BullArrives_2.2.7_x64-setup.exe', 'BullArrives_2.2.7_x64-portable.zip', 'BullArrives.dmg', 'BullArrives.deb', 'BullArrives.AppImage', 'BullArrives.app.tar.gz'];
+  const files = ['BullArrives_2.2.7_x64-setup.exe', 'BullArrives_2.2.7_x64-portable.zip', 'BullArrives.dmg', 'BullArrives.app.tar.gz'];
   const signature = Buffer.from('synthetic-minisign-placeholder-for-boundary-test-only').toString('base64');
   const updater = { version: '2.2.7', notes, pub_date: '2026-10-02T00:00:00Z', platforms: {} };
-  for (const [key, name] of [['windows-x86_64', files[0]], ['darwin-x86_64', files[5]], ['darwin-aarch64', files[5]], ['linux-x86_64', files[4]]])
+  for (const [key, name] of [['windows-x86_64', files[0]], ['darwin-x86_64', files[3]], ['darwin-aarch64', files[3]]])
     updater.platforms[key] = { signature, url: 'https://github.com/' + repository + '/releases/download/' + tag + '/' + name };
   for (const file of files) writeFileSync(resolve(folder, file), 'synthetic-' + file);
-  for (const file of [files[0], files[4], files[5]]) { writeFileSync(resolve(folder, file + '.sig'), signature); files.push(file + '.sig'); }
+  for (const file of [files[0], files[3]]) { writeFileSync(resolve(folder, file + '.sig'), signature); files.push(file + '.sig'); }
   writeFileSync(resolve(folder, 'latest.json'), JSON.stringify(updater)); files.push('latest.json');
   const release = { tag_name: tag, prerelease: false, draft: true, body: notes, assets: files.map(name => {
     const content = readFileSync(resolve(folder, name)); return { name, size: content.length, state: 'uploaded', digest: 'sha256:' + createHash('sha256').update(content).digest('hex') };
@@ -93,11 +93,25 @@ try {
   assert.doesNotThrow(() => verifyRelease({ ...release, draft: false }, folder, { ...options, published: true }));
   assert.throws(() => verifyRelease({ ...release, body: 'wrong notes' }, folder, options), /说明/);
   assert.throws(() => verifyRelease({ ...release, assets: release.assets.filter(a => !a.name.endsWith('portable.zip')) }, folder, options), /缺少/);
+  assert.throws(() => verifyRelease({ ...release, assets: release.assets.filter(a => !a.name.endsWith('.dmg')) }, folder, options), /macOS产物不完整/);
+  assert.throws(() => verifyRelease({ ...release, assets: release.assets.filter(a => !a.name.endsWith('setup.exe')) }, folder, options), /缺少/);
+  assert.throws(() => verifyRelease({ ...release, assets: release.assets.filter(a => a.name !== 'BullArrives.app.tar.gz.sig') }, folder, options), /签名附件缺失/);
   assert.throws(() => verifyRelease({ ...release, assets: release.assets.concat(release.assets[0]) }, folder, options), /重复/);
+  const saveUpdater = () => {
+    const content = JSON.stringify(updater);
+    writeFileSync(resolve(folder, 'latest.json'), content);
+    Object.assign(release.assets.find(a => a.name === 'latest.json'), {
+      size: Buffer.byteLength(content), digest: 'sha256:' + createHash('sha256').update(content).digest('hex'),
+    });
+  };
+  for (const key of ['windows-x86_64', 'darwin-x86_64', 'darwin-aarch64']) {
+    const item = updater.platforms[key];
+    delete updater.platforms[key]; saveUpdater();
+    assert.throws(() => verifyRelease(release, folder, options), /更新平台或签名内容缺失/);
+    updater.platforms[key] = item;
+  }
   updater.platforms['windows-x86_64'].url = 'https://other.example/installer.exe';
-  writeFileSync(resolve(folder, 'latest.json'), JSON.stringify(updater));
-  const changedAsset = release.assets.find(a => a.name === 'latest.json');
-  const changedBytes = readFileSync(resolve(folder, 'latest.json')); changedAsset.size = changedBytes.length; changedAsset.digest = 'sha256:' + createHash('sha256').update(changedBytes).digest('hex');
+  saveUpdater();
   assert.throws(() => verifyRelease(release, folder, options), /地址/);
   console.log('发版自检通过：版本同步/拒绝降版、失败不改文件、Git输入、缺文件、私密/大文件、公告边界和Release产物防错。合成签名只测附件边界，真实密码学校验由CI原生minisign执行。');
 } finally {
