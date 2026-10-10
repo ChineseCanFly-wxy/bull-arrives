@@ -225,7 +225,7 @@ const chart=computed(()=>{const rows=selected.value?.curve??[];const values=[0,.
 
 :global(.research-modal.n-card) { border-radius: 16px; border: 1px solid var(--color-border-0); box-shadow: var(--shadow-md); }
 :global(.research-modal.n-card > .n-card-header) { padding: 16px 20px 12px; flex-shrink: 0; }
-:global(.research-modal.n-card > .n-card__content) { flex: 1; }
+:global(.research-modal.n-card > .n-card-content) { flex: 1; }
 .research-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .research-title h2 { margin: 0; font-size: 18px; line-height: 1.4; }
 .research-title p { margin: 2px 0 0; font-size: 12px; font-weight: 400; color: var(--color-text-tertiary); }

@@ -55,6 +55,7 @@ export async function getVersion(){return '2.2.6';}
 export async function open(){throw Error('Dialog prohibited in appearance test');}
 export async function openUrl(){throw Error('Network prohibited in appearance test');}
 export class Menu{static async new(){return {popup:async()=>{},close:async()=>{}};}}
+export class PhysicalSize{constructor(width,height){this.width=width;this.height=height;}}
 export function getCurrentWindow(){return {onFocusChanged:async()=>()=>{},setSkipTaskbar:async()=>{}};}
 `;
 const entry=`

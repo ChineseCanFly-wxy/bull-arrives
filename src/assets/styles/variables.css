@@ -376,7 +376,7 @@ html[data-style="modern"][data-appearance="elegant"] :is(.n-modal.n-card, .n-mod
 }
 html[data-style="modern"][data-appearance="elegant"] .n-modal.n-card > .n-card-header { padding: 22px 28px 18px; border-bottom: 1px solid var(--color-border-0); }
 html[data-style="modern"][data-appearance="elegant"] .n-card-header__main { font-size: 20px; font-weight: 600; line-height: var(--line-height-heading); }
-html[data-style="modern"][data-appearance="elegant"] .n-modal.n-card > .n-card__content { padding: 24px 28px; }
+html[data-style="modern"][data-appearance="elegant"] .n-modal.n-card > .n-card-content { padding: 24px 28px; }
 html[data-style="modern"][data-appearance="elegant"] .n-modal.n-card > .n-card__footer { padding: 16px 28px; }
 html[data-style="modern"][data-appearance="elegant"] .n-dialog__title { font-size: 20px; line-height: var(--line-height-heading); }
 html[data-style="modern"][data-appearance="elegant"] :is(.research-modal, .mainline-research) { font-size: 14px; line-height: var(--line-height-body); }
@@ -404,7 +404,7 @@ html[data-style="modern"][data-appearance="elegant"] :is(.mainline-observation, 
 
 @media (max-width: 680px) {
   html[data-style="modern"][data-appearance="elegant"] { --workspace-gutter: 14px; --panel-padding: 16px; }
-  html[data-style="modern"][data-appearance="elegant"] .n-modal.n-card > :is(.n-card-header, .n-card__content, .n-card__footer) { padding-inline: 16px; }
+  html[data-style="modern"][data-appearance="elegant"] .n-modal.n-card > :is(.n-card-header, .n-card-content, .n-card__footer) { padding-inline: 16px; }
   html[data-style="modern"][data-appearance="elegant"] :is(.research-navigation, .research-scroll) { padding-inline: 16px; }
   html[data-style="modern"][data-appearance="elegant"] :is(.research-modal, .dialog) .metrics { gap: 10px; }
 }

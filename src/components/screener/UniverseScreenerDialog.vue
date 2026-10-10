@@ -234,7 +234,7 @@ onBeforeUnmount(() => { ++openGeneration; universe.cancelScoring(); universe.flu
 <style scoped>
 :global(.universe-screener-modal.n-card) { border-radius: 16px; border: 1px solid var(--color-border-0); box-shadow: var(--shadow-md); }
 :global(.universe-screener-modal.n-card > .n-card-header) { padding: 16px 22px 12px; flex-shrink: 0; }
-:global(.universe-screener-modal.n-card > .n-card__content) { flex: 1; }
+:global(.universe-screener-modal.n-card > .n-card-content) { flex: 1; }
 .screener-title { display: flex; align-items: center; gap: 12px; }.screener-title h2 { font-size: 18px; line-height: 1.4; margin: 0; }.screener-title p { font-size: 12px; font-weight: 400; color: var(--color-text-secondary); margin: 3px 0 0; }
 .screener-mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 11px; color: var(--color-accent); background: var(--color-accent-dim); }.screener-mark svg { width: 21px; height: 21px; }
 .market-screener { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; color: var(--color-text-primary); line-height: 1.6; }

@@ -2,7 +2,7 @@
 
 桌面级 A 股行情监控工具，基于 Tauri 2 + Vue 3 + Rust 构建。
 
-当前正式版本：**v3.0.0**（2026-10-05）。版本说明见 [README](README.md#当前版本) 与 [CHANGELOG](CHANGELOG.md)；版本号以 `package.json` 为准。
+当前正式版本：**v3.0.5**（2026-10-10）。版本说明见 [README](README.md#当前版本) 与 [CHANGELOG](CHANGELOG.md)；版本号以 `package.json` 为准。
 
 ## 功能
 

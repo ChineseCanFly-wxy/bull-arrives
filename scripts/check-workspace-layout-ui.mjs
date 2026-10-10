@@ -99,7 +99,9 @@ const h = await uiHarness({ name: 'workspace-layout', entry, mock });
 const { evaluate, wait } = h;
 const results = [];
 async function clickElement(expression) {
-  const point = await evaluate('(()=>{const el=(' + expression + ');if(!el)throw Error("Missing target");el.scrollIntoView({block:"nearest",inline:"nearest"});const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()');
+  await evaluate('(()=>{const el=(' + expression + ');if(!el)throw Error("Missing target");el.scrollIntoView({block:"nearest",inline:"nearest"})})()');
+  await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+  const point = await evaluate('(()=>{const el=(' + expression + '),r=el.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;if(!el.contains(document.elementFromPoint(x,y)))throw Error("Target clipped or covered");return {x,y}})()');
   await h.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
   await h.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
   await h.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
@@ -230,6 +232,20 @@ try {
   await h.call('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
   await h.call('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
   await wait('!document.querySelector(".index-detail")');
+  for (const style of ['classic', 'modern', 'elegant']) {
+    await evaluate('window.__layoutView("light",' + JSON.stringify(style) + ')');
+    for (const [width, height] of [[640, 360], [360, 320]]) {
+      await h.call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+      await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+      for (const selector of ['.add-btn', '.group-tabs button:last-child', '.watchlist-table button']) {
+        await evaluate('document.querySelector(' + JSON.stringify(selector) + ').scrollIntoView({block:"center",inline:"center"})');
+        await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+        const target = await evaluate('(()=>{const b=document.querySelector(' + JSON.stringify(selector) + '),r=b.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return{rect:r.toJSON(),hit:b.contains(document.elementFromPoint(x,y)),text:b.innerText}})()');
+        assert.ok(target.hit, style + ' ' + width + 'x' + height + ' unreachable main-window control: ' + JSON.stringify(target));
+      }
+      assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'), style + ' short window horizontal overflow');
+    }
+  }
   assert.deepEqual(await evaluate('window.__layoutMock.unexpected'), []);
   assert.deepEqual(await evaluate('window.__layoutErrors'), []);
   assert.deepEqual(h.errors, []);
