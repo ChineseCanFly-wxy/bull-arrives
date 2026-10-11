@@ -1,0 +1,86 @@
+{
+  "version": "3.0.6",
+  "scope": "Local source/release build acceptance; public download is validated after release separately.",
+  "rust": {
+    "passed": 432,
+    "failed": 0,
+    "ignored": 42
+  },
+  "python": {
+    "context_tests": 26,
+    "online_fallback_tests": 16
+  },
+  "ui": {
+    "model_follow_checks": 17,
+    "compact_center": "passed",
+    "six_model_screener": "passed"
+  },
+  "private_runtime": {
+    "models": 6,
+    "cutoff": "2026-09-30",
+    "scores_per_model": 4455,
+    "external_python": false
+  },
+  "native_installed_recent": {
+    "stockdb_enabled": false,
+    "input": "previously captured online completed-day snapshot, isolated profile",
+    "models": [
+      {
+        "model_id": "breadth22_h20",
+        "as_of": "2026-10-09",
+        "scored_stocks": 4467,
+        "candidates": 99
+      },
+      {
+        "model_id": "index26_h20",
+        "as_of": "2026-10-09",
+        "scored_stocks": 4467,
+        "candidates": 0
+      },
+      {
+        "model_id": "breadth22_excess_csi20",
+        "as_of": "2026-10-09",
+        "scored_stocks": 4467,
+        "candidates": 9
+      },
+      {
+        "model_id": "breadth22_rank20",
+        "as_of": "2026-10-09",
+        "scored_stocks": 4467,
+        "candidates": 0
+      },
+      {
+        "model_id": "breadth22_open_downside20",
+        "as_of": "2026-10-09",
+        "scored_stocks": 4467,
+        "candidates": 0
+      },
+      {
+        "model_id": "mean_confirmed_by_median",
+        "as_of": "2026-10-09",
+        "scored_stocks": 4467,
+        "candidates": 1
+      }
+    ],
+    "completed": 6
+  },
+  "native_fresh": {
+    "startup": "passed",
+    "stockdb_enabled": false,
+    "missing_multiday_history": "explicit unavailable, no invented results",
+    "completed": 0
+  },
+  "resource_bytes": {
+    "previous_unpacked": 1141688761,
+    "current_unpacked": 571047649,
+    "previous_zip": 472196219,
+    "current_zip": 285790827
+  },
+  "local_cache_cleanup": "blocked by automatic approval; zero removed",
+  "preserved": [
+    "StockDB service/data",
+    "installed E:/BullArrives executable",
+    "user cash, holdings and orders",
+    "frozen market baseline"
+  ]
+}
