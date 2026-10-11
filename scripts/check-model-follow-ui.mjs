@@ -13,6 +13,11 @@ const commandArgs = Object.fromEntries(['research_follow_setup','research_follow
 assert.deepEqual(commandArgs.research_follow_update,['accountId','maxPositions','enabled']);
 assert.deepEqual(commandArgs.research_follow_delete,['accountId']);
 const allocation = JSON.parse(readFileSync(path.join(root,'src-tauri/model-follow-allocation.json'),'utf8'));
+const approved = JSON.parse(readFileSync(path.join(root,'src-tauri/approved-models.json'),'utf8'));
+for (const [id, model] of Object.entries(approved.models)) {
+  allocation.models[id] ??= {caps:{}};
+  allocation.models[id].recommendation = {...allocation.models[id].recommendation, ...model};
+}
 const timing = JSON.parse(readFileSync(path.join(root,'src-tauri/model-follow-timing.json'),'utf8'));
 function installMock(catalog, evidence, timing, commandArgs) {
   const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -41,8 +46,9 @@ function installMock(catalog, evidence, timing, commandArgs) {
   const configureAccount = account => {
     const model=evidence.models[account.model_id], cap=model?.caps[String(account.max_positions)];
     const admitted=account.model_id==='breadth22_rank20'&&account.max_positions===5&&cap?.admitted&&cap.selected_policy_id==='equal50';
-    const per=admitted?10:8,total=admitted?50:account.max_positions*8;
-    account.allocation_policy=admitted?'rank5_equal50':'baseline8';
+    const relative=account.model_id==='breadth22_excess_csi20'&&account.max_positions===3;
+    const per=admitted?10:relative?6:8,total=admitted?50:account.max_positions*per;
+    account.allocation_policy=admitted?'rank5_equal50':relative?'relative6':'baseline8';
     account.automatic_execution=true;
     account.execution={position_pct:per,total_entry_pct:total,holding_days:model?.recommendation.execution.holding_sessions??20,max_gap_pct:model?.recommendation.execution.max_gap_pct??4,buy_window:'09:30–09:35（北京时间）',fee_note:'隔离费用样例，实际费用以服务端成交记录为准。',allocation_note:'隔离账户：按本模型与数量的配置，单票 '+per+'%、总入场预算 '+total+'%。'};
     const timingModel=timing.models[account.model_id], timingConfig=timingModel?.active_configuration;
@@ -227,7 +233,7 @@ const click=async selector=>{await t.evaluate('document.querySelector('+JSON.str
 
 try {
  await t.call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
- await t.wait('document.querySelectorAll(".follow-account-card").length===5');
+ await t.wait('document.querySelectorAll(".follow-account-card").length===6');
  const ids=await t.evaluate('window.__followMock.accounts.map(a=>a.account_id)');
 
  await check('Three real polling cycles retain the selected detail and button geometry, including failure and explicit refresh',async()=>{
@@ -289,7 +295,7 @@ try {
  });
  await check('All isolated model accounts show cash/equity/status and a holdings preview',async()=>{
    const cards=await t.evaluate('[...document.querySelectorAll(".follow-account-card")].map(b=>b.innerText)');
-   assert.equal(cards.length,5);assert.match(cards[0],/现金/);assert.match(cards[0],/净值/);assert.match(cards[0],/模拟样例甲 800股/);assert.match(cards[1],/已暂停买卖/);await t.evaluate('window.scrollTo(0,0)');await t.screenshot('accounts-with-holdings');
+   assert.equal(cards.length,6);assert.match(cards[0],/现金/);assert.match(cards[0],/净值/);assert.match(cards[0],/模拟样例甲 800股/);assert.match(cards[1],/已暂停买卖/);await t.evaluate('window.scrollTo(0,0)');await t.screenshot('accounts-with-holdings');
  });
  await check('Selecting account cards changes the active holdings without transferring evidence',async()=>{
    await click('[data-account-id="'+ids[1]+'"]');await t.wait('document.querySelector(".follow-selected-account").dataset.selectedAccountId==="'+ids[1]+'"');
@@ -336,8 +342,8 @@ try {
  await check('Deleting an account shows a scoped confirmation, supports cancel and failures, then removes only that model',async()=>{
    const before=(await calls('research_follow_delete')).length;await click('.follow-delete-trigger');await t.wait('document.querySelector(".follow-delete-panel")');
    assert.match(await t.evaluate('document.querySelector(".follow-delete-panel").innerText'),/持仓/);await click('.follow-delete-cancel');assert.equal((await calls('research_follow_delete')).length,before);
-   await click('.follow-delete-trigger');await t.evaluate('window.__followMock.failNext={command:"research_follow_delete",message:"隔离删除失败"}');await click('.follow-delete-confirm');await t.wait('document.querySelector(".follow-error")?.innerText.includes("隔离删除失败")');assert.equal(await t.evaluate('document.querySelectorAll(".follow-account-card").length'),5);
-   await click('.follow-delete-confirm');await t.wait('document.querySelectorAll(".follow-account-card").length===4');assert.deepEqual((await calls('research_follow_delete')).at(-1).args,{accountId:ids[0]});assert.equal(await t.evaluate('window.__followMock.accounts.some(a=>a.account_id==='+ids[1]+')'),true);await t.evaluate('document.querySelector(".follow-model-outcomes").open=true');assert.match(await t.evaluate('document.querySelector(".follow-model-outcomes").innerText'),/已删除 · 不再自动建/);
+   await click('.follow-delete-trigger');await t.evaluate('window.__followMock.failNext={command:"research_follow_delete",message:"隔离删除失败"}');await click('.follow-delete-confirm');await t.wait('document.querySelector(".follow-error")?.innerText.includes("隔离删除失败")');assert.equal(await t.evaluate('document.querySelectorAll(".follow-account-card").length'),6);
+   await click('.follow-delete-confirm');await t.wait('document.querySelectorAll(".follow-account-card").length===5');assert.deepEqual((await calls('research_follow_delete')).at(-1).args,{accountId:ids[0]});assert.equal(await t.evaluate('window.__followMock.accounts.some(a=>a.account_id==='+ids[1]+')'),true);await t.evaluate('document.querySelector(".follow-model-outcomes").open=true');assert.match(await t.evaluate('document.querySelector(".follow-model-outcomes").innerText'),/已删除 · 不再自动建/);
  });
  await check('Inactive views stop polling and all current-account mutations',async()=>{
    await t.evaluate('window.__followApp.active=false');const n=(await calls('research_follow_accounts')).length;await refresh();assert.equal((await calls('research_follow_accounts')).length,n);

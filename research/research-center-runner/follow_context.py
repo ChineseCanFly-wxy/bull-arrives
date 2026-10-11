@@ -17,10 +17,10 @@ HERE = Path(__file__).resolve().parent
 RUNNER_PATH = HERE / "model_runner.py"
 REGISTRY_PATH = HERE / "registry.json"
 # Audit a new exporter version if either frozen identity is intentionally changed.
-SOURCE_RUNNER_SHA256 = "fbf86d0069291ba62d735f405998be7b8c64bc16bd71e128bcc0fc40a4bf7bcb"
-SOURCE_REGISTRY_SHA256 = "ba272c1201ab82b8ecf5527db191d41bf3fd37668b3dbee047c7092e430fc551"
+SOURCE_RUNNER_SHA256 = "18cfc8066012386c586dd71e23db2dcbcdaf5e5ebf001f701bb5f42c4e5111ab"
+SOURCE_REGISTRY_SHA256 = "6166438f2c23fa7820a024ecba172884ecb2a69bedfac9aba29e666649e51dab"
 MODELS = ("breadth22_h20", "index26_h20", "breadth22_excess_csi20",
-          "breadth22_rank20", "breadth22_open_downside20")
+          "breadth22_rank20", "breadth22_open_downside20", "mean_confirmed_by_median")
 CHINA = dt.timezone(dt.timedelta(hours=8))
 
 
@@ -260,6 +260,7 @@ def load_research(runner, registry):
     try:
         sys.path.insert(0, str(runner.BASE))
         research = load_source("_frozen_follow_model_study", runner.BASE / "model_study.py")
+        research.DATA = (runner.ROOT / registry["files"]["snapshot"]["path"]).parent
         modules = {"model_runner": research, "study": research.s, "relative_features": research.m,
                    "absolute_features": research.a, "rules": research.rules, "execution": research.e,
                    "index_adapter": research.cli}
@@ -306,8 +307,8 @@ def build_content(run, run_sha, runner, research, registry, hashes, snapshot, in
     validate_metadata(metadata, old_metadata, old_n, valid.shape, hashes["study"])
     index_calendar(index, sessions, runner.ROOT / registry["files"]["index"]["path"], old_n)
     score_path = runner.ROOT / registry["files"][run["model_id"] + "_score"]["path"]
-    frozen = np.load(score_path, allow_pickle=False, mmap_mode="r")
-    if frozen.shape != (old_n, len(codes)) or frozen.dtype.kind != "f":
+    frozen = np.load(score_path, allow_pickle=False)
+    if frozen.shape != (len(codes),) or frozen.dtype.kind != "f":
         raise ValueError("原评分缓存与冻结股票/日期轴不符")
     guard.check()
     features = s.features(raw, valid, factors, seen)
@@ -321,7 +322,7 @@ def build_content(run, run_sha, runner, research, registry, hashes, snapshot, in
               "csi300_return5": finite_or_none(index_features[-1, 0]) if len(dates) >= 6 else None,
               "csi300_ma60_deviation": finite_or_none(index_features[-1, 2]) if len(dates) >= 60 else None}
     ranked = ranked_symbols(run, codes, features["eligible"][-1], raw["close"][-1],
-                            frozen[-1] if len(dates) == old_n else None)
+                            frozen if len(dates) == registry["seed_sessions"] else None)
     rows = [{"symbol": symbol(code), "close": finite_or_none(raw["close"][-1, c]),
              "adjusted_close": finite_or_none(features["close"][-1, c]),
              "atr14": finite_or_none(features["atr"][-1, c]), "factor": float(factors[-1, c]),

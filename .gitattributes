@@ -6,3 +6,4 @@ research-assets.json -text
 scripts/research-bundle.py -text
 scripts/check-research-runtime.py -text
 scripts/research-requirements.txt -text
+docs/research-archive/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

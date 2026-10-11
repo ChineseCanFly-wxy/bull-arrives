@@ -2,9 +2,10 @@ import type {ConditionTree} from './conditions';
 export const MODEL_CATALOG = [
   { id: 'breadth22_h20', name: '技术＋市场广度', note: '20日收益标签代理', threshold: 0 },
   { id: 'index26_h20', name: '技术＋广度＋大盘', note: '加入真实沪深300状态', threshold: 0 },
-  { id: 'breadth22_excess_csi20', name: '相对大盘超额', note: '相对指数，正分也可能绝对亏损', threshold: 0 },
+  { id: 'breadth22_excess_csi20', name: '相对大盘超额', note: '新账户默认3只/每票6%；正分也可能绝对亏损', threshold: 0 },
   { id: 'breadth22_rank20', name: '全市场强弱排序', note: '截面排序标签，固定阈值0.6', threshold: 0.6 },
   { id: 'breadth22_open_downside20', name: '下行惩罚收益', note: '收益代理扣除开盘途中负偏离', threshold: 0 },
+  { id: 'mean_confirmed_by_median', name: '均值＋中位数确认', note: '双正确认，原均值排序，默认2只/每票8%', threshold: 0 },
 ] as const;
 export interface ResearchJob {
   id: number; kind: string; state: string; phase: string; message: string;

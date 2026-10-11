@@ -122,3 +122,9 @@ docs/code-review-*.md
 !/research/ashare-open-2026-10-01/research_cli.py
 !/research/ashare-fundamental-2026-10-01/
 !/research/ashare-fundamental-2026-10-01/fundamental_study.py
+
+# Current model runtime acceptance fixtures (no model binary or market matrix).
+!/research/research-center-runner/checks/current-rank-forward.json
+!/research/research-center-runner/checks/current-index-forward.json
+!/research/research-center-runner/test_follow_context.py
+!/research/research-center-runner/test_recent_market_fallback.py

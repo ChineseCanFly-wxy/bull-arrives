@@ -90,8 +90,25 @@ pub fn decode_run(raw: &str) -> Result<Value, String> {
 
 pub fn validate_task(v:&Value)->Result<(),String>{
     if v["model_id"]=="fundamental37_h20"{return if v["holding_days"]==20&&v["comparison"]=="baseline"&&v.get("mode").is_none_or(|m|m=="replay"){Ok(())}else{Err("财务37只允许原20日历史回放，未知前向财务不能开账户".into())};}
-    if !matches!(v["model_id"].as_str(),Some("breadth22_h20"|"index26_h20"|"breadth22_excess_csi20"|"breadth22_rank20"|"breadth22_open_downside20")) {return Err("未知冻结模型，禁止替代旧规则".into());}
+    if !matches!(v["model_id"].as_str(),Some("breadth22_h20"|"index26_h20"|"breadth22_excess_csi20"|"breadth22_rank20"|"breadth22_open_downside20"|"mean_confirmed_by_median")) {return Err("未知冻结模型，禁止替代旧规则".into());}
     match v["comparison"].as_str(){Some("holding15") if v["holding_days"]==15=>Ok(()),Some("baseline"|"cost_double"|"staged"|"verified_actions") if v["holding_days"]==20=>Ok(()),_=>Err("模型执行期限/对照不符，十五日不是重新训练模型".into())}
+}
+
+fn runtime_upgrade_allowed(old: &Value, new: &Value) -> bool {
+    let previous: Value = serde_json::from_str(include_str!("../../../docs/research-archive/registry-2026-09-30.json")).unwrap();
+    let version: Value = serde_json::from_str(include_str!("../../../docs/research-archive/legacy-runtime.json")).unwrap();
+    let current: Value = serde_json::from_str(include_str!("../../../research/research-center-runner/registry.json")).unwrap();
+    let Some(model) = old["model_id"].as_str() else { return false; };
+    let sources_match = |run: &Value, registry: &Value| registry["files"].as_object().unwrap().iter().all(|(key,row)|run["input_sha256"][key]==row["sha256"]);
+    old["mode"] == "forward" && old["comparison"] == "baseline" && old["holding_days"] == 20
+        && old["runner_sha256"] == version["runner_sha256"]
+        && new["runner_sha256"] == hex::encode(Sha256::digest(include_bytes!("../../../research/research-center-runner/model_runner.py")))
+        && previous["models"].get(model).is_some()
+        && old["model_sha256"] == previous["files"][format!("{model}_model2026")]["sha256"]
+        && old["model_sha256"] == current["files"][format!("{model}_model2026")]["sha256"]
+        && old["score_cache_sha256"] == previous["files"][format!("{model}_score")]["sha256"]
+        && new["score_cache_sha256"] == current["files"][format!("{model}_score")]["sha256"]
+        && sources_match(old, &previous) && sources_match(new, &current)
 }
 
 pub(super) fn save_model_run_checked(conn:&rusqlite::Connection,raw:&str,continuation:Option<i64>,expected_sha:Option<&str>)->Result<i64,String>{
@@ -102,7 +119,10 @@ pub(super) fn save_model_run_checked(conn:&rusqlite::Connection,raw:&str,continu
             let old_raw:String=conn.query_row("SELECT bundle_json FROM model_research_runs WHERE id=?1",[id],|r|r.get(0)).map_err(|_|"前向账户不存在")?;
             let old=decode_run(&old_raw)?;
             if expected_sha.is_some_and(|sha|old["content_sha256"].as_str()!=Some(sha)){return Err("前向账户在作业期间改变，拒绝覆盖".into());}
-            for key in ["model_id","holding_days","comparison","mode","forward_start","input_sha256","model_sha256","score_cache_sha256","runner_sha256"] {if old[key]!=v[key] {return Err("不能更改前向账户的冻结身份/费用/起点".into());}}
+            for key in ["model_id","holding_days","comparison","mode","forward_start","model_sha256"] {if old[key]!=v[key] {return Err("不能更改前向账户的冻结身份/费用/起点".into());}}
+            let runtime_changed = ["input_sha256","score_cache_sha256","runner_sha256"].iter().any(|key|old[*key]!=v[*key]);
+            if runtime_changed && !runtime_upgrade_allowed(&old, &v) {return Err("运行资源升级没有同一冻结模型的兼容证明，旧账户保留".into());}
+            // Slim resources may replace a score matrix with its identical cutoff row; every ledger prefix still must match.
             if v["mode"]!="forward"||v["as_of"].as_str()<old["as_of"].as_str(){return Err("只能向前延续观察".into());}
             for key in ["curve","orders","cycles"] {
                 let before=old["ledger"][key].as_array().unwrap();let after=v["ledger"][key].as_array().unwrap();
@@ -173,6 +193,29 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compact_runtime_upgrade_preserves_source_id_cash_and_all_prior_entries() {
+        let legacy = include_str!("../../../research/research-center-runner/checks/verified-rank-forward-b6cce0d8-167d-4c84-ad84-32f5b6800312.json");
+        let current = include_str!("../../../research/research-center-runner/checks/current-rank-forward.json");
+        let root = std::env::temp_dir().join(format!("model-upgrade-{}", uuid::Uuid::new_v4()));
+        let db = Database::open(root.clone()).unwrap();
+        let id = db.save_model_run(legacy, None).unwrap();
+        db.enable_model_observation(id, true).unwrap();
+        let before = db.model_run(id).unwrap();
+        assert_eq!(db.save_model_run(current, Some(id)).unwrap(), id);
+        let after = db.model_run(id).unwrap();
+        assert_eq!(after["enabled"], true);
+        for key in ["curve", "orders", "cycles", "unclosed"] { assert_eq!(after["ledger"][key], before["ledger"][key]); }
+        assert_eq!(after["current_scores"], before["current_scores"]);
+        let mut forged = before.clone();
+        forged["input_sha256"]["snapshot"] = "0".repeat(64).into();
+        assert!(!runtime_upgrade_allowed(&forged, &after));
+        forged = after.clone();
+        forged["runner_sha256"] = "0".repeat(64).into();
+        assert!(!runtime_upgrade_allowed(&before, &forged));
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]fn learned_model_is_not_old_rule(){assert!(validate_task(&json!({"model_id":"trend_follow","holding_days":20,"comparison":"baseline"})).is_err());assert!(validate_task(&json!({"model_id":"breadth22_h20","holding_days":15,"comparison":"baseline"})).is_err());assert!(validate_task(&json!({"model_id":"breadth22_h20","holding_days":15,"comparison":"holding15"})).is_ok());}
     #[test]fn model_task_mechanism_dedup_ignores_name(){let root=std::env::temp_dir().join(format!("model-task-{}",uuid::Uuid::new_v4()));let db=Database::open(root.clone()).unwrap();let mut task=json!({"name":"固定研究","hypothesis":"这是足够长且可以反证的真实模型期限假说，不能声称已经获准交易。","model_id":"breadth22_h20","holding_days":15,"comparison":"holding15","invalidation":["成本后无改善"],"missing_data":[],"frozen_source":{"snapshot":"test"}});let first=db.register_model_task(&task).unwrap();task["name"]="另一个名字".into();assert_eq!(first,db.register_model_task(&task).unwrap());drop(db);std::fs::remove_dir_all(root).unwrap();}
     #[test]fn enabled_forward_account_survives_recent_history_window(){

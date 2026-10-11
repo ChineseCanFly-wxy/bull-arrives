@@ -19,7 +19,7 @@ const signalSchedule = computed(() => {
   const view = account.value;
   if (!view) return null;
   const execution = view.execution;
-  const daily = ['breadth22_h20', 'index26_h20', 'breadth22_excess_csi20', 'breadth22_rank20', 'breadth22_open_downside20'].includes(view.model_id)
+  const daily = MODEL_CATALOG.some(model => model.id === view.model_id)
     && (execution.signal_basis ?? 'completed_daily') === 'completed_daily'
     && (execution.entry_schedule ?? 'next_session_open') === 'next_session_open'
     && (execution.execution_basis ?? 'live_depth') === 'live_depth';

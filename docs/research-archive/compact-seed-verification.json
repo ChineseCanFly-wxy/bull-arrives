@@ -1,0 +1,41 @@
+{
+  "status": "passed",
+  "stock_count": 5427,
+  "verified": {
+    "breadth22_h20": {
+      "predictions": 4455,
+      "exact_saved_model_match": true,
+      "historical_score_sha256": "558d4b952b6915e418d7c410c3f853709d08b61d3d6c89717e2b59d0c26b5544"
+    },
+    "index26_h20": {
+      "predictions": 4455,
+      "exact_saved_model_match": true,
+      "historical_score_sha256": "d08d9e9112d4cd22416a52eaea7adb106557229be1db8d8fb16f2e7cd91f9e6b"
+    },
+    "breadth22_excess_csi20": {
+      "predictions": 4455,
+      "exact_saved_model_match": true,
+      "historical_score_sha256": "4a07ca88796baa700e5facff8d586eccc702b07fe1bf37dc6ba157c82a091572"
+    },
+    "breadth22_rank20": {
+      "predictions": 4455,
+      "exact_saved_model_match": true,
+      "historical_score_sha256": "97ec06ba39ab49af0fb7d3c4e71131b6dcf7164235d6feb4c830f1f234e5ed1c"
+    },
+    "breadth22_open_downside20": {
+      "predictions": 4455,
+      "exact_saved_model_match": true,
+      "historical_score_sha256": "93c6cc496bc6591d53c8eef446e99d3dffcca8656eadb35651184c7724862115"
+    },
+    "mean_confirmed_by_median": {
+      "predictions": 4455,
+      "exact_saved_model_match": true,
+      "qualification_exact": true,
+      "candidate_count": 2
+    }
+  },
+  "runtime_files": 35,
+  "runtime_data_bytes": 296627489,
+  "catalog_studies": 32,
+  "original_data_unchanged": true
+}

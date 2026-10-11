@@ -2,35 +2,22 @@
 import HelpTooltip from '@/components/common/HelpTooltip.vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
 interface Period {net_return_pct:number;max_drawdown_pct:number}
 interface Model {id:string;name:string;features:number|string;holding_days:number;train:Period;validation:Period;test:Period;double_cost_return_pct:number;win_rate_pct:number;closed_cycles:number;unique_stocks:number;baseline_percentile:{train:number;validation:number;test:number};status:string}
 interface Evidence {run_id:string;as_of:string;data:{stocks:number;sessions:number;first_date:string|number;last_date:string|number;sha256:string;source:string};models:Model[];limitations:string[];next_checks:string[];integrity_note:string;content_sha256:string;annual_choices:unknown;stress:unknown;checks:unknown}
-const evidence=ref<Evidence|null>(null);const busy=ref(false);const error=ref('');const notice=ref('');const view=ref('compare');const selectedId=ref('breadth22_h20');let generation=0;
+const evidence=ref<Evidence|null>(null);const busy=ref(false);const error=ref('');const view=ref('compare');const selectedId=ref('breadth22_h20');let generation=0;
 const selected=computed(()=>evidence.value?.models.find(m=>m.id===selectedId.value));
 const pct=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)?`${v.toFixed(2)}%`:'--';
 const json=(v:unknown)=>JSON.stringify(v,null,2);
 async function load(){const request=++generation;busy.value=true;error.value='';try{const result=await invoke<Evidence>('get_research_evidence');if(request===generation){evidence.value=result;if(!result.models.some(m=>m.id===selectedId.value))selectedId.value=result.models[0]?.id??'';}}catch(e){if(request===generation)error.value=String(e);}finally{if(request===generation)busy.value=false;}}
-async function importEvidence(){if(busy.value)return;busy.value=true;notice.value='';try{const path=await open({multiple:false,title:'导入冻结研究证据包',filters:[{name:'研究证据JSON',extensions:['json']}]});if(typeof path!=='string')return;const request=++generation;busy.value=true;error.value='';const result=await invoke<Evidence>('import_research_evidence',{path});if(request===generation){evidence.value=result;notice.value='完整性已校验并登记；没有创建账户或自动准入策略。';}}catch(e){error.value=String(e);}finally{busy.value=false;}}
 onMounted(()=>void load());onBeforeUnmount(()=>{++generation;});
 </script>
 <template>
   <section class="evidence">
-    <div class="head"><div><b>多年、多股的模型证据</b> <HelpTooltip label="多年模型证据使用说明">查看全部成功和失败的配置，先比较训练与验证，再看已观察后段、同池对照和成本。收益是各阶段独立模拟账户的累计收益，不能直接拼成复利。SHA校验只证明内部内容完整，导入不代表模型获准或可自动下单。</HelpTooltip></div><div><button :disabled="busy" @click="load">刷新证据</button><button :disabled="busy" @click="importEvidence">导入研究证据包</button></div></div>
-    <p class="section-purpose">核对模型在训练、验证、后段与成本压力下的依据；判断回放是否可信时使用，刷新或导入只登记证据，不创建账户或订单。</p>
-    <details>
-      <summary>使用步骤：刷新与导入</summary>
-      <p>刷新只重读已导入的证据；没有导入记录时读取程序内置包，不下载行情或重算研究。导入成功后保存该包，后续刷新优先读取它。</p>
-      <ol>
-        <li>进入本页会自动读取证据；需要重新读取时点“刷新证据”。</li>
-        <li>有新的冻结证据包时点“导入研究证据包”，选择对应 JSON 文件；普通研究结果 JSON 不能直接当证据包导入。</li>
-        <li>核对下方运行标识、截止日期和覆盖数量，再切换“策略比较”“数据覆盖”“实验与压力”。</li>
-      </ol>
-      <p>结果：成功或失败提示在本页顶部，已加载的指标和记录在下方三个子页。导入失败时按顶部原因检查文件。</p>
-      <p>前提：查看可用内置包；导入须有可读取、格式兼容、不超过 1 MiB（约 1 MB）的探索性证据包，含正文与匹配的 SHA256，截止日期不能在未来。校验通过不等于收益或来源获认证。</p>
-    </details>
+    <div class="head"><div><b>多年、多股的模型证据</b> <HelpTooltip label="多年模型证据使用说明">查看成功和失败的历史配置。收益是各阶段独立模拟账户的累计收益，不能直接拼成复利；模型结果随版本更新。</HelpTooltip></div><button :disabled="busy" @click="load">刷新证据</button></div>
+    <p class="section-purpose">查看模型历史依据。刷新只读取已保存证据，不下载行情、不重新计算，也不创建账户或订单。</p>
     <p class="warning">研究观察 · 尚无模型获准用于生产选股。后段已经反复查看，属于回顾性探索；排序或收益代理值不代表上涨概率。</p>
-    <p v-if="error" role="alert" class="error">{{error}}</p><p v-if="notice" role="status">{{notice}}</p><p v-if="busy&&!evidence" role="status">正在校验研究证据…</p>
+    <p v-if="error" role="alert" class="error">{{error}}</p><p v-if="busy&&!evidence" role="status">正在校验研究证据…</p>
     <template v-if="evidence">
       <div class="meta">{{evidence.run_id}} · 截至 {{evidence.as_of}} · {{evidence.data.stocks}} 个历史股票代码 · {{evidence.data.sessions}} 个市场交易日</div>
       <nav aria-label="研究证据页面"><button v-for="item in [{id:'compare',name:'策略比较'},{id:'data',name:'数据覆盖'},{id:'experiments',name:'实验与压力'}]" :key="item.id" :class="{active:view===item.id}" @click="view=item.id">{{item.name}}</button></nav>

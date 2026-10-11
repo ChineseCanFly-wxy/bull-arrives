@@ -1,0 +1,35 @@
+{
+  "schema": "approved-paper-model-updates-v1",
+  "as_of": "2026-09-30",
+  "production_admission": false,
+  "models": {
+    "mean_confirmed_by_median": {
+      "name": "均值＋中位数确认",
+      "default_max_positions": 2,
+      "allocation_policy": "baseline8",
+      "position_pct": 8,
+      "execution": {"holding_sessions": 20, "entry_atr_multiple": 3, "max_gap_pct": 4},
+      "qualification": "完成日均值与中位数预测都大于0，按原均值分数排序。",
+      "result": "2020至2026-09-30累计收益37.28%、最大回撤6.29%；通过本金、持仓数量和双倍成本复验。",
+      "limits": "历史已反复观察；额外延迟一日收益4.58%、回撤13.24%。盘中执行和未来收益尚未验证，仅纳入模拟账户。",
+      "candidate_sha256": "5be2905274f93da9654f4b220ba8a32839be1e6b5ebd55d91f4e945def270408",
+      "primary_verification_sha256": "4565d4d7c17e572bc299f0556720e9fe6d7fbf29145758f5ba95353de7b072f5",
+      "capital_verification_sha256": "984402b39f7af64d4f381f73bc95a1a924c96a72910209359031279f37b4deae"
+    },
+    "breadth22_excess_csi20": {
+      "name": "相对大盘超额 · 6%仓位",
+      "default_max_positions": 3,
+      "allocation_policy": "relative6",
+      "position_pct": 6,
+      "execution": {"holding_sessions": 20, "entry_atr_multiple": 3, "max_gap_pct": 4},
+      "qualification": "沿用原相对沪深300模型及排名，每票预算含费用6%，最多3只。",
+      "result": "2020至2026-09-30累计收益23.56%、最大回撤12.69%；通过费用、年度起点及5.5%/6.5%相邻仓位复验。",
+      "limits": "复验本金10万元；整手及最低佣金会改变其他本金的路径。旧账户保留原仓位配置，新默认仅用于新建账户；不是实盘准入。",
+      "candidate_sha256": "5d92417299f87887c1ac384cc6f427a18222ea85d667da39139dd68034304136",
+      "summary_sha256": "db4a6dee602b4c1fafdd7c3986b00f6b17ae9481224bc41b07e38e27ef811b4e",
+      "sizing_summary_sha256": "a6fc3463214d9f7dbceda7f68cd5a28165e8ffdce3e7852da9084da38d7f7523"
+    }
+  },
+  "rejected": ["月度重训", "固定止盈止损重训及稳健性失败方案", "扩大样本与模型平均", "资金账户混合", "预算调整排序", "新增价格路径特征", "单独中位数模型", "均值中位数等权排名", "VWAP确认", "突破前高", "回落四分之一ATR限价", "均值确认后的固定止盈止损"],
+  "research_record": "docs/research-archive/catalog.json"
+}

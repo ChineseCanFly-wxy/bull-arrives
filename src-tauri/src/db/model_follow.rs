@@ -807,9 +807,9 @@ pub(crate) mod delete_tests {
     use rusqlite::types::Value as SqlValue;
     use serde_json::json;
 
-    const RANK_SOURCE: &str = include_str!("../../../research/research-center-runner/checks/verified-rank-forward-b6cce0d8-167d-4c84-ad84-32f5b6800312.json");
+    const RANK_SOURCE: &str = include_str!("../../../research/research-center-runner/checks/current-rank-forward.json");
     const INDEX_SOURCE: &str =
-        include_str!("../../../research/follow-timing-2026-10-04/checks/index-forward.json");
+        include_str!("../../../research/research-center-runner/checks/current-index-forward.json");
 
     pub(crate) fn fixture() -> (Database, FollowBinding) {
         // No user database, filesystem, market feed or StockDB connection is used.

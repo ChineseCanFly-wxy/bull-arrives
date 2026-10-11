@@ -456,7 +456,6 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 loop {
                     if let Ok(ids)=simulation_db.list_auto_sim_account_ids(){ for id in ids { if !simulation_db.live_account(id).unwrap_or(true){ if let Err(error)=commands::simulation::run_account(&simulation_db,id).await{commands::research::account_failed(&simulation_db,id,&error);} } } }
-                    commands::research::scheduled_tick(&simulation_db).await;
                     for observation in commands::research::scheduled_model_tick(&simulation_db).await {
                         // Automatic accounts report their own filled ledger separately.
                         if simulation_db.follow_bindings().unwrap_or_default().iter().any(|binding|binding.enabled&&Some(binding.source_run_id)==observation["run_id"].as_i64()){continue;}
@@ -960,7 +959,6 @@ pub fn run() {
             model_conditions::model_condition_enable,
             model_conditions::model_condition_delete,
             model_conditions::get_model_condition_event,
-            commands::research_evidence::import_research_evidence,
             commands::mainline::get_sector_mainline,
             commands::mainline::get_mainline_alert_history,
             commands::mainline::get_mainline_watchlist,
@@ -970,17 +968,11 @@ pub fn run() {
             commands::mainline::set_mainline_discovery_enabled,
             commands::mainline::run_mainline_discovery,
             commands::research::research_mode_report,
-            commands::research::save_research_config,
-            commands::research::research_discover,
             commands::research::research_model_config,
-            commands::research::research_model_run,
             commands::research::research_model_runs,
             commands::research::research_market_data_status,
-            commands::research::research_import_model_run,
             commands::research::research_model_observe,
             commands::research_extensions::research_extension_report,
-            commands::research::research_start,
-            commands::research::research_action,
             commands::simulation_live::simulation_live_status,
             commands::model_follow::research_auto_status,
             commands::model_follow::research_follow_accounts,
@@ -990,9 +982,6 @@ pub fn run() {
             commands::model_follow::research_follow_delete,
             commands::model_follow::research_follow_refresh,
             commands::model_follow::research_follow_order,
-            commands::research::research_workspace,
-            commands::research::open_research_claude,
-            commands::research::import_research_candidate,
             news::get_news_archive,
             daily_brief::get_daily_briefs,
             commands::agent::inspect_agent_task,

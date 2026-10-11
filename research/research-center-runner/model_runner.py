@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 BASE = ROOT / "research/ashare-models-2026-10-01"
 OPEN = ROOT / "research/ashare-open-2026-10-01"
-MODELS = ("breadth22_h20", "index26_h20", "breadth22_excess_csi20", "breadth22_rank20", "breadth22_open_downside20")
-COMPARISONS = ("baseline", "holding15", "cost_double", "staged", "verified_actions")
+MODELS = ("breadth22_h20", "index26_h20", "breadth22_excess_csi20", "breadth22_rank20", "breadth22_open_downside20", "mean_confirmed_by_median")
+COMPARISONS = ("baseline",)
 
 
 def digest(path):
@@ -30,10 +30,26 @@ def digest(path):
 
 
 def validate_choice(model, hold, comparison, mode):
-    if model not in MODELS or comparison not in COMPARISONS or mode not in ("replay", "forward"):
-        raise ValueError("仅支持五个已核验模型、五个固定对照和 replay/forward")
-    if hold != (15 if comparison == "holding15" else 20):
-        raise ValueError("holding15 只改变执行期限为15；基准/双成本保持20日标签与期限")
+    if model not in MODELS or comparison not in COMPARISONS or mode != "forward" or hold != 20:
+        raise ValueError("应用仅更新已确认模型的20日前向信号；历史回放和参数研究已移出安装包")
+
+
+def predict_current(np, predict, registry, model_id, x):
+    """Only SHA-verified, current frozen fits; no training on the user's machine."""
+    def fitted(key):
+        with (ROOT / registry["files"][key]["path"]).open("rb") as stream:
+            return pickle.load(stream)
+    if model_id != "mean_confirmed_by_median":
+        return predict(fitted(model_id + "_model2026"), x).astype(np.float32)
+    descriptor = json.loads((ROOT / registry["files"][model_id + "_model2026"]["path"]).read_text(encoding="utf8"))
+    if descriptor.get("schema") != "mean-median-confirmation-v1":
+        raise ValueError("确认模型定义无效")
+    for component in ("mean", "median"):
+        if registry["files"][descriptor[component]]["sha256"] != descriptor["component_sha256"][component]:
+            raise ValueError("确认模型的组成指纹不同")
+    mean = predict(fitted(descriptor["mean"]), x).astype(np.float32)
+    median = predict(fitted(descriptor["median"]), x).astype(np.float32)
+    return np.where(median > 0, mean, np.minimum(mean, 0))
 
 
 def current_scores(np, codes, as_of, score, eligible, threshold):
@@ -129,6 +145,7 @@ def emit(args):
     # All executable imports and all pickle loads occur after trusted hashes pass.
     sys.path.insert(0, str(BASE))
     import model_study as r
+    r.DATA = (ROOT / registry["files"]["snapshot"]["path"]).parent
     np, s, e, m, rules = r.np, r.s, r.e, r.m, r.rules
     snapshot = args.snapshot.resolve()
     updated_sources = {"snapshot": digest(snapshot / "matrices.npz"),
@@ -174,20 +191,17 @@ def emit(args):
     spec = registry["models"][args.model_id]
     score_path = ROOT / registry["files"][args.model_id + "_score"]["path"]
     frozen = np.load(score_path, allow_pickle=False)
-    if frozen.shape != (2123, len(codes)):
-        raise ValueError("评分缓存与冻结股票/日期轴不符")
+    if frozen.shape != (len(codes),):
+        raise ValueError("冻结截止日评分与股票轴不符")
     score = np.full(valid.shape, np.nan, np.float32)
-    score[:2123] = frozen
+    score[2122] = frozen
     if len(dates) > 2123:
-        model_path = ROOT / registry["files"][args.model_id + "_model2026"]["path"]
-        with model_path.open("rb") as stream:
-            model = pickle.load(stream)  # Own fixed artifact hash was verified, never AI/imported pickle.
         width = registry["models"][args.model_id]["feature_count"]
         for i in range(2123, len(dates)):
             cols = np.flatnonzero(f["eligible"][i])
             if len(cols):
-                score[i, cols] = m.predict(model, r.a.xday(arrays, market, index, i, cols)[:, :width])
-    np.testing.assert_array_equal(score[:2123], frozen)
+                score[i, cols] = predict_current(np, m.predict, registry, args.model_id, r.a.xday(arrays, market, index, i, cols)[:, :width])
+    np.testing.assert_array_equal(score[2122], frozen)
     threshold = spec["signal_threshold"]
     execution_score = score - threshold
     f["score"] = execution_score
@@ -294,9 +308,9 @@ def emit(args):
 
 
 def self_check():
-    validate_choice("breadth22_h20", 20, "baseline", "replay")
-    validate_choice("index26_h20", 15, "holding15", "forward")
-    for choice in [("trend_follow", 20, "baseline", "replay"), ("index26_h20", 15, "baseline", "forward")]:
+    validate_choice("breadth22_h20", 20, "baseline", "forward")
+    validate_choice("mean_confirmed_by_median", 20, "baseline", "forward")
+    for choice in [("trend_follow", 20, "baseline", "forward"), ("index26_h20", 15, "baseline", "forward"), ("breadth22_h20", 20, "baseline", "replay")]:
         try:
             validate_choice(*choice)
         except ValueError:
@@ -310,7 +324,11 @@ def self_check():
                           np.array([-.1, .2, np.nan]), np.array([True, True, True]), 0.)
     assert rows == [{"symbol": "sz000001", "score": -.1, "threshold": 0., "as_of": "2026-09-30"},
                     {"symbol": "sh600000", "score": .2, "threshold": 0., "as_of": "2026-09-30"}]
-    print("self-check passed: model identity, fifteen-day execution separation, strict choice, UTF8 SHA")
+    mean, median = np.array([.2,.1,-.1,-.2]), np.array([.1,-.1,.2,-.3])
+    confirmed = np.where(median > 0, mean, np.minimum(mean, 0))
+    np.testing.assert_array_equal(confirmed > 0, (mean > 0) & (median > 0))
+    np.testing.assert_array_equal(confirmed[confirmed > 0], mean[confirmed > 0])
+    print("self-check passed: frozen model identity, dual confirmation, original mean ranking, no research mode, UTF8 SHA")
 
 
 if __name__ == "__main__":
@@ -318,7 +336,7 @@ if __name__ == "__main__":
     parser.add_argument("--model-id", choices=MODELS, default=MODELS[0])
     parser.add_argument("--holding-days", type=int, choices=(15, 20), default=20)
     parser.add_argument("--comparison", choices=COMPARISONS, default="baseline")
-    parser.add_argument("--mode", choices=("replay", "forward"), default="replay")
+    parser.add_argument("--mode", choices=("forward",), default="forward")
     parser.add_argument("--snapshot", type=Path, default=OPEN / "stockdb-live/exports")
     parser.add_argument("--index", type=Path, default=OPEN / "online/index-sh-000300.ndjson")
     parser.add_argument("--forward-start", type=int)

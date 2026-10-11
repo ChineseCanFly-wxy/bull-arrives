@@ -40,9 +40,10 @@ model_runner.verify_sources()
 model_runner.self_check()
 import refresh_market
 refresh_market.self_check()
-sys.path.insert(0, str(root/"research/ashare-fundamental-2026-10-01"))
-import replay_adapter
-replay_adapter.verify_sources()
+assert (root/"research/ashare-open-2026-10-01/stockdb-live/exports/invalid_records.ndjson.gz").is_file(), "incremental refresh needs original invalid-row evidence"
+assert not (root/"research/ashare-fundamental-2026-10-01").exists(), "retired financial research shipped"
+assert not (root/"research/nested-technical-v1").exists(), "manual strategy search shipped"
+assert models == 6, "only the five existing fits and current median fit are required"
 with tempfile.TemporaryDirectory() as home:
     os.environ["USERPROFILE"] = home
     os.environ["HOME"] = home

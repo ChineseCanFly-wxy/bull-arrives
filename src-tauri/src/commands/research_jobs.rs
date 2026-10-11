@@ -8,14 +8,15 @@ use std::{collections::HashSet, io::Read, path::Path, sync::Arc};
 use tauri::State;
 
 // These frozen models consume completed daily bars; intraday signal models need their own admission and scheduler.
-pub const DAILY_MODEL_IDS: [&str; 5] = [
+pub const DAILY_MODEL_IDS: [&str; 6] = [
     "breadth22_h20",
     "index26_h20",
     "breadth22_excess_csi20",
     "breadth22_rank20",
     "breadth22_open_downside20",
+    "mean_confirmed_by_median",
 ];
-pub const MODEL_IDS: [&str; 5] = DAILY_MODEL_IDS;
+pub const MODEL_IDS: [&str; 6] = DAILY_MODEL_IDS;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JobRequest {
@@ -41,11 +42,11 @@ impl JobRequest {
             self.kind.as_str(),
             "scan" | "replay" | "forward" | "compare"
         ) || self.models.is_empty()
-            || self.models.len() > 5
+            || self.models.len() > MODEL_IDS.len()
             || self.comparisons.is_empty()
             || self.comparisons.len() > 5
         {
-            return Err("请选择研究类型和一至五个冻结模型".into());
+            return Err("请选择有效任务和已确认模型".into());
         }
         if self.models.iter().any(|m| !MODEL_IDS.contains(&m.as_str()))
             || self.models.iter().collect::<HashSet<_>>().len() != self.models.len()
@@ -186,6 +187,7 @@ fn group_from_run(row: &Value, job_id: i64, fingerprint: &str) -> Result<Value, 
         json!({"model_id":model,"name":row["model_name"],"holding_days":row["holding_days"],"score_semantic":row["score_semantic"],"threshold":threshold,"as_of":row["as_of"],"scored_stocks":scores.len(),"hit_count":watch.len(),"candidates":watch,"current_scores":scores,"model_sha256":row["model_sha256"],"score_cache_sha256":row["score_cache_sha256"],"runner_sha256":row["runner_sha256"],"data_sha256":row["data_sha256"],"source_fingerprint":fingerprint,"job_id":job_id,"production_admission":false}),
     )
 }
+
 fn local_cutoff_ready(config: &ModelRunnerConfig, day: &str) -> bool {
     let requested = day.replace('-', "").parse::<i64>().unwrap_or(-1);
     let Ok(text) =
@@ -213,6 +215,7 @@ fn local_cutoff_ready(config: &ModelRunnerConfig, day: &str) -> bool {
             .as_str()
             .is_some_and(|date| date.replace('-', "") == requested.to_string())
 }
+
 fn run_worker(db: &Database, id: i64) -> Result<(), String> {
     if db.research_job(id)?["kind"]=="explore" {return super::research_search::run_worker(db,id); }
     let job = db.research_job(id)?;
@@ -427,11 +430,18 @@ fn dispatch(db: Arc<Database>, id: i64, permit: tokio::sync::SemaphorePermit<'st
         }
     });
 }
+fn runtime_request(request: &JobRequest) -> Result<(), String> {
+    if !matches!(request.kind.as_str(), "scan" | "forward") || request.comparisons != default_comparisons() {
+        return Err("程序只运行已确认模型；历史回放、参数实验和研究方向任务已移除".into());
+    }
+    Ok(())
+}
 #[tauri::command]
 pub fn research_job_start(
     db: State<'_, Arc<Database>>,
     request: JobRequest,
 ) -> Result<Value, String> {
+    runtime_request(&request)?;
     let steps = request.steps()?;
     let permit = research::research_gate()
         .try_acquire()
@@ -451,6 +461,7 @@ pub fn research_job_resume(db: State<'_, Arc<Database>>, id: i64) -> Result<Valu
     let job = db.research_job(id)?;
     let request: JobRequest =
         serde_json::from_value(job["request"].clone()).map_err(|_| "研究请求损坏")?;
+    runtime_request(&request)?;
     request.steps()?;
     let permit = research::research_gate()
         .try_acquire()
@@ -780,7 +791,8 @@ mod tests {
             continuation: None,
             enable_observation: false,
         };
-        assert_eq!(r.steps().unwrap().len(), 5);
+        assert_eq!(r.steps().unwrap().len(), MODEL_IDS.len());
+        assert!(runtime_request(&r).is_ok());
         r.models.push(r.models[0].clone());
         assert!(r.steps().is_err());
         r.models = vec!["panic_second_test".into()];
@@ -792,6 +804,9 @@ mod tests {
         r.kind = "compare".into();
         r.comparisons = vec!["baseline".into(), "holding15".into(), "cost_double".into()];
         assert_eq!(r.steps().unwrap()[1].2, 15);
+        assert!(runtime_request(&r).is_err());
+        r.kind = "explore".into();
+        assert!(runtime_request(&r).is_err());
     }
     #[test]
     fn screen_requires_actual_positive_score_identity_and_ordinary_stock() {

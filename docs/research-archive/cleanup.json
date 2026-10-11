@@ -1,0 +1,133 @@
+{
+  "schema": "retired-research-cleanup-v1",
+  "date": "2026-10-11",
+  "status": "blocked_by_automatic_approval",
+  "files": 7359,
+  "bytes": 4602294779,
+  "by_study": {
+    "adaptive-models-2026-10-11": {
+      "files": 218,
+      "bytes": 142861252
+    },
+    "ashare-2026-10-01": {
+      "files": 13,
+      "bytes": 2528762
+    },
+    "ashare-fundamental-2026-10-01": {
+      "files": 59,
+      "bytes": 110340297
+    },
+    "ashare-mainline-2026-10-01": {
+      "files": 52,
+      "bytes": 106317797
+    },
+    "ashare-model-screen-2026-10-01": {
+      "files": 1,
+      "bytes": 29011
+    },
+    "ashare-models-2026-10-01": {
+      "files": 257,
+      "bytes": 1041204186
+    },
+    "ashare-open-2026-10-01": {
+      "files": 409,
+      "bytes": 1028104901
+    },
+    "budget-aware-ranking-2026-10-11": {
+      "files": 26,
+      "bytes": 4987994
+    },
+    "complement-risk-2026-10-11": {
+      "files": 170,
+      "bytes": 56203352
+    },
+    "confirmed-plan-exit-2026-10-11": {
+      "files": 24,
+      "bytes": 6843907
+    },
+    "coverage-ensemble-2026-10-11": {
+      "files": 65,
+      "bytes": 243712142
+    },
+    "execution-aligned-models-2026-10-11": {
+      "files": 136,
+      "bytes": 143074149
+    },
+    "factor-decomposition-2026-10-11": {
+      "files": 249,
+      "bytes": 219501079
+    },
+    "follow-allocation-2026-10-04": {
+      "files": 200,
+      "bytes": 119882077
+    },
+    "follow-slot-comparison-2026-10-04": {
+      "files": 20,
+      "bytes": 14664208
+    },
+    "follow-timing-2026-10-04": {
+      "files": 63,
+      "bytes": 32957283
+    },
+    "forward-chain-2026-10-01": {
+      "files": 26,
+      "bytes": 25129181
+    },
+    "intraday-continuous-2026-10-11": {
+      "files": 104,
+      "bytes": 21444700
+    },
+    "intraday-pullback-2026-10-11": {
+      "files": 24,
+      "bytes": 9299903
+    },
+    "intraday-reassessment-2026-10-11": {
+      "files": 4272,
+      "bytes": 32424644
+    },
+    "mean-median-consensus-2026-10-11": {
+      "files": 55,
+      "bytes": 74357887
+    },
+    "model-complementarity-2026-10-11": {
+      "files": 65,
+      "bytes": 15306039
+    },
+    "price-path-features-2026-10-11": {
+      "files": 41,
+      "bytes": 100972175
+    },
+    "research-center-independent-audit-2026-10-01": {
+      "files": 1,
+      "bytes": 15463
+    },
+    "research-center-runner": {
+      "files": 6,
+      "bytes": 219532
+    },
+    "robust-loss-2026-10-11": {
+      "files": 24,
+      "bytes": 50876607
+    },
+    "tick-stock-panel-2026-10-03": {
+      "files": 535,
+      "bytes": 844337213
+    },
+    "tsp-inspired-sequences-2026-10-03": {
+      "files": 244,
+      "bytes": 154699038
+    }
+  },
+  "manifest": "retired-artifacts.tsv.gz",
+  "manifest_sha256": "19b95042282db1395cff97018f4694e7744e48638da4c6330582cb08a50fe9a3",
+  "preserved": [
+    "all market matrices (.npz), original raw data (.gz/.ndjson), exports directories",
+    "all Git-tracked source and evidence",
+    "all current runtime model weights, cutoff vectors and action records",
+    "all scripts, protocols, summaries and user databases"
+  ],
+  "limitation": "Experimental fits, score matrices and generated replay ledgers require rerunning their recorded protocol for detailed reproduction; summaries are not full ledgers.",
+  "deleted_files": 0,
+  "deleted_bytes": 0,
+  "reason": "Bulk deletion rejected twice by automatic approval with blocked by policy; no files from this plan were deleted."
+}

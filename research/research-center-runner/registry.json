@@ -1,15 +1,11 @@
 {
   "schema": "trusted-model-runner-registry-v1",
-  "run_id": "ashare-models-2026-10-01-ablation15-neighborhood-v1",
+  "run_id": "frozen-daily-runtime-2026-10-11",
   "as_of": "2026-09-30",
   "files": {
     "model_runner": {
       "path": "research/ashare-models-2026-10-01/model_study.py",
       "sha256": "0e4937b56b3b3b5dd34f75cb1e2f816ea98077dcbf2f67d5c214c88a20d7feda"
-    },
-    "summary": {
-      "path": "research/ashare-models-2026-10-01/summary.json",
-      "sha256": "3bf389fcb8ec8ddbaa35a82ba3fceac15dfada627367a00731bd3d70c97751ad"
     },
     "snapshot": {
       "path": "research/ashare-open-2026-10-01/stockdb-live/exports/matrices.npz",
@@ -60,172 +56,44 @@
       "sha256": "156aa6e67634604ec19abbb2433b6506a99e6078fa2fa9d24831f58636df9ff7"
     },
     "breadth22_h20_score": {
-      "path": "research/ashare-models-2026-10-01/.cache/breadth22_h20_scores.npy",
-      "sha256": "558d4b952b6915e418d7c410c3f853709d08b61d3d6c89717e2b59d0c26b5544"
-    },
-    "breadth22_h20_model2020": {
-      "path": "research/ashare-models-2026-10-01/.cache/models/breadth22_h20_y2020.pkl",
-      "sha256": "812fff5a0c4da2b41b6cc03b92f5c02b2455710789c46c6a01b11efbd9aabcef"
-    },
-    "breadth22_h20_model2021": {
-      "path": "research/ashare-models-2026-10-01/.cache/models/breadth22_h20_y2021.pkl",
-      "sha256": "fff5c85a395000541a819da876ad0c5b97df8894f09f1e8436e3458b56e8c901"
-    },
-    "breadth22_h20_model2022": {
-      "path": "research/ashare-models-2026-10-01/.cache/models/breadth22_h20_y2022.pkl",
-      "sha256": "c213fd4d4662725af72068b548fe46c620cdaaeb9c40368aa2732675e329f851"
-    },
-    "breadth22_h20_model2023": {
-      "path": "research/ashare-models-2026-10-01/.cache/models/breadth22_h20_y2023.pkl",
-      "sha256": "4de306e428fbc8136799abcb8c043dfc0f82a714e3658c0c019909861abe0ad9"
-    },
-    "breadth22_h20_model2024": {
-      "path": "research/ashare-models-2026-10-01/.cache/models/breadth22_h20_y2024.pkl",
-      "sha256": "fd9bc70cc743751774d0f116d1917f3f6ad636ab17e35d875c7eb38f9ec97ba3"
-    },
-    "breadth22_h20_model2025": {
-      "path": "research/ashare-models-2026-10-01/.cache/models/breadth22_h20_y2025.pkl",
-      "sha256": "072673914778676f68ee2c39a1982d8702fda7e8ae8bae9bd0d9fed8da104e54"
+      "path": "research/research-center-runner/current/breadth22_h20_cutoff.npy",
+      "sha256": "243a8b621291b559981b7035acec786447be3b6de11608ef9c69677420c3a6a5"
     },
     "breadth22_h20_model2026": {
       "path": "research/ashare-models-2026-10-01/.cache/models/breadth22_h20_y2026.pkl",
       "sha256": "4f91293cf4a11a9f9c03ad2275dfec32877712c102959bb784466a094b88eca7"
     },
     "index26_h20_score": {
-      "path": "research/ashare-models-2026-10-01/.cache/index26_h20_scores.npy",
-      "sha256": "d08d9e9112d4cd22416a52eaea7adb106557229be1db8d8fb16f2e7cd91f9e6b"
-    },
-    "index26_h20_model2020": {
-      "path": "research/ashare-models-2026-10-01/.cache/models/index26_h20_y2020.pkl",
-      "sha256": "6e993c8baed375d0310404e3f23a6ca0922e45e1864f8e078179d57b02bbd421"
-    },
-    "index26_h20_model2021": {
-      "path": "research/ashare-models-2026-10-01/.cache/models/index26_h20_y2021.pkl",
-      "sha256": "686b9990bb3b1a013c4a54a60a0962279eb98bc5f4eeb93dd683c4b485f6215e"
-    },
-    "index26_h20_model2022": {
-      "path": "research/ashare-models-2026-10-01/.cache/models/index26_h20_y2022.pkl",
-      "sha256": "787b0984175b448416036e1899c2ff402e03bca512acc572dd0d148177ad46df"
-    },
-    "index26_h20_model2023": {
-      "path": "research/ashare-models-2026-10-01/.cache/models/index26_h20_y2023.pkl",
-      "sha256": "6fd3d7a7e9029dc0cca604f3131d57327b08fca4bb5139b6ec649c5130f5fd68"
-    },
-    "index26_h20_model2024": {
-      "path": "research/ashare-models-2026-10-01/.cache/models/index26_h20_y2024.pkl",
-      "sha256": "6afbb16965268003cb9c68f84f3901001a1d48e9fb2bfdc4df94156eb77b9808"
-    },
-    "index26_h20_model2025": {
-      "path": "research/ashare-models-2026-10-01/.cache/models/index26_h20_y2025.pkl",
-      "sha256": "6d473d906989de0a33a7ccb285f84715009540a236963a70695d8a7de38b66c5"
+      "path": "research/research-center-runner/current/index26_h20_cutoff.npy",
+      "sha256": "19f397eb6b52ffc1c3f02f2a957a4c513af09bba4652f9a078c63d56e3a9bad5"
     },
     "index26_h20_model2026": {
       "path": "research/ashare-models-2026-10-01/.cache/models/index26_h20_y2026.pkl",
       "sha256": "93960047af167991714dfab1ed698e0c5cb4c18dcbfa15f5b5dcd19d594676ad"
     },
     "breadth22_excess_csi20_score": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/csi_excess22-scores.npy",
-      "sha256": "4a07ca88796baa700e5facff8d586eccc702b07fe1bf37dc6ba157c82a091572"
-    },
-    "breadth22_excess_csi20_model2020": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/csi_excess22_y2020.pkl",
-      "sha256": "bcc2055e730aa5ac48defdc7d55a7cf2734d4835f5c07ee267a43ec758da3061"
-    },
-    "breadth22_excess_csi20_model2021": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/csi_excess22_y2021.pkl",
-      "sha256": "7f6e42bcc77bd0fdb237007da9b372ec737be4b4931deedafcad9cec6282a9b8"
-    },
-    "breadth22_excess_csi20_model2022": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/csi_excess22_y2022.pkl",
-      "sha256": "1da448ab81c0487fc03af483ff55d0369314b066d4b800151852011b8042dcca"
-    },
-    "breadth22_excess_csi20_model2023": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/csi_excess22_y2023.pkl",
-      "sha256": "2784c2cf2f51c58d900848ce02b78b427d86a8a08a3c875941e7369a91951a78"
-    },
-    "breadth22_excess_csi20_model2024": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/csi_excess22_y2024.pkl",
-      "sha256": "778a2b1a524fc8a1caa456f0ebb6f034ae7578a16df6e5a1bd36f642f19a155a"
-    },
-    "breadth22_excess_csi20_model2025": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/csi_excess22_y2025.pkl",
-      "sha256": "b04057c2dec206228af0141c9ff3d1b5d9827b50a809c25d48e4820b6d02755d"
+      "path": "research/research-center-runner/current/breadth22_excess_csi20_cutoff.npy",
+      "sha256": "e960dcf21c83bcc3d044229ad08b6a2ae97a7539342edc07ac1db9aa9769b36a"
     },
     "breadth22_excess_csi20_model2026": {
       "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/csi_excess22_y2026.pkl",
       "sha256": "e8b8a95db1e4d1f96dcc6d922cbbc6f940f569c2fb04d0b4d8e60d6d38e899ef"
     },
     "breadth22_rank20_score": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/cross_section_rank22-scores.npy",
-      "sha256": "97ec06ba39ab49af0fb7d3c4e71131b6dcf7164235d6feb4c830f1f234e5ed1c"
-    },
-    "breadth22_rank20_model2020": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/cross_section_rank22_y2020.pkl",
-      "sha256": "1565ca40af1eed3b41b69802e1ec7ce2bf604c8650e7369963e6b360f606356c"
-    },
-    "breadth22_rank20_model2021": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/cross_section_rank22_y2021.pkl",
-      "sha256": "aa6ac5902ac06ef0f485e1a9ee17f99b03e7388cd7cfd56b92a122ca2c85367e"
-    },
-    "breadth22_rank20_model2022": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/cross_section_rank22_y2022.pkl",
-      "sha256": "e3dad02c08119e12b5272a2352adc90baf1090ba2e66781ac87b69dc7f3ce50f"
-    },
-    "breadth22_rank20_model2023": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/cross_section_rank22_y2023.pkl",
-      "sha256": "80d748e6c516e5545301daac036a0db8fd10768d1dbcaea9095b60782cc30644"
-    },
-    "breadth22_rank20_model2024": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/cross_section_rank22_y2024.pkl",
-      "sha256": "8e4ddd3c432505de1eb3333899d8460b39629770cb4f34b9b6ba21a8da782336"
-    },
-    "breadth22_rank20_model2025": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/cross_section_rank22_y2025.pkl",
-      "sha256": "e0ae83d826d0da0f46da07f5e2dd96c3f02ba6f6e619653b905eee1b49a337f4"
+      "path": "research/research-center-runner/current/breadth22_rank20_cutoff.npy",
+      "sha256": "6c3374279a56d9159e71903ae24cc1a63e5f927c1adf435bdbb65089fd19ab51"
     },
     "breadth22_rank20_model2026": {
       "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/cross_section_rank22_y2026.pkl",
       "sha256": "193cacdc52734be939df6b88ea7d8f4368758b229f96338805d413f538a972d1"
     },
     "breadth22_open_downside20_score": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/opening_downside22-scores.npy",
-      "sha256": "93c6cc496bc6591d53c8eef446e99d3dffcca8656eadb35651184c7724862115"
-    },
-    "breadth22_open_downside20_model2020": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/opening_downside22_y2020.pkl",
-      "sha256": "1dd95de5b0845f4d144a3d52dff36da89e81f91a948c993639a30cfaa4bad807"
-    },
-    "breadth22_open_downside20_model2021": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/opening_downside22_y2021.pkl",
-      "sha256": "2606e728663ae10331dff61a9432773a805aae5c968ecf89b0a99ecc0369cedf"
-    },
-    "breadth22_open_downside20_model2022": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/opening_downside22_y2022.pkl",
-      "sha256": "894b415b5c3168f72f11f34d5b062539d4305cc9accf27c333a58a337844e927"
-    },
-    "breadth22_open_downside20_model2023": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/opening_downside22_y2023.pkl",
-      "sha256": "d8bf80439954d9e704c7ad051cc35c0cbd94f70d1846d85b2d4287c19867827f"
-    },
-    "breadth22_open_downside20_model2024": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/opening_downside22_y2024.pkl",
-      "sha256": "151155868315780385de47ef48d138102700149e0575d93798491107d5b99f8d"
-    },
-    "breadth22_open_downside20_model2025": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/opening_downside22_y2025.pkl",
-      "sha256": "e74ae8b1e796aa2e1d4c99ac2762c824864529d170efef6bb4fb06a5ba99649c"
+      "path": "research/research-center-runner/current/breadth22_open_downside20_cutoff.npy",
+      "sha256": "e72acab91fa53cc91eddedf5576cb4825c11c9cf7bfaf154d6df1ebf241d6074"
     },
     "breadth22_open_downside20_model2026": {
       "path": "research/ashare-models-2026-10-01/label-study-v2/.cache/models/opening_downside22_y2026.pkl",
       "sha256": "e99f812c96527710accee80b73bab22d3a644e98a8866fa14eedea5e2a6e7333"
-    },
-    "label_label_study.py": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/label_study.py",
-      "sha256": "f96d6c30f0bb856b59a20cfe2a40b2c7c16b89e1cf96f317ab7d1e3df3a99da2"
-    },
-    "label_summary.json": {
-      "path": "research/ashare-models-2026-10-01/label-study-v2/summary.json",
-      "sha256": "593677cd52b9822573dec7635641b933ad58024498aefdd4172bf07355b43d9e"
     },
     "index_adapter": {
       "path": "research/ashare-open-2026-10-01/research_cli.py",
@@ -262,6 +130,18 @@
     "verified_action_pdf_301108_20250710": {
       "path": "research/forward-chain-2026-10-01/issuer-tail-evidence-v3/301108-20250710.pdf",
       "sha256": "4b03e32da938302bb800085824fb5f0212c074d9d83e7c5489b69d94ab882c00"
+    },
+    "confirmation_median_model2026": {
+      "path": "research/research-center-runner/current/median22_absolute_2026.pkl",
+      "sha256": "071c9f24e8ef026266fce3b7e709673ff7e13d4c6ac38f2e501627136a07eb8f"
+    },
+    "mean_confirmed_by_median_model2026": {
+      "path": "research/research-center-runner/current/mean_confirmed_by_median.json",
+      "sha256": "37bb28ca5ad921479e3847f96da782c2543d3e16daaff276e9dc9fb0772b9b40"
+    },
+    "mean_confirmed_by_median_score": {
+      "path": "research/research-center-runner/current/mean_confirmed_by_median_cutoff.npy",
+      "sha256": "f92d334c7b4f4de3b3690f9978be1d1f5a5527641520890b7fc38e4333e2bcd2"
     }
   },
   "models": {
@@ -270,72 +150,6 @@
       "feature_count": 22,
       "label_holding_days": 20,
       "fits": [
-        {
-          "config": "breadth22_h20",
-          "prediction_year": 2020,
-          "rows": 33312,
-          "first_training_signal": 20180703,
-          "last_training_signal": 20191203,
-          "last_actual_label_endpoint": 20191231,
-          "prediction_boundary": 20200101,
-          "sampled_missing_exit_rows": 88,
-          "model_sha256": "812fff5a0c4da2b41b6cc03b92f5c02b2455710789c46c6a01b11efbd9aabcef"
-        },
-        {
-          "config": "breadth22_h20",
-          "prediction_year": 2021,
-          "rows": 56640,
-          "first_training_signal": 20180703,
-          "last_training_signal": 20201203,
-          "last_actual_label_endpoint": 20201231,
-          "prediction_boundary": 20210101,
-          "sampled_missing_exit_rows": 129,
-          "model_sha256": "fff5c85a395000541a819da876ad0c5b97df8894f09f1e8436e3458b56e8c901"
-        },
-        {
-          "config": "breadth22_h20",
-          "prediction_year": 2022,
-          "rows": 68160,
-          "first_training_signal": 20190102,
-          "last_training_signal": 20211203,
-          "last_actual_label_endpoint": 20211231,
-          "prediction_boundary": 20220101,
-          "sampled_missing_exit_rows": 120,
-          "model_sha256": "c213fd4d4662725af72068b548fe46c620cdaaeb9c40368aa2732675e329f851"
-        },
-        {
-          "config": "breadth22_h20",
-          "prediction_year": 2023,
-          "rows": 67968,
-          "first_training_signal": 20200102,
-          "last_training_signal": 20221202,
-          "last_actual_label_endpoint": 20221230,
-          "prediction_boundary": 20230101,
-          "sampled_missing_exit_rows": 107,
-          "model_sha256": "4de306e428fbc8136799abcb8c043dfc0f82a714e3658c0c019909861abe0ad9"
-        },
-        {
-          "config": "breadth22_h20",
-          "prediction_year": 2024,
-          "rows": 67872,
-          "first_training_signal": 20210104,
-          "last_training_signal": 20231201,
-          "last_actual_label_endpoint": 20231229,
-          "prediction_boundary": 20240101,
-          "sampled_missing_exit_rows": 81,
-          "model_sha256": "fd9bc70cc743751774d0f116d1917f3f6ad636ab17e35d875c7eb38f9ec97ba3"
-        },
-        {
-          "config": "breadth22_h20",
-          "prediction_year": 2025,
-          "rows": 67776,
-          "first_training_signal": 20220104,
-          "last_training_signal": 20241203,
-          "last_actual_label_endpoint": 20241231,
-          "prediction_boundary": 20250101,
-          "sampled_missing_exit_rows": 59,
-          "model_sha256": "072673914778676f68ee2c39a1982d8702fda7e8ae8bae9bd0d9fed8da104e54"
-        },
         {
           "config": "breadth22_h20",
           "prediction_year": 2026,
@@ -351,79 +165,14 @@
       "score_semantic": "二十日调整后开盘收益标签预测，非胜率、非可执行净利润",
       "signal_threshold": 0,
       "name": "广度绝对收益22",
-      "source_run_id": "ashare-models-2026-10-01-ablation15-neighborhood-v1"
+      "source_run_id": "ashare-models-2026-10-01-ablation15-neighborhood-v1",
+      "historical_score_sha256": "558d4b952b6915e418d7c410c3f853709d08b61d3d6c89717e2b59d0c26b5544"
     },
     "index26_h20": {
       "features": "index26",
       "feature_count": 26,
       "label_holding_days": 20,
       "fits": [
-        {
-          "config": "index26_h20",
-          "prediction_year": 2020,
-          "rows": 33312,
-          "first_training_signal": 20180703,
-          "last_training_signal": 20191203,
-          "last_actual_label_endpoint": 20191231,
-          "prediction_boundary": 20200101,
-          "sampled_missing_exit_rows": 88,
-          "model_sha256": "6e993c8baed375d0310404e3f23a6ca0922e45e1864f8e078179d57b02bbd421"
-        },
-        {
-          "config": "index26_h20",
-          "prediction_year": 2021,
-          "rows": 56640,
-          "first_training_signal": 20180703,
-          "last_training_signal": 20201203,
-          "last_actual_label_endpoint": 20201231,
-          "prediction_boundary": 20210101,
-          "sampled_missing_exit_rows": 129,
-          "model_sha256": "686b9990bb3b1a013c4a54a60a0962279eb98bc5f4eeb93dd683c4b485f6215e"
-        },
-        {
-          "config": "index26_h20",
-          "prediction_year": 2022,
-          "rows": 68160,
-          "first_training_signal": 20190102,
-          "last_training_signal": 20211203,
-          "last_actual_label_endpoint": 20211231,
-          "prediction_boundary": 20220101,
-          "sampled_missing_exit_rows": 120,
-          "model_sha256": "787b0984175b448416036e1899c2ff402e03bca512acc572dd0d148177ad46df"
-        },
-        {
-          "config": "index26_h20",
-          "prediction_year": 2023,
-          "rows": 67968,
-          "first_training_signal": 20200102,
-          "last_training_signal": 20221202,
-          "last_actual_label_endpoint": 20221230,
-          "prediction_boundary": 20230101,
-          "sampled_missing_exit_rows": 107,
-          "model_sha256": "6fd3d7a7e9029dc0cca604f3131d57327b08fca4bb5139b6ec649c5130f5fd68"
-        },
-        {
-          "config": "index26_h20",
-          "prediction_year": 2024,
-          "rows": 67872,
-          "first_training_signal": 20210104,
-          "last_training_signal": 20231201,
-          "last_actual_label_endpoint": 20231229,
-          "prediction_boundary": 20240101,
-          "sampled_missing_exit_rows": 81,
-          "model_sha256": "6afbb16965268003cb9c68f84f3901001a1d48e9fb2bfdc4df94156eb77b9808"
-        },
-        {
-          "config": "index26_h20",
-          "prediction_year": 2025,
-          "rows": 67776,
-          "first_training_signal": 20220104,
-          "last_training_signal": 20241203,
-          "last_actual_label_endpoint": 20241231,
-          "prediction_boundary": 20250101,
-          "sampled_missing_exit_rows": 59,
-          "model_sha256": "6d473d906989de0a33a7ccb285f84715009540a236963a70695d8a7de38b66c5"
-        },
         {
           "config": "index26_h20",
           "prediction_year": 2026,
@@ -439,7 +188,8 @@
       "score_semantic": "二十日调整后开盘收益标签预测，非胜率、非可执行净利润",
       "signal_threshold": 0,
       "name": "指数绝对收益26",
-      "source_run_id": "ashare-models-2026-10-01-ablation15-neighborhood-v1"
+      "source_run_id": "ashare-models-2026-10-01-ablation15-neighborhood-v1",
+      "historical_score_sha256": "d08d9e9112d4cd22416a52eaea7adb106557229be1db8d8fb16f2e7cd91f9e6b"
     },
     "breadth22_excess_csi20": {
       "features": "breadth22",
@@ -448,78 +198,6 @@
       "score_semantic": "二十日相对真实CSI300开盘收益标签，正分仍可绝对亏损",
       "signal_threshold": 0,
       "fits": [
-        {
-          "config": "csi_excess22",
-          "prediction_year": 2020,
-          "rows": 33312,
-          "features": 22,
-          "first_training_signal": 20180703,
-          "last_training_signal": 20191203,
-          "last_actual_label_endpoint": 20191231,
-          "training_day_indices_sha256": "eca02732f2866a0a13d2f6e70adee1bbda181e81a0eaab96c9ed00f1eec101e1",
-          "training_targets_sha256": "40249ab083ddbb1d05e0240b867f1ef22bf6d07a49392a021578b55c959baf55",
-          "model_sha256": "bcc2055e730aa5ac48defdc7d55a7cf2734d4835f5c07ee267a43ec758da3061"
-        },
-        {
-          "config": "csi_excess22",
-          "prediction_year": 2021,
-          "rows": 56640,
-          "features": 22,
-          "first_training_signal": 20180703,
-          "last_training_signal": 20201203,
-          "last_actual_label_endpoint": 20201231,
-          "training_day_indices_sha256": "f28d6468316fe29ca88e0ccbe30ee15ed3480b29f7e1d80a12e0eb24e26dcd59",
-          "training_targets_sha256": "e675ef98fefdfd4141f21b81a26e9e0c30b1f12e90f34e07669a3fa3f20da3cc",
-          "model_sha256": "7f6e42bcc77bd0fdb237007da9b372ec737be4b4931deedafcad9cec6282a9b8"
-        },
-        {
-          "config": "csi_excess22",
-          "prediction_year": 2022,
-          "rows": 68160,
-          "features": 22,
-          "first_training_signal": 20190102,
-          "last_training_signal": 20211203,
-          "last_actual_label_endpoint": 20211231,
-          "training_day_indices_sha256": "14c8a96fcab621425c79044d9b8fc6e9fced28ca2342ff983346e150de0cd113",
-          "training_targets_sha256": "9b77e39182568e1d8bc44b5515b6e3727e8d38b11ca3b04c1adf673bc8f9de2f",
-          "model_sha256": "1da448ab81c0487fc03af483ff55d0369314b066d4b800151852011b8042dcca"
-        },
-        {
-          "config": "csi_excess22",
-          "prediction_year": 2023,
-          "rows": 67968,
-          "features": 22,
-          "first_training_signal": 20200102,
-          "last_training_signal": 20221202,
-          "last_actual_label_endpoint": 20221230,
-          "training_day_indices_sha256": "e31324d114c27932c97295861c588e97b8881b114b060b6dbf57ae74acbf2c19",
-          "training_targets_sha256": "cff7f163ffc358eece97fd4682f337a7828a3b49167641ae8732f600bca36e85",
-          "model_sha256": "2784c2cf2f51c58d900848ce02b78b427d86a8a08a3c875941e7369a91951a78"
-        },
-        {
-          "config": "csi_excess22",
-          "prediction_year": 2024,
-          "rows": 67872,
-          "features": 22,
-          "first_training_signal": 20210104,
-          "last_training_signal": 20231201,
-          "last_actual_label_endpoint": 20231229,
-          "training_day_indices_sha256": "e18e7c3ae482d3d5ec065af1deafdc765881b27e511e5cf6168f3b67e9ad4214",
-          "training_targets_sha256": "b31fc415f37a6236558fb72fce0c565e12d0fc6ceaa11bbc9c486c97c21ba396",
-          "model_sha256": "778a2b1a524fc8a1caa456f0ebb6f034ae7578a16df6e5a1bd36f642f19a155a"
-        },
-        {
-          "config": "csi_excess22",
-          "prediction_year": 2025,
-          "rows": 67776,
-          "features": 22,
-          "first_training_signal": 20220104,
-          "last_training_signal": 20241203,
-          "last_actual_label_endpoint": 20241231,
-          "training_day_indices_sha256": "bc78a6f11a77620a78d47e18d8dba91a1b2c569d006e096b6445e8e2c8f9eb19",
-          "training_targets_sha256": "4d5651a8081bbadb9c414e1ffcd59da759cb42f9deaa104e476644c37ccf4f9a",
-          "model_sha256": "b04057c2dec206228af0141c9ff3d1b5d9827b50a809c25d48e4820b6d02755d"
-        },
         {
           "config": "csi_excess22",
           "prediction_year": 2026,
@@ -534,7 +212,8 @@
         }
       ],
       "name": "CSI超额收益22",
-      "source_run_id": "ashare-label-study-v2"
+      "source_run_id": "ashare-label-study-v2",
+      "historical_score_sha256": "4a07ca88796baa700e5facff8d586eccc702b07fe1bf37dc6ba157c82a091572"
     },
     "breadth22_rank20": {
       "features": "breadth22",
@@ -543,78 +222,6 @@
       "score_semantic": "全eligible二十日净收益代理横截面并列midrank预测，超过0.6为观察，非胜率",
       "signal_threshold": 0.6,
       "fits": [
-        {
-          "config": "cross_section_rank22",
-          "prediction_year": 2020,
-          "rows": 33312,
-          "features": 22,
-          "first_training_signal": 20180703,
-          "last_training_signal": 20191203,
-          "last_actual_label_endpoint": 20191231,
-          "training_day_indices_sha256": "eca02732f2866a0a13d2f6e70adee1bbda181e81a0eaab96c9ed00f1eec101e1",
-          "training_targets_sha256": "3ea3f99fd055aa286a048cb8e2f731554f5b1beeb745bb076601acadba7aca16",
-          "model_sha256": "1565ca40af1eed3b41b69802e1ec7ce2bf604c8650e7369963e6b360f606356c"
-        },
-        {
-          "config": "cross_section_rank22",
-          "prediction_year": 2021,
-          "rows": 56640,
-          "features": 22,
-          "first_training_signal": 20180703,
-          "last_training_signal": 20201203,
-          "last_actual_label_endpoint": 20201231,
-          "training_day_indices_sha256": "f28d6468316fe29ca88e0ccbe30ee15ed3480b29f7e1d80a12e0eb24e26dcd59",
-          "training_targets_sha256": "8d6b4e44ca1d144bde0333ee85dd950863a631ef3a2d2ed897c21a14b99fd4be",
-          "model_sha256": "aa6ac5902ac06ef0f485e1a9ee17f99b03e7388cd7cfd56b92a122ca2c85367e"
-        },
-        {
-          "config": "cross_section_rank22",
-          "prediction_year": 2022,
-          "rows": 68160,
-          "features": 22,
-          "first_training_signal": 20190102,
-          "last_training_signal": 20211203,
-          "last_actual_label_endpoint": 20211231,
-          "training_day_indices_sha256": "14c8a96fcab621425c79044d9b8fc6e9fced28ca2342ff983346e150de0cd113",
-          "training_targets_sha256": "e4f352207a24d72d5f402d2f3570094b4ebd9bcb0eea436d0aea3d95a8769f80",
-          "model_sha256": "e3dad02c08119e12b5272a2352adc90baf1090ba2e66781ac87b69dc7f3ce50f"
-        },
-        {
-          "config": "cross_section_rank22",
-          "prediction_year": 2023,
-          "rows": 67968,
-          "features": 22,
-          "first_training_signal": 20200102,
-          "last_training_signal": 20221202,
-          "last_actual_label_endpoint": 20221230,
-          "training_day_indices_sha256": "e31324d114c27932c97295861c588e97b8881b114b060b6dbf57ae74acbf2c19",
-          "training_targets_sha256": "fdf5a64e47173863d4a18020dc93ebc79a238c15fa0c103e32e0e034c6168165",
-          "model_sha256": "80d748e6c516e5545301daac036a0db8fd10768d1dbcaea9095b60782cc30644"
-        },
-        {
-          "config": "cross_section_rank22",
-          "prediction_year": 2024,
-          "rows": 67872,
-          "features": 22,
-          "first_training_signal": 20210104,
-          "last_training_signal": 20231201,
-          "last_actual_label_endpoint": 20231229,
-          "training_day_indices_sha256": "e18e7c3ae482d3d5ec065af1deafdc765881b27e511e5cf6168f3b67e9ad4214",
-          "training_targets_sha256": "f20417ba02f8959227e17e43985592f41a482b5084b02e701e3c2ea86574491f",
-          "model_sha256": "8e4ddd3c432505de1eb3333899d8460b39629770cb4f34b9b6ba21a8da782336"
-        },
-        {
-          "config": "cross_section_rank22",
-          "prediction_year": 2025,
-          "rows": 67776,
-          "features": 22,
-          "first_training_signal": 20220104,
-          "last_training_signal": 20241203,
-          "last_actual_label_endpoint": 20241231,
-          "training_day_indices_sha256": "bc78a6f11a77620a78d47e18d8dba91a1b2c569d006e096b6445e8e2c8f9eb19",
-          "training_targets_sha256": "af205d87e35e8fcc20ffaefdec6f713538b51a7611be21936563a354dfe90c16",
-          "model_sha256": "e0ae83d826d0da0f46da07f5e2dd96c3f02ba6f6e619653b905eee1b49a337f4"
-        },
         {
           "config": "cross_section_rank22",
           "prediction_year": 2026,
@@ -629,7 +236,8 @@
         }
       ],
       "name": "截面排序22",
-      "source_run_id": "ashare-label-study-v2"
+      "source_run_id": "ashare-label-study-v2",
+      "historical_score_sha256": "97ec06ba39ab49af0fb7d3c4e71131b6dcf7164235d6feb4c830f1f234e5ed1c"
     },
     "breadth22_open_downside20": {
       "features": "breadth22",
@@ -638,78 +246,6 @@
       "score_semantic": "二十日净收益代理减开盘途中最大负偏离，未含盘中低点",
       "signal_threshold": 0,
       "fits": [
-        {
-          "config": "opening_downside22",
-          "prediction_year": 2020,
-          "rows": 33312,
-          "features": 22,
-          "first_training_signal": 20180703,
-          "last_training_signal": 20191203,
-          "last_actual_label_endpoint": 20191231,
-          "training_day_indices_sha256": "eca02732f2866a0a13d2f6e70adee1bbda181e81a0eaab96c9ed00f1eec101e1",
-          "training_targets_sha256": "ae61abfd6d6b92c10e9230fda7f288727ac8670c1760fca5ce353a4cab5c51e1",
-          "model_sha256": "1dd95de5b0845f4d144a3d52dff36da89e81f91a948c993639a30cfaa4bad807"
-        },
-        {
-          "config": "opening_downside22",
-          "prediction_year": 2021,
-          "rows": 56640,
-          "features": 22,
-          "first_training_signal": 20180703,
-          "last_training_signal": 20201203,
-          "last_actual_label_endpoint": 20201231,
-          "training_day_indices_sha256": "f28d6468316fe29ca88e0ccbe30ee15ed3480b29f7e1d80a12e0eb24e26dcd59",
-          "training_targets_sha256": "6a733063de174a68d7a004709ac03905ada120762b85d1a7910b28981f8f1614",
-          "model_sha256": "2606e728663ae10331dff61a9432773a805aae5c968ecf89b0a99ecc0369cedf"
-        },
-        {
-          "config": "opening_downside22",
-          "prediction_year": 2022,
-          "rows": 68160,
-          "features": 22,
-          "first_training_signal": 20190102,
-          "last_training_signal": 20211203,
-          "last_actual_label_endpoint": 20211231,
-          "training_day_indices_sha256": "14c8a96fcab621425c79044d9b8fc6e9fced28ca2342ff983346e150de0cd113",
-          "training_targets_sha256": "83122d35f5e7ffa6f976fe43a2a27a3f376f88aa761cba681dd301bafd3ab6be",
-          "model_sha256": "894b415b5c3168f72f11f34d5b062539d4305cc9accf27c333a58a337844e927"
-        },
-        {
-          "config": "opening_downside22",
-          "prediction_year": 2023,
-          "rows": 67968,
-          "features": 22,
-          "first_training_signal": 20200102,
-          "last_training_signal": 20221202,
-          "last_actual_label_endpoint": 20221230,
-          "training_day_indices_sha256": "e31324d114c27932c97295861c588e97b8881b114b060b6dbf57ae74acbf2c19",
-          "training_targets_sha256": "ee359cf13ae103bb8755f6a2d497972b6c555fe922715d4aaa7e6f8f63beb1d1",
-          "model_sha256": "d8bf80439954d9e704c7ad051cc35c0cbd94f70d1846d85b2d4287c19867827f"
-        },
-        {
-          "config": "opening_downside22",
-          "prediction_year": 2024,
-          "rows": 67872,
-          "features": 22,
-          "first_training_signal": 20210104,
-          "last_training_signal": 20231201,
-          "last_actual_label_endpoint": 20231229,
-          "training_day_indices_sha256": "e18e7c3ae482d3d5ec065af1deafdc765881b27e511e5cf6168f3b67e9ad4214",
-          "training_targets_sha256": "7583bb14de9c5306c120855ff310f3a393088303792b246ea1a0c4d8c28bd31c",
-          "model_sha256": "151155868315780385de47ef48d138102700149e0575d93798491107d5b99f8d"
-        },
-        {
-          "config": "opening_downside22",
-          "prediction_year": 2025,
-          "rows": 67776,
-          "features": 22,
-          "first_training_signal": 20220104,
-          "last_training_signal": 20241203,
-          "last_actual_label_endpoint": 20241231,
-          "training_day_indices_sha256": "bc78a6f11a77620a78d47e18d8dba91a1b2c569d006e096b6445e8e2c8f9eb19",
-          "training_targets_sha256": "27b2b5a2d443c217eb35415c94bd2acf89f75bcbf565e469f5072bbf822fa087",
-          "model_sha256": "e74ae8b1e796aa2e1d4c99ac2762c824864529d170efef6bb4fb06a5ba99649c"
-        },
         {
           "config": "opening_downside22",
           "prediction_year": 2026,
@@ -724,7 +260,31 @@
         }
       ],
       "name": "开盘下行惩罚22",
-      "source_run_id": "ashare-label-study-v2"
+      "source_run_id": "ashare-label-study-v2",
+      "historical_score_sha256": "93c6cc496bc6591d53c8eef446e99d3dffcca8656eadb35651184c7724862115"
+    },
+    "mean_confirmed_by_median": {
+      "features": "breadth22",
+      "feature_count": 22,
+      "label_holding_days": 20,
+      "name": "均值＋中位数确认",
+      "signal_threshold": 0,
+      "source_run_id": "mean-median-consensus-2026-10-11",
+      "score_semantic": "原20日均值收益分数；中位数未确认的正分记为0，仅双正合格股按原均值排序，不是胜率",
+      "fits": [
+        {
+          "config": "breadth22_h20",
+          "prediction_year": 2026,
+          "rows": 67872,
+          "first_training_signal": 20230103,
+          "last_training_signal": 20251203,
+          "last_actual_label_endpoint": 20251231,
+          "prediction_boundary": 20260101,
+          "sampled_missing_exit_rows": 68,
+          "model_sha256": "4f91293cf4a11a9f9c03ad2275dfec32877712c102959bb784466a094b88eca7"
+        }
+      ],
+      "confirmation_model_sha256": "071c9f24e8ef026266fce3b7e709673ff7e13d4c6ac38f2e501627136a07eb8f"
     }
   },
   "data_quality": {
@@ -863,5 +423,7 @@
     ],
     "minimum_valid_stock_count_per_session": 3140,
     "stopped_quotes_before_dataset_end_stocks": 253
-  }
+  },
+  "runtime_scope": "Current frozen models and one cutoff-day score vector; historical training/replay artifacts are excluded.",
+  "seed_sessions": 2123
 }

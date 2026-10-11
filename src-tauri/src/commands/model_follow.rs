@@ -155,15 +155,8 @@ fn validate_follow_values(cash: f64, maximum: i64) -> Result<(), String> {
 }
 
 fn validate_setup(input: &FollowSetup) -> Result<i64, String> {
-    if !matches!(
-        input.model_id.as_str(),
-        "breadth22_h20"
-            | "index26_h20"
-            | "breadth22_excess_csi20"
-            | "breadth22_rank20"
-            | "breadth22_open_downside20"
-    ) {
-        return Err("一键启动仅支持已有五个冻结模型".into());
+    if !super::research_jobs::DAILY_MODEL_IDS.contains(&input.model_id.as_str()) {
+        return Err("自动启动仅支持已确认的冻结模型".into());
     }
     let maximum = input
         .max_positions
@@ -192,6 +185,9 @@ fn sell_limit(tick: &LiveTick) -> Result<i64, String> {
     Ok(((scaled(bid.price)? as i128 * 9990 / 10000) / 100 * 100) as i64)
 }
 fn recommended_slots(model: &str) -> i64 {
+    if let Some(slots) = approved_models()["models"][model]["default_max_positions"].as_i64() {
+        return slots;
+    }
     execution_evidence()["models"][model]["recommendation"]["default_max_positions"]
         .as_i64()
         .filter(|n| (1..=10).contains(n))
@@ -207,9 +203,10 @@ fn model_execution(model: &str) -> Result<ModelExecution, String> {
     if !super::research_jobs::DAILY_MODEL_IDS.contains(&model) {
         return Err("该模型不属于当前已验证的日线自动交易；盘中信号模型须单独验证并使用独立执行入口".into());
     }
-    serde_json::from_value(
-        execution_evidence()["models"][model]["recommendation"]["execution"].clone(),
-    )
+    let approved = &approved_models()["models"][model]["execution"];
+    serde_json::from_value(if approved.is_object() { approved.clone() } else {
+        execution_evidence()["models"][model]["recommendation"]["execution"].clone()
+    })
     .map_err(|_| "本模型缺少独立核对的执行配置".into())
 }
 fn date(s: &str) -> Result<NaiveDate, String> {
@@ -222,7 +219,7 @@ fn source(db: &Database, id: i64) -> Result<Value, String> {
         || v["holding_days"] != 20
         || !v["model_id"].as_str().is_some_and(|id| super::research_jobs::DAILY_MODEL_IDS.contains(&id))
     {
-        return Err("跟随账户只使用已有五个冻结技术模型的20日基准前向账户".into());
+        return Err("跟随账户只使用已确认冻结模型的20日基准前向账户".into());
     }
     Ok(v)
 }
@@ -407,7 +404,9 @@ fn apply_follow_context(db: &Database, binding: &mut FollowBinding, ctx: FollowC
     {
         db.reject_follow_order(o.id, "原模型计划或时点程序更新，旧操作单已过期")?;
     }
-    binding.candidate_cursor = 0;
+    if binding.as_of != ctx.as_of {
+        binding.candidate_cursor = 0;
+    }
     binding.execution_policy = recommended_execution(
         &binding.model_id,
         binding.max_positions,
@@ -476,7 +475,8 @@ fn recommended_execution(model: &str, slots: i64, allocation: &str) -> String {
     }
 }
 pub(crate) fn ensure_execution_policy(binding: &FollowBinding) -> Result<(), String> {
-    if timing_evidence()["models"].get(&binding.model_id).is_none() {
+    if timing_evidence()["models"].get(&binding.model_id).is_none()
+        && approved_models()["models"].get(&binding.model_id).is_none() {
         return Err("本模型缺少时点研究证据".into());
     }
     let expected = recommended_execution(
@@ -608,6 +608,9 @@ fn context_is_current(binding: &FollowBinding, run: &Value) -> bool {
         })
 }
 fn recommended_allocation(model: &str, slots: i64) -> String {
+    if model == "breadth22_excess_csi20" && slots == 3 {
+        return "relative6".into();
+    }
     if model == "breadth22_rank20"
         && slots == 5
         && allocation_evidence(model, slots)
@@ -624,6 +627,7 @@ pub(crate) fn allocation_targets(binding: &FollowBinding) -> Result<(i64, i64), 
     }
     match binding.allocation_policy.as_str() {
         "baseline8" => Ok((8, binding.max_positions * 8)),
+        "relative6" if binding.model_id == "breadth22_excess_csi20" && binding.max_positions == 3 => Ok((6, 18)),
         "rank5_equal50"
             if binding.model_id == "breadth22_rank20"
                 && binding.max_positions == 5
@@ -643,7 +647,7 @@ fn entry_budget(
 ) -> Result<i64, String> {
     let (per, total) = allocation_targets(b)?;
     let per_budget = equity.checked_mul(per).ok_or("预算超限")? / 100;
-    if b.allocation_policy == "baseline8" {
+    if matches!(b.allocation_policy.as_str(), "baseline8" | "relative6") {
         return Ok(per_budget);
     }
     let mut invested = 0i64;
@@ -1299,7 +1303,7 @@ async fn drive(
                 continue;
             }
             let (per, total) = allocation_targets(binding)?;
-            let reason=format!("沿用 {} 完成日原模型信号，排序第{}；{}配置，每票入场目标{}%、总入场预算{}%，最多{}只；不追高开超过4%，程序自动提交并等待之后的新盘口成交",ctx.as_of,rank+1,if binding.allocation_policy=="rank5_equal50"{"排序模型5只/50%预算"}else{"原8%入场"},per,total,binding.max_positions);
+            let reason=format!("沿用 {} 完成日原模型信号，排序第{}；{}配置，每票入场目标{}%、总入场预算{}%，最多{}只；不追高开超过4%，程序自动提交并等待之后的新盘口成交",ctx.as_of,rank+1,match binding.allocation_policy.as_str(){"rank5_equal50"=>"排序模型5只/50%预算","relative6"=>"相对大盘6%仓位",_=>"原8%入场"},per,total,binding.max_positions);
             let reason = format!("{reason}；{}", entry_note(&binding.execution_policy));
             stage(
                 db,
@@ -1354,6 +1358,10 @@ fn execution_evidence() -> &'static Value {
         serde_json::from_str(include_str!("../../model-follow-allocation.json"))
             .expect("verified allocation evidence")
     })
+}
+fn approved_models() -> &'static Value {
+    static EVIDENCE: OnceLock<Value> = OnceLock::new();
+    EVIDENCE.get_or_init(|| serde_json::from_str(include_str!("../../approved-models.json")).expect("approved model evidence"))
 }
 fn allocation_evidence(model: &str, slots: i64) -> Option<Value> {
     let evidence = execution_evidence();
@@ -1480,7 +1488,7 @@ fn view(db: &Database, b: &FollowBinding) -> Result<Value, String> {
             };
             json!({"symbol":s,"rank":i+1,"score":scores.get(s),"reference_quantity":qty,"entry_condition_met":qualifies,"reason":reason})
         }).collect();
-    let execution = json!({"signal_basis":"completed_daily","signal_label":"完成日日线选股","entry_schedule":"next_session_open","execution_basis":"live_depth","schedule_note":"前一交易日完整日线确定候选，下一交易日09:30–09:35用实时盘口买入；盘中实时检查委托与卖出。","position_pct":position_pct,"total_entry_pct":total_entry_pct,"allocation_note":if b.allocation_policy=="rank5_equal50"{"按已核对的排序模型5只组合，单票入场目标10%、总预算50%；保留20日/3ATR退出，实际数量受现金、费用和流动性限制；仅作模拟，历史回撤与收益一并查看。"}else{"原8%入场目标；实际数量受净值、现金、费用及流动性限制，保持原20日/3ATR退出。"},"entry_policy":b.execution_policy,"entry_note":entry_note(&b.execution_policy),"exit_policy":"original","exit_note":"最多持有20个交易日；可因3ATR或ST/状态风险提前退出；到期遇停牌、跌停无可见买盘或零碎股待核对时持续提示，不伪造清仓。","holding_days":rules.holding_sessions,"max_gap_pct":rules.max_gap_pct,"buy_window":"下一交易日09:30–09:35，北京时间；程序自动提交后等待新盘口，错过不追单","sell_window":"交易日连续竞价时段，14:57前；午休不成交，T+1及无可见买盘时等待","intraday_note":"日线模型：完成日确定入场资格及3ATR退出，盘中自动检查现金、名额、高开、限价、T+1和盘口并撮合；没有新增未回测的盘中价格止损或午后入场。","fee_note":"佣金万3/最低5元、卖出印花税万5；过户费0、滑点0。原研究收益保留原成本口径"});
+    let execution = json!({"signal_basis":"completed_daily","signal_label":"完成日日线选股","entry_schedule":"next_session_open","execution_basis":"live_depth","schedule_note":"前一交易日完整日线确定候选，下一交易日09:30–09:35用实时盘口买入；盘中实时检查委托与卖出。","position_pct":position_pct,"total_entry_pct":total_entry_pct,"allocation_note":if b.allocation_policy=="rank5_equal50"{"按已核对的排序模型5只组合，单票入场目标10%、总预算50%；保留20日/3ATR退出，实际数量受现金、费用和流动性限制；仅作模拟，历史回撤与收益一并查看。"}else if b.allocation_policy=="relative6"{"相对大盘模型每票入场预算6%（含费用）、最多3只；保留20日/3ATR退出，旧8%账户不自动换仓位。"}else{"原8%入场目标；实际数量受净值、现金、费用及流动性限制，保持原20日/3ATR退出。"},"entry_policy":b.execution_policy,"entry_note":entry_note(&b.execution_policy),"exit_policy":"original","exit_note":"最多持有20个交易日；可因3ATR或ST/状态风险提前退出；到期遇停牌、跌停无可见买盘或零碎股待核对时持续提示，不伪造清仓。","holding_days":rules.holding_sessions,"max_gap_pct":rules.max_gap_pct,"buy_window":"下一交易日09:30–09:35，北京时间；程序自动提交后等待新盘口，错过不追单","sell_window":"交易日连续竞价时段，14:57前；午休不成交，T+1及无可见买盘时等待","intraday_note":"日线模型：完成日确定入场资格及3ATR退出，盘中自动检查现金、名额、高开、限价、T+1和盘口并撮合；没有新增未回测的盘中价格止损或午后入场。","fee_note":"佣金万3/最低5元、卖出印花税万5；过户费0、滑点0。原研究收益保留原成本口径"});
     Ok(
         json!({"account_id":b.account_id,"source_run_id":b.source_run_id,"model_id":b.model_id,"model_name":b.model_name,"as_of":b.as_of,"max_positions":b.max_positions,"enabled":b.enabled,"effective_enabled":b.enabled && automatic_enabled(db)?,"automatic_execution":b.auto_execute,"allocation_policy":b.allocation_policy,"initial_cash_cny":b.initial_cash_cny,"cash_cny":cash,"reserved_cash_cny":reserved,"available_cash_cny":available,"equity_cny":e,"net_return_pct":e.map(|v|(v/b.initial_cash_cny-1.)*100.),"valuation_note":"净值为按持仓报价估算，缺当日标记时用原模型完成日收盘；各持仓展示估值数据时间，公司行动待核对时不计净值。","state":if !b.enabled{"paused"}else if source_current{b.state.as_str()}else{"waiting_model_data"},"message":source_message,"source_sha256":b.source_sha256,"positions":positions,"orders":orders,"candidates":candidates,"allocation_research":allocation_evidence(&b.model_id,b.max_positions),"timing_research":timing_research(b),"execution":execution,"comparison_note":"原研究账户最多10只；跟随入口按模型独立选择默认数量，可调1至10只。仓位方案按已核对模型与数量绑定；实际资金使用和自动提交/盘口差异独立记录，原研究收益不代表本账户收益。","performance":{"filled_buys":d.orders.iter().filter(|o|o.status=="filled"&&o.side=="buy").count(),"filled_sells":d.orders.iter().filter(|o|o.status=="filled"&&o.side=="sell").count(),"cancelled":d.orders.iter().filter(|o|o.status=="rejected"&&o.reject_reason.as_deref().is_some_and(|r|r.contains("撤销"))).count(),"expired":d.orders.iter().filter(|o|o.status=="rejected"&&o.reject_reason.as_deref().is_some_and(|r|r.contains("过期"))).count(),"confirmation_delay_seconds":if delay_count>0{Some(delay_sum/delay_count)}else{None}}}),
     )
@@ -1533,24 +1541,22 @@ fn automatic_input(db: &Database, now: DateTime<Utc>) -> Result<AutomaticInput, 
         input.state = "waiting_time"; input.message = format!("等待交易日{}自动更新数据", cfg.time); return Ok(input);
     }
     let update = db.stockdb_update_record()?;
-    if !cfg.stockdb_enabled || update.running_owner.is_some_and(crate::stockdb_schedule::owner_alive)
-        || update.last_success_day.as_deref() != Some(input.day.as_str()) || update.last_error.is_some() {
-        input.state = "waiting_update"; input.message = "等待今天的数据更新成功；数据更新每天只执行一次，失败后可手动更新，近期行情兜底保留".into(); return Ok(input);
+    if update.running_owner.is_some_and(crate::stockdb_schedule::owner_alive) {
+        input.state = "waiting_update"; input.message = "StockDB正在更新，完成后检查模型".into(); return Ok(input);
     }
     input.as_of = match super::research::model_completed_day(now) {
         Ok(day) => day.to_string(),
         Err(error) => { input.state = "waiting_calendar"; input.message = error; return Ok(input); },
     };
-    if update.data_as_of.as_deref().is_none_or(|day| day < input.as_of.as_str()) {
-        input.state = "waiting_data"; input.message = format!("等待核验{}已完成日线，不使用今天尚未完成的日线", input.as_of); return Ok(input);
-    }
-    let Some(updated) = update.last_success_at.as_ref().and_then(|value| DateTime::parse_from_rfc3339(value).ok()) else {
-        input.state = "waiting_update"; input.message = "数据更新完成时间尚未核验，等待更新记录".into(); return Ok(input);
-    };
-    input.update_at = updated.to_rfc3339();
-    let ready_at = updated.with_timezone(&Utc) + chrono::Duration::seconds(AUTOMATIC_DELAY_SECONDS);
+    let verified = cfg.stockdb_enabled && update.last_success_day.as_deref() == Some(input.day.as_str())
+        && update.last_error.is_none() && update.data_as_of.as_deref().is_some_and(|day| day >= input.as_of.as_str());
+    let updated = if verified { update.last_success_at.as_ref().and_then(|value| DateTime::parse_from_rfc3339(value).ok()).map(|value|value.with_timezone(&Utc)) } else { None };
+    // The model runner validates online fallback data; scheduling does not certify it.
+    let ready_from = updated.unwrap_or_else(|| local.date_naive().and_hms_opt(target/60,target%60,0).unwrap().and_local_timezone(cst()).unwrap().with_timezone(&Utc));
+    input.update_at = ready_from.to_rfc3339();
+    let ready_at = ready_from + chrono::Duration::seconds(AUTOMATIC_DELAY_SECONDS);
     if now < ready_at {
-        input.state = "waiting_delay"; input.message = "数据已更新，10分钟后自动检查已有冻结模型".into();
+        input.state = "waiting_delay"; input.message = if updated.is_some() {"数据已更新，10分钟后自动检查已有冻结模型"} else {"等待预定检查时间，StockDB不可用时尝试近期在线行情"}.into();
         input.next_check_at = Some(ready_at.to_rfc3339()); return Ok(input);
     }
     input.state = "due"; input.message = "即将检查冻结模型；合格候选出现时独立建账并自动交易".into();
@@ -2114,7 +2120,7 @@ mod tests {
 
 
     #[test]
-    fn automatic_pipeline_waits_ten_minutes_after_verified_update_and_stops_on_failure() {
+    fn automatic_pipeline_waits_ten_minutes_and_allows_verified_online_fallback() {
         let (db, root, _, _) = automatic_test_account();
         db.set_setting("local_history_enabled", "1").unwrap();
         let updated = Utc.with_ymd_and_hms(2026, 9, 21, 1, 0, 0).unwrap();
@@ -2128,7 +2134,10 @@ mod tests {
         assert_eq!(due.state, "due"); assert_eq!(due.as_of, "2026-09-18");
         db.change_stockdb_update_record(|record| { record.last_error = Some("更新失败".into()); Ok(()) }).unwrap();
         let failed = automatic_input(&db, updated + chrono::Duration::seconds(601)).unwrap();
-        assert_eq!(failed.state, "waiting_update"); assert!(!claim_automatic(&db, &failed, updated).unwrap());
+        assert_eq!(failed.state, "due"); assert_eq!(failed.as_of, "2026-09-18");
+        db.set_setting("local_history_enabled", "0").unwrap();
+        assert_eq!(automatic_input(&db, updated + chrono::Duration::seconds(599)).unwrap().state, "waiting_delay");
+        assert_eq!(automatic_input(&db, updated + chrono::Duration::seconds(600)).unwrap().state, "due");
         assert!(db.follow_automatic_record().unwrap().last_completed_day.is_none());
         drop(db); std::fs::remove_dir_all(root).unwrap();
     }
@@ -2474,7 +2483,7 @@ mod tests {
     }
     fn index_test_account() -> (Database, std::path::PathBuf, FollowBinding, FollowContext) {
         // Initialize the correct frozen model rather than rebinding a different model account.
-        let (db, root, mut b, mut ctx) = test_account_for_source(include_str!("../../../research/follow-timing-2026-10-04/checks/index-forward.json"));
+        let (db, root, mut b, mut ctx) = test_account_for_source(include_str!("../../../research/research-center-runner/checks/current-index-forward.json"));
         b.model_id = "index26_h20".into();
         b.model_name = "指数模型条件入场测试".into();
         b.execution_policy = recommended_execution(&b.model_id, 3, &b.allocation_policy);
@@ -3149,9 +3158,10 @@ mod tests {
         for (model, cap, per, total) in [
             ("breadth22_h20", 2, 8, 16),
             ("index26_h20", 3, 8, 24),
-            ("breadth22_excess_csi20", 3, 8, 24),
+            ("breadth22_excess_csi20", 3, 6, 18),
             ("breadth22_rank20", 5, 10, 50),
             ("breadth22_open_downside20", 2, 8, 16),
+            ("mean_confirmed_by_median", 2, 8, 16),
         ] {
             assert_eq!(recommended_slots(model), cap);
             b.model_id = model.into();
@@ -3175,7 +3185,7 @@ mod tests {
         assert!(allocation_targets(&b).is_err());
         assert!(model_execution("unknown_model").is_err());
         assert!(model_execution("intraday_signal_model").err().unwrap().contains("盘中信号模型须单独验证"));
-        assert_eq!(super::super::research_jobs::DAILY_MODEL_IDS.len(), 5);
+        assert_eq!(super::super::research_jobs::DAILY_MODEL_IDS.len(), 6);
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -3566,8 +3576,39 @@ mod tests {
         drop(db); std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn confirmed_models_use_the_tested_budget_and_preserve_legacy_allocations() {
+        assert_eq!(recommended_slots("mean_confirmed_by_median"), 2);
+        let execution = model_execution("mean_confirmed_by_median").unwrap();
+        assert_eq!(execution.holding_sessions, 20);
+        assert_eq!(execution.entry_atr_multiple, 3.);
+        let (db, root, mut binding, ctx) = test_account();
+        binding.model_id = "breadth22_excess_csi20".into();
+        binding.allocation_policy = "baseline8".into();
+        assert_eq!(allocation_targets(&binding).unwrap(), (8, 24));
+        binding.allocation_policy = recommended_allocation(&binding.model_id, 3);
+        assert_eq!(allocation_targets(&binding).unwrap(), (6, 18));
+        let detail = db.get_sim_detail(binding.account_id).unwrap();
+        assert_eq!(entry_budget(&db, &binding, &detail, &ctx, 100000*SCALE).unwrap(), 6000*SCALE);
+        binding.model_id = "breadth22_h20".into();
+        assert!(allocation_targets(&binding).is_err());
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn same_day_runtime_refresh_keeps_candidate_progress_and_account_cash() {
+        let (db, root, mut binding, ctx) = test_account();
+        binding.candidate_cursor = 4;
+        let cash = db.get_sim_detail(binding.account_id).unwrap().account.current_cash;
+        apply_follow_context(&db, &mut binding, ctx).unwrap();
+        assert_eq!(binding.candidate_cursor, 4);
+        assert_eq!(binding.allocation_policy, "baseline8");
+        assert_eq!(db.get_sim_detail(binding.account_id).unwrap().account.current_cash, cash);
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     fn test_account() -> (Database, std::path::PathBuf, FollowBinding, FollowContext) {
-        test_account_for_source(include_str!("../../../research/research-center-runner/checks/verified-rank-forward-b6cce0d8-167d-4c84-ad84-32f5b6800312.json"))
+        test_account_for_source(include_str!("../../../research/research-center-runner/checks/current-rank-forward.json"))
     }
     // Test legacy confirmation and new automatic execution against the dedicated model
     // ledger. A realtime engine marker is not a manual strategy or shared account.
@@ -3829,7 +3870,7 @@ mod tests {
             eprintln!("local real context smoke requires frozen research files and bundled Python");
             return;
         }
-        let raw=include_str!("../../../research/research-center-runner/checks/verified-rank-forward-b6cce0d8-167d-4c84-ad84-32f5b6800312.json").to_string();
+        let raw=include_str!("../../../research/research-center-runner/checks/current-rank-forward.json").to_string();
         let run = super::super::research::check_bound_run(&raw).unwrap();
         let cfg = super::super::research::ModelRunnerConfig {
             research_root: repo.to_string_lossy().into_owned(),
@@ -3857,7 +3898,7 @@ mod tests {
         assert!(validate_context(&envelope.to_string(), &changed).is_err());
         println!("Real frozen context → Rust: 5427 stocks/2123 sessions/source/model/program hashes verified; zero candidates kept empty");
         let index_raw =
-            include_str!("../../../research/follow-timing-2026-10-04/checks/index-forward.json")
+            include_str!("../../../research/research-center-runner/checks/current-index-forward.json")
                 .to_string();
         let index_run = super::super::research::check_bound_run(&index_raw).unwrap();
         let index_ctx = export_context(cfg, index_raw, index_run).unwrap();

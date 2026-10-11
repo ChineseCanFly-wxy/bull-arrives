@@ -452,7 +452,7 @@ watch(selectedId, id => {
           <p v-if="form.id" class="hint">初始资金可以修改：按差额增减现金，保留已有持仓、成交与委托，收益改用新的初始资金基准；减少后须留足未成交买单资金。</p>
            <NFormItem label="标的代码（每行一个，最多 10 只；规则默认趋势跟随）"><NInput v-model:value="targetsText" type="textarea" :rows="4" placeholder="sh600519&#10;sz000001&#10;bj920000" /></NFormItem>
           <p class="hint">过户费与滑点均为 0，仅按本账户佣金和卖出印花税扣费。历史已成交费用保留原记录。</p>
-          <div class="simulation-explanation"><b>来源开关与运行模式分别控制两件事</b><p>手动来源：接收你在“手动指令”提交的订单；现有规则：对填写的标的运行通用技术规则。勾选来源仅允许接收信号，不等于会成交。</p><p>仅记录：保存信号和计划，不成交；需确认：等待你确认后再撮合；全自动：程序接收合格信号后自行撮合。“全自动”监听开关开启后才持续检查，关闭时只能手动“立即运行”。</p><p>此页的“现有规则”是通用技术规则。要沿用已研究的五个冻结模型，后台自动模型交易会独立建账，由原模型决定买卖、股数与退出。</p></div>
+          <div class="simulation-explanation"><b>来源开关与运行模式分别控制两件事</b><p>手动来源：接收你在“手动指令”提交的订单；现有规则：对填写的标的运行通用技术规则。勾选来源仅允许接收信号，不等于会成交。</p><p>仅记录：保存信号和计划，不成交；需确认：等待你确认后再撮合；全自动：程序接收合格信号后自行撮合。“全自动”监听开关开启后才持续检查，关闭时只能手动“立即运行”。</p><p>此页的“现有规则”是通用技术规则。要沿用已确认的冻结模型，后台自动模型交易会独立建账，由原模型决定买卖、股数与退出。</p></div>
           <NSpace><NButton type="primary" :loading="loading" @click="saveAccount">保存账户</NButton><NButton v-if="selectedId" type="error" secondary @click="deleteAccount">删除账户</NButton></NSpace>
           </div>
         </NTabPane>

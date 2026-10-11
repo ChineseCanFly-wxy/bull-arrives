@@ -38,10 +38,14 @@ fn bundled_config(root: &std::path::Path) -> Option<ModelRunnerConfig> {
 
 fn resolve_saved_config(saved: Option<ModelRunnerConfig>, bundled: Option<ModelRunnerConfig>) -> Option<ModelRunnerConfig> {
     match (saved, bundled) {
-        (Some(saved), Some(mut bundled)) if !std::path::Path::new(&saved.research_root).join("research/research-center-runner/model_runner.py").is_file() => {
+        (Some(saved), Some(mut bundled)) if trusted_runner(&saved).is_err() || !std::path::Path::new(&saved.python).is_file() => {
             // Migrated CI/old-install paths must not discard valid incremental data.
-            if std::path::Path::new(&saved.snapshot).join("matrices.npz").is_file() { bundled.snapshot = saved.snapshot; }
-            if std::path::Path::new(&saved.index).is_file() { bundled.index = saved.index; }
+            let cutoff = |path: &str| std::fs::read_to_string(std::path::Path::new(path).join("matrices-metadata.json")).ok()
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok()).and_then(|value| value["quality"]["last_date"].as_i64());
+            if cutoff(&saved.snapshot).zip(cutoff(&bundled.snapshot)).is_some_and(|(saved_day,bundled_day)|saved_day>=bundled_day)
+                && std::path::Path::new(&saved.snapshot).join("matrices.npz").is_file() && std::path::Path::new(&saved.index).is_file() {
+                bundled.snapshot = saved.snapshot; bundled.index = saved.index;
+            }
             Some(bundled)
         }
         (Some(saved), _) => Some(saved),
@@ -65,7 +69,7 @@ pub(crate) fn model_config(db: &Database) -> Result<ModelRunnerConfig, String> {
         return Ok(ModelRunnerConfig { research_root:root.to_string_lossy().into_owned(), python, snapshot:root.join("research/ashare-open-2026-10-01/stockdb-live/exports").to_string_lossy().into_owned(), index:root.join("research/ashare-open-2026-10-01/online/index-sh-000300.ndjson").to_string_lossy().into_owned() });
     }
     #[cfg(not(debug_assertions))]
-    Err("安装包缺少完整研究环境，请重新安装完整版本，或在研究中心选择已有研究环境；StockDB需另行安装".into())
+    Err("安装包缺少完整模型环境，请重新安装完整版本；无需另装Python或指定研究路径".into())
 }
 
 pub(crate) fn python_command(config: &ModelRunnerConfig) -> Result<std::process::Command, String> {
@@ -334,12 +338,10 @@ mod tests {
         let db_root = std::env::temp_dir().join(format!("bull-installed-run-{}",uuid::Uuid::new_v4()));
         let db = Database::open(db_root).unwrap();
         let config = model_config(&db).unwrap();
-        let config = refresh_model_config_controlled(config,"http://127.0.0.1:1".into(),"2026-09-30".into(),true,None).unwrap();
         assert_eq!(std::path::Path::new(&config.research_root), root);
         assert!(config.python.starts_with(root.to_str().unwrap()));
-        for model in ["breadth22_h20","index26_h20","breadth22_excess_csi20","breadth22_rank20","breadth22_open_downside20","fundamental37_h20"] {
-            let mode = if model == "fundamental37_h20" {"replay"} else {"forward"};
-            let raw = execute_model(config.clone(),model.into(),20,"baseline".into(),mode.into(),None).unwrap();
+        for model in super::super::research_jobs::DAILY_MODEL_IDS {
+            let raw = execute_model(config.clone(),model.into(),20,"baseline".into(),"forward".into(),None).unwrap();
             let checked = check_bound_run(&raw).unwrap();
             assert_eq!(checked["model_id"],model);
             assert_eq!(checked["as_of"],"2026-09-30");
@@ -356,15 +358,17 @@ mod tests {
         for file in [root.join("runtime.json"), snapshot.join("matrices.npz"), index.clone(), python.clone()] {
             std::fs::create_dir_all(file.parent().unwrap()).unwrap(); std::fs::write(file, "fixture").unwrap();
         }
+        std::fs::write(snapshot.join("matrices-metadata.json"), r#"{"quality":{"last_date":20260930}}"#).unwrap();
         let bundled = bundled_config(&root).unwrap();
         assert_eq!(bundled.python, python.to_string_lossy());
         let advanced = root.join("advanced"); std::fs::create_dir(&advanced).unwrap(); std::fs::write(advanced.join("matrices.npz"), "newer").unwrap();
+        std::fs::write(advanced.join("matrices-metadata.json"), r#"{"quality":{"last_date":20261008}}"#).unwrap();
         let saved = ModelRunnerConfig { research_root: root.join("missing-ci-build-directory").to_string_lossy().into_owned(), python: "missing-python".into(), snapshot:advanced.to_string_lossy().into_owned(), index:index.to_string_lossy().into_owned() };
         let fixed = resolve_saved_config(Some(saved), Some(bundled.clone())).unwrap();
         assert_eq!(fixed.research_root, bundled.research_root); assert_eq!(fixed.snapshot, advanced.to_string_lossy());
         let runner = root.join("research/research-center-runner/model_runner.py"); std::fs::create_dir_all(runner.parent().unwrap()).unwrap(); std::fs::write(&runner, "manual").unwrap();
         let mut manual = bundled.clone(); manual.python = "my-python".into();
-        assert_eq!(resolve_saved_config(Some(manual),Some(bundled)).unwrap().python,"my-python");
+        assert_eq!(resolve_saved_config(Some(manual),Some(bundled.clone())).unwrap().python,bundled.python);
         std::fs::remove_file(python).unwrap(); assert!(bundled_config(&root).is_none());
         std::fs::remove_dir_all(root).unwrap();
     }

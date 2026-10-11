@@ -12,8 +12,8 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFESTS = ("research/research-center-runner/registry.json", "research/ashare-fundamental-2026-10-01/replay-sources.json")
-PROGRAMS = (*MANIFESTS, "research/research-center-runner/model_runner.py", "research/research-center-runner/refresh_market.py", "research/research-center-runner/recent_market_fallback.py", "research/research-center-runner/follow_context.py", "research/ashare-fundamental-2026-10-01/replay_adapter.py", "research/nested-technical-v1/search.py")
+MANIFESTS = ("research/research-center-runner/registry.json",)
+PROGRAMS = (*MANIFESTS, "research/research-center-runner/model_runner.py", "research/research-center-runner/refresh_market.py", "research/research-center-runner/recent_market_fallback.py", "research/research-center-runner/follow_context.py")
 PYTHON = "3.12.14"
 
 
@@ -57,7 +57,7 @@ def pack(source, output):
     with zipfile.ZipFile(output, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
         for name in sorted(files):
             archive.write(source/name, name)
-    result = {"tag": "research-assets-2026-09-30", "asset": output.name, "sha256": digest(output), "files": len(files), "bytes": output.stat().st_size}
+    result = {"tag": "model-assets-2026-10-11", "asset": output.name, "sha256": digest(output), "files": len(files), "bytes": output.stat().st_size}
     print(json.dumps(result))
     return result
 

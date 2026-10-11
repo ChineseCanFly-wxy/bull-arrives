@@ -105,8 +105,8 @@ onBeforeUnmount(()=>{disposed=true;++readVersion;++labelVersion;});
 <template>
   <section class="research-model-screen">
     <div class="screen-query">
-      <div class="screen-title"><b>模型条件选股</b><HelpTooltip label="模型选股使用说明">选一个模型或全部模型，再点击筛选。使用冻结的模型与阈值计算最近完成日沪深普通股票，排除历史ST和北交所。五项是已注册研究模型，均未实盘准入；分数单位不同，不合并成统一胜率。只读历史记录不会启动计算，切换模型也不会查询。</HelpTooltip><span>先筛选，再分析或观察</span></div>
-      <div class="query-actions"><select v-model="choice" aria-label="选择筛选模型"><option value="all">全部已注册模型（5）</option><option v-for="model in MODEL_CATALOG" :key="model.id" :value="model.id">{{ model.name }}</option></select><button class="primary" :disabled="busy || active" @click="query">{{ busy ? '提交中…' : active ? '后台计算中…' : '筛选符合条件的股票' }}</button><button @click="centralized?emit('evidence'):showEvidence=true">多年验证证据</button></div>
+      <div class="screen-title"><b>模型条件选股</b><HelpTooltip label="模型选股使用说明">选一个模型或全部模型，再点击筛选。使用冻结的模型与阈值计算最近完成日沪深普通股票，排除历史ST和北交所。这些是已注册研究模型，均未实盘准入；分数单位不同，不合并成统一胜率。只读历史记录不会启动计算，切换模型也不会查询。</HelpTooltip><span>先筛选，再分析或观察</span></div>
+      <div class="query-actions"><select v-model="choice" aria-label="选择筛选模型"><option value="all">全部已注册模型（{{ MODEL_CATALOG.length }}）</option><option v-for="model in MODEL_CATALOG" :key="model.id" :value="model.id">{{ model.name }}</option></select><button class="primary" :disabled="busy || active" @click="query">{{ busy ? '提交中…' : active ? '后台计算中…' : '筛选符合条件的股票' }}</button><button @click="centralized?emit('evidence'):showEvidence=true">多年验证证据</button></div>
       <div class="screen-tools"><button :class="{selected:!centralized&&showJobs}" @click="centralized?emit('records',activeId??undefined):showJobs=!showJobs">{{centralized?'查看研究任务':'任务进度'}}</button><button v-if="!centralized" :class="{selected:showWatches}" @click="showWatches=!showWatches">条件观察管理</button><span>最近完成日 {{ record?.current_as_of || '--' }}</span></div>
     </div>
     <p v-if="error" class="screen-error" role="alert">{{error}}</p><p v-if="notice" class="screen-notice" role="status">{{notice}}</p>
