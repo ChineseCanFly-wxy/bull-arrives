@@ -1,0 +1,164 @@
+{
+  "version": "3.0.6",
+  "application_commit": "481bf6037b0363a1cfa5bcc0f3bacca08d8c31a8",
+  "release_url": "https://github.com/ChineseCanFly-wxy/bull-arrives/releases/tag/v3.0.6",
+  "published": true,
+  "workflow": {
+    "id": 38154680390,
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "prepare",
+        "conclusion": "success"
+      },
+      {
+        "name": "build (windows-latest, --target x86_64-pc-windows-msvc --bundles nsis --ci -- --locked)",
+        "conclusion": "success"
+      },
+      {
+        "name": "build (macos-latest, --target universal-apple-darwin --bundles app,dmg --ci -- --locked)",
+        "conclusion": "success"
+      },
+      {
+        "name": "publish",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "portable": {
+    "name": "BullArrives_3.0.6_x64-portable.zip",
+    "bytes": 386458904,
+    "sha256": "7fdab9768e1bbafe5846f85b5c8410d88455a74ae1f6622bb367265a64608f37",
+    "previous_3_0_5_bytes": 557823729,
+    "reduction_pct": 30.72,
+    "unpacked_runtime_bytes": 571047705,
+    "zip_structure_crc_frozen_files_x64_pe": "passed"
+  },
+  "release_assets": [
+    {
+      "name": "BullArrives_3.0.6_universal.dmg",
+      "bytes": 512684918,
+      "digest": "sha256:d715ab72e9490aa4dead6d946a4da854ea7cdad437ef620dba1508986caaf12b"
+    },
+    {
+      "name": "BullArrives_3.0.6_x64-portable.zip",
+      "bytes": 386458904,
+      "digest": "sha256:7fdab9768e1bbafe5846f85b5c8410d88455a74ae1f6622bb367265a64608f37"
+    },
+    {
+      "name": "BullArrives_3.0.6_x64-setup.exe",
+      "bytes": 336053391,
+      "digest": "sha256:c7d9844376e092363c41242465b0267ad1e975f55ce454279ffdc8f1ff89c334"
+    },
+    {
+      "name": "BullArrives_3.0.6_x64-setup.exe.sig",
+      "bytes": 424,
+      "digest": "sha256:c3aa5b6e89a5bd46e8fdc73cdeff9d6870b6e074a2c0001b693e5fa6589790cd"
+    },
+    {
+      "name": "BullArrives_universal.app.tar.gz",
+      "bytes": 516324655,
+      "digest": "sha256:4401a53e66854719c12dc6012a9e35f5da94eb49c6e954f65fe5a2a66b747b46"
+    },
+    {
+      "name": "BullArrives_universal.app.tar.gz.sig",
+      "bytes": 412,
+      "digest": "sha256:df34ce37100acea62af8163b019df93827d8e8389c98d0df74c8a51e2b38cf8a"
+    },
+    {
+      "name": "latest.json",
+      "bytes": 4907,
+      "digest": "sha256:81f4a6a01a3c00a66994e0911748fa065e768f032615b135d54daec6fb9c1f5b"
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "bytes": 679,
+      "digest": "sha256:1bee2a181c6a3fce73151de3136c9f7080451dd5118c8f69cd210260f0bbe439"
+    }
+  ],
+  "updater": {
+    "version": "3.0.6",
+    "notes_match_release": true,
+    "local_sha256_matches_public_list": true,
+    "platforms": [
+      "windows-x86_64",
+      "windows-x86_64-nsis",
+      "darwin-aarch64",
+      "darwin-x86_64",
+      "darwin-aarch64-app",
+      "darwin-x86_64-app"
+    ],
+    "cryptographic_signatures": "verified in successful GitHub publish job"
+  },
+  "native_fresh": {
+    "state": "passed",
+    "external_python": false,
+    "stockdb_enabled": false,
+    "job_state": "failed",
+    "completed": 0,
+    "saved_market_snapshot_used": false,
+    "model_count": 6,
+    "message": "行情未到最近完成日2026-10-09，不能用旧快照替代。只读行情刷新失败：StockDB及近期行情备用均未取得合格日线；StockDB：<urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>；行情备用：近期备用只补已核对的最后一个交易日，较早缺口需StockDB历史或已留存完成日，不能编造缺失交易日",
+    "models": []
+  },
+  "native_with_saved_online_market": {
+    "state": "passed",
+    "external_python": false,
+    "stockdb_enabled": false,
+    "job_state": "complete",
+    "completed": 6,
+    "saved_market_snapshot_used": true,
+    "model_count": 6,
+    "message": "实际计算与证据核验完成；结果保留，模型仍为研究观察",
+    "models": [
+      {
+        "model_id": "breadth22_h20",
+        "as_of": "2026-10-09",
+        "scored_stocks": 4467,
+        "candidates": 99
+      },
+      {
+        "model_id": "index26_h20",
+        "as_of": "2026-10-09",
+        "scored_stocks": 4467,
+        "candidates": 0
+      },
+      {
+        "model_id": "breadth22_excess_csi20",
+        "as_of": "2026-10-09",
+        "scored_stocks": 4467,
+        "candidates": 9
+      },
+      {
+        "model_id": "breadth22_rank20",
+        "as_of": "2026-10-09",
+        "scored_stocks": 4467,
+        "candidates": 0
+      },
+      {
+        "model_id": "breadth22_open_downside20",
+        "as_of": "2026-10-09",
+        "scored_stocks": 4467,
+        "candidates": 0
+      },
+      {
+        "model_id": "mean_confirmed_by_median",
+        "as_of": "2026-10-09",
+        "scored_stocks": 4467,
+        "candidates": 1
+      }
+    ]
+  },
+  "input_boundary": "Positive native run used previously captured online 2026-10-09 snapshot copied inside the isolated extracted directory. No live StockDB or new online refresh in that run. Snapshot was not bundled in the public archive.",
+  "ui": {
+    "compact_research_center": "passed",
+    "manual_research_import_topic_replay_entries_absent": true,
+    "screenshot_sha256": "ec23f71e9bf8e1d5071831e5950b556cc84cff98631ad4b16302a6f9be1fb808"
+  },
+  "limitations": [
+    "macOS native GUI not tested locally; universal build and package/signature verification passed in GitHub Actions.",
+    "Retrospective model research is not live profitability evidence.",
+    "Online fallback retains single adjacent completed-day filling; older missing sessions require StockDB or previously saved data.",
+    "Local experimental-cache deletion was rejected by automatic approval; zero files deleted from that plan."
+  ]
+}
