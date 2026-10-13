@@ -181,6 +181,8 @@ pub struct SourceStats {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimDetail {
+    #[serde(default)]
+    pub position_adjustments: Vec<serde_json::Value>,
     pub capital_adjustments: Vec<CapitalAdjustment>,
     pub performance_note: String,
     pub account: SimAccount,
@@ -354,6 +356,13 @@ impl Database {
                   cash_before INTEGER NOT NULL, cash_after INTEGER NOT NULL, created_at TEXT NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_sim_capital_account ON sim_capital_adjustments(account_id,id);
+             CREATE TABLE IF NOT EXISTS sim_position_adjustments (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 account_id INTEGER NOT NULL REFERENCES sim_accounts(id) ON DELETE CASCADE,
+                 symbol TEXT NOT NULL, quantity INTEGER NOT NULL, refunded_cost INTEGER NOT NULL,
+                 cash_before INTEGER NOT NULL, cash_after INTEGER NOT NULL,
+                 reason TEXT NOT NULL, created_at TEXT NOT NULL
+             );
              CREATE TABLE IF NOT EXISTS sim_equity_daily (
                  account_id INTEGER NOT NULL REFERENCES sim_accounts(id) ON DELETE CASCADE,
                  trade_date TEXT NOT NULL, equity INTEGER NOT NULL CHECK(equity >= 0), benchmark_close INTEGER,
@@ -754,7 +763,14 @@ impl Database {
             if meta.allocation_policy!=binding.allocation_policy{return Err("仓位配置已改变，不能成交旧操作单".into());}
             if meta.execution_policy!=binding.execution_policy{return Err("模型时点配置已改变，不能成交旧操作单".into());}
             if meta.automatic_submission!=binding.auto_execute{return Err("执行方式已改变，不能成交旧操作单".into());}
-            if side==Side::Buy {crate::commands::model_follow::ensure_entry_condition(&binding,&stored.1)?;}
+            if side==Side::Buy {
+                crate::commands::model_follow::ensure_entry_condition(&binding,&stored.1)?;
+                if stored.4 % 100 != 0 { return Err("自动模型买入数量须为整百股".into()); }
+                if crate::commands::model_follow::star_symbol(&stored.1) {
+                    let enabled: bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM settings WHERE key='research_follow_star_enabled' AND value='1')",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+                    if !enabled { return Err("科创板参与已关闭，不成交买单".into()); }
+                }
+            }
             let tick=live.ok_or("跟随账户缺新盘口")?;
             let context:crate::commands::model_follow::FollowContext=serde_json::from_str(&binding.context_json).map_err(|e|e.to_string())?;
             let row=context.rows.iter().find(|r|r.symbol==stored.1).ok_or("原模型股票证据缺失")?;
@@ -835,6 +851,9 @@ impl Database {
         ).optional().map_err(|error| error.to_string())?.ok_or_else(|| invalid("模拟账户不存在"))?;
         account.managed_by = account_management(&conn, account_id)?.into();
         let capital_adjustments = collect(&conn, "SELECT id,account_id,old_initial_cash,new_initial_cash,delta,cash_before,cash_after,created_at FROM sim_capital_adjustments WHERE account_id=?1 ORDER BY id", account_id, capital_from_row)?;
+        let position_adjustments = collect(&conn, "SELECT id,symbol,quantity,refunded_cost,cash_before,cash_after,reason,created_at FROM sim_position_adjustments WHERE account_id=?1 ORDER BY id DESC", account_id, |row| {
+            Ok(serde_json::json!({"id":row.get::<_,i64>(0)?,"symbol":row.get::<_,String>(1)?,"quantity":row.get::<_,i64>(2)?,"refunded_cost":row.get::<_,i64>(3)?.to_string(),"cash_before":row.get::<_,i64>(4)?.to_string(),"cash_after":row.get::<_,i64>(5)?.to_string(),"reason":row.get::<_,String>(6)?,"created_at":row.get::<_,String>(7)?}))
+        })?;
         let targets = collect(&conn, "SELECT id,account_id,symbol,name,rule,limit_bps FROM sim_targets WHERE account_id=?1 ORDER BY id", account_id, target_from_row)?;
         let orders = collect(&conn, "SELECT id,account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,rule,stop_price,take_price,stop_bps,take_bps,limit_bps,max_hold_days,status,price,gross,fee,reject_reason,created_at,confirmed_at,filled_at,holding_days,decision_reason FROM sim_orders WHERE account_id=?1 ORDER BY id DESC", account_id, order_from_row)?;
         let recent_runs = collect(&conn, "SELECT id,account_id,run_key,status,created_at,finished_at,message,progress FROM sim_runs WHERE account_id=?1 ORDER BY id DESC LIMIT 50", account_id, run_from_row)?;
@@ -959,7 +978,8 @@ impl Database {
             0
         };
         Ok(SimDetail {
-            performance_note: if capital_adjustments.is_empty() { "收益按账户初始资金与实际成交计算".into() } else { "已调整资金：收益及历史权益按最新初始资金基准换算，资金增减不计作盈利；保留原成交、持仓和权益快照。回撤按换算后的日度权益计算，历史逐分钟记录保留。这是当前资金基准收益，不是资金加权或时间加权收益。".into() },
+            performance_note: if !position_adjustments.is_empty() { "已手动清理持仓并按成本退回现金；这是账本调整，不是市场卖出，未计作卖出盈利。原成交与历史权益保留，调整后的曲线不能当作完整模型交易表现。".into() } else if capital_adjustments.is_empty() { "收益按账户初始资金与实际成交计算".into() } else { "已调整资金：收益及历史权益按最新初始资金基准换算，资金增减不计作盈利；保留原成交、持仓和权益快照。回撤按换算后的日度权益计算，历史逐分钟记录保留。这是当前资金基准收益，不是资金加权或时间加权收益。".into() },
+            position_adjustments,
             capital_adjustments,
             account,
             targets,

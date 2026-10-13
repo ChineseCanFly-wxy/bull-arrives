@@ -207,6 +207,8 @@ s.auto={enabled:true,effective_enabled:true,state:'complete',message:'今天模�
 s.preset={initial_cash_cny:100000};
 const simAccount=a=>({id:a.account_id,name:a.model_name,managed_by:'model_follow',initial_cash:String(Math.round(a.initial_cash_cny*10000)),current_cash:String(Math.round(a.cash_cny*10000)),mode:'auto',auto_enabled:a.enabled,manual_source_enabled:false,rule_source_enabled:true,ai_source_enabled:false,commission_bps:3,min_commission:'50000',stamp_tax_bps:5,transfer_fee_bps:0,slippage_bps:0});
 export async function invoke(command,args){
+ if(command==='research_follow_star'){s.calls.push({command,args:copy(args)});if(args.enabled!==null)s.starEnabled=args.enabled;return s.starEnabled===true;}
+ if(command==='research_follow_clear_star'){s.calls.push({command});let cleared=0,refund=0;for(const account of s.accounts){const rows=account.positions.filter(p=>p.symbol.startsWith('sh688'));cleared+=rows.length;for(const row of rows){const cost=row.quantity*row.cost_cny;refund+=cost;account.cash_cny+=cost;}account.positions=account.positions.filter(p=>!p.symbol.startsWith('sh688'));}s.starEnabled=false;return{cleared_positions:cleared,refunded_cost_cny:refund};}
  if(command==='research_auto_status'){
    s.calls.push({command,args:copy(args)});if(args.enabled!==null){s.auto.enabled=args.enabled;s.auto.effective_enabled=args.enabled;for(const a of s.accounts)a.effective_enabled=a.enabled&&args.enabled;s.auto.state=args.enabled?'complete':'paused';s.auto.message=args.enabled?'今天模型检查已完成，等待新交易日':'自动模型交易已暂停，账户和持仓保留';}
    return copy(s.auto);
@@ -235,6 +237,23 @@ try {
  await t.call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
  await t.wait('document.querySelectorAll(".follow-account-card").length===6');
  const ids=await t.evaluate('window.__followMock.accounts.map(a=>a.account_id)');
+ await check('STAR board defaults off and its explicit switch preserves existing accounts',async()=>{
+   await t.wait('!document.querySelector("[aria-label=科创板参与设置] button").disabled');
+   assert.equal(await t.evaluate('document.querySelector("[aria-label=科创板参与设置] button").getAttribute("aria-checked")'),'false');
+   await click('[aria-label="科创板参与设置"] button');
+   await t.wait('document.querySelector("[aria-label=科创板参与设置] button").getAttribute("aria-checked")==="true"');
+   await click('[aria-label="科创板参与设置"] button');
+   await t.wait('document.querySelector("[aria-label=科创板参与设置] button").getAttribute("aria-checked")==="false"');
+   assert.deepEqual(await t.evaluate('window.__followMock.accounts.map(a=>a.account_id)'),ids);
+ });
+ await check('Explicit STAR cleanup sends its command and preserves other model accounts',async()=>{
+   await t.evaluate(`window.__savedAccount=JSON.parse(JSON.stringify(window.__followMock.accounts[0]));window.__followMock.accounts[0].positions.push({symbol:'sh688001',name:'科创板样例',quantity:336,cost_cny:10,mark_cny:12})`);
+   await refresh();await t.wait('document.querySelector("[aria-label=手动清理科创板持仓] button")');
+   await click('[aria-label="手动清理科创板持仓"] button');await t.wait('!document.querySelector("[aria-label=手动清理科创板持仓]")');
+   assert.equal((await calls('research_follow_clear_star')).length,1);
+   assert.deepEqual(await t.evaluate('window.__followMock.accounts.map(a=>a.account_id)'),ids);
+   await t.evaluate('window.__followMock.accounts[0]=window.__savedAccount');await refresh();
+ });
 
  await check('Three real polling cycles retain the selected detail and button geometry, including failure and explicit refresh',async()=>{
    await click('.follow-delete-trigger');await t.wait('document.querySelector(".follow-delete-confirm")');

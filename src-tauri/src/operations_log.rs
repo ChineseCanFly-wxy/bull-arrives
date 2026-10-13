@@ -3,7 +3,7 @@ use log::{Level, LevelFilter, Log, Metadata, Record};
 use serde::Serialize;
 use simplelog::{Config, SharedLogger};
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
 };
 use tauri::State;
@@ -31,6 +31,7 @@ struct Inner {
     version: u64,
     next_id: u64,
     entries: VecDeque<Entry>,
+    daily_checks: HashMap<i64, (String, String)>,
 }
 pub struct OperationsLog(Mutex<Inner>);
 impl Default for OperationsLog {
@@ -40,10 +41,29 @@ impl Default for OperationsLog {
             version: 0,
             next_id: 0,
             entries: VecDeque::new(),
+            daily_checks: HashMap::new(),
         }))
     }
 }
 impl OperationsLog {
+    pub fn model_check(&self, binding: &crate::db::model_follow::FollowBinding, detail: &crate::db::simulation::SimDetail, now: chrono::DateTime<chrono::Utc>) {
+        let day = now.with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap()).date_naive().to_string();
+        let warning = matches!(binding.state.as_str(), "data_unavailable" | "waiting_model_data" | "company_action_review");
+        let state = if warning { binding.state.as_str() } else if !binding.enabled || binding.state == "automatic_paused" { "paused" } else if binding.state == "listening" { "trading" } else { "waiting" };
+        {
+            let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            if !inner.enabled { return; }
+            if inner.daily_checks.get(&binding.account_id).is_some_and(|(d,s)| d == &day && s == state) { return; }
+            inner.daily_checks.insert(binding.account_id, (day.clone(), state.into()));
+        }
+        let held = detail.positions.iter().map(|p| &p.symbol).collect::<std::collections::HashSet<_>>().len();
+        let waiting = detail.orders.iter().filter(|o| matches!(o.status.as_str(), "pending" | "awaiting_confirmation")).count();
+        let traded = detail.orders.iter().filter(|o| o.status == "filled" && o.filled_at.as_deref().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).is_some_and(|t| t.with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap()).date_naive().to_string() == day)).count();
+        let message = format!("{} · {} 账户 #{}：后台巡检已执行；持仓 {}/{} 只，待成交 {} 单，今日成交 {} 单，模型数据截至 {}。{}{}",
+            day, binding.model_name, binding.account_id, held, binding.max_positions, waiting, traded, binding.as_of,
+            if held >= binding.max_positions as usize { "持股名额已满，继续检查持仓退出与委托；" } else { "" }, binding.message);
+        self.record("自动交易巡检", if warning { Level::Warn } else { Level::Info }, &message);
+    }
     pub fn set_enabled(&self, enabled: bool) {
         let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
         inner.enabled = enabled;
@@ -151,6 +171,24 @@ pub fn clear_automatic_operations_log(log: State<'_, Arc<OperationsLog>>) -> Sna
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn daily_model_checks_show_actual_state_deduplicate_and_renew_each_day() {
+        let (db, mut binding)=crate::db::model_follow::delete_tests::fixture();
+        let detail=db.get_sim_detail(binding.account_id).unwrap();
+        let log=OperationsLog::default();
+        let now=chrono::DateTime::parse_from_rfc3339("2026-10-13T09:31:00+08:00").unwrap().with_timezone(&chrono::Utc);
+        binding.state="listening".into();binding.message="继续检查".into();
+        log.model_check(&binding,&detail,now);log.model_check(&binding,&detail,now);
+        assert_eq!(log.snapshot().entries.len(),1);
+        assert!(log.snapshot().entries[0].message.contains("后台巡检已执行"));
+        binding.state="data_unavailable".into();binding.message="等待盘口".into();
+        log.model_check(&binding,&detail,now);
+        assert_eq!(log.snapshot().entries[0].level,"注意");
+        log.model_check(&binding,&detail,now+chrono::Duration::days(1));
+        assert_eq!(log.snapshot().entries.len(),3);
+        log.set_enabled(false);log.model_check(&binding,&detail,now+chrono::Duration::days(2));
+        assert_eq!(log.snapshot().entries.len(),3);
+    }
     #[test]
     fn data_update_failure_uses_only_the_automatic_log_switch() {
         let state = Arc::new(OperationsLog::default());

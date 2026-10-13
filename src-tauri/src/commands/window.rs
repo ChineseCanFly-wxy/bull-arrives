@@ -11,7 +11,7 @@ fn clamp_floating_position(position: (i32, i32), size: (u32, u32), origin: (i32,
 pub(crate) fn restore_floating_geometry<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, db: &Database, prefix: &'static str) -> Result<(), String> {
     let saved = |suffix: &str| db.get_setting(&format!("{prefix}_{suffix}")).ok().flatten();
     if let (Some(width), Some(height)) = (saved("width").and_then(|s| s.parse::<f64>().ok()), saved("height").and_then(|s| s.parse::<f64>().ok())) {
-        let min = if prefix == "ticker" { (160.0, 32.0) } else { (280.0, 160.0) };
+        let min = if prefix == "ticker" { (160.0, 32.0) } else { (220.0, 100.0) };
         if width.is_finite() && height.is_finite() { window.set_size(tauri::LogicalSize::new(width.clamp(min.0, 2000.0), height.clamp(min.1, 1600.0))).map_err(|e| e.to_string())?; }
     }
     let monitors = window.available_monitors().map_err(|e| e.to_string())?;
@@ -31,6 +31,14 @@ pub(crate) fn restore_floating_geometry<R: tauri::Runtime>(window: &tauri::Webvi
 pub(crate) fn track_floating_geometry<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, db: Arc<Database>, prefix: &'static str) {
     let tracked = window.clone();
     window.on_window_event(move |event| {
+        if prefix == "important_alerts" {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = tracked.hide();
+                let _ = db.set_setting("important_alerts_visible", "0");
+                return;
+            }
+        }
         let values = match event {
             tauri::WindowEvent::Resized(size) if size.width > 0 && size.height > 0 => {
                 let scale = tracked.scale_factor().unwrap_or(1.0);
@@ -151,6 +159,7 @@ pub fn set_ticker_hotkey(
     }
     let previous_value = db.get_setting("ticker_hotkey").map_err(|e| e.to_string())?;
     let gs = app.global_shortcut();
+    if gs.is_registered(new_sc) { return Err("快捷键已被其他功能使用，原设置保留".into()); }
     // 先验证新键可注册，冲突时保留仍可用的旧键。
     gs.register(new_sc).map_err(|e| e.to_string())?;
     if let Err(error) = db.set_setting("ticker_hotkey", &hotkey) {

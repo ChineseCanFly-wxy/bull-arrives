@@ -113,8 +113,8 @@ mod tests {
         rusqlite::Connection::open(dir.join("bull-arrives.db")).unwrap()
             .execute("UPDATE news_archive SET received_at=?1 WHERE id='news:major'", [recorded.to_rfc3339()]).unwrap();
         let alert = json!({"id":"alert:1","title":"甲公司价格提醒","body":"价格触发","signal_kind":"price","received_at":recorded.timestamp_millis()});
-        db.archive_brief_alert(&alert).unwrap();
-        db.archive_brief_alert(&json!({"id":"research:1","title":"模型观察","body":"研究信号","signal_kind":"research","received_at":recorded.timestamp_millis()})).unwrap();
+        db.archive_brief_alert_at(&alert, now).unwrap();
+        db.archive_brief_alert_at(&json!({"id":"research:1","title":"模型观察","body":"研究信号","signal_kind":"research","received_at":recorded.timestamp_millis()}), now).unwrap();
         // Even a stale client/database writing the removed keys must not block briefs.
         db.set_setting("quote_schedule_enabled", "1").unwrap();
         db.set_setting("quote_schedule", "invalid legacy JSON").unwrap();

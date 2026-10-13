@@ -264,6 +264,8 @@ pub fn set_setting(
     }
     validate_notification_setting(&key, &value)?;
     if key==crate::important_alerts::PENDING_KEY { return Err("未确认提醒由后台维护，不能手动覆盖".into()); }
+    if key==crate::commands::model_follow::STAR_ENABLED_KEY { return Err("请使用自动模型交易中的允许科创板开关".into()); }
+    if key=="important_alerts_hotkey" { return Err("请通过悬浮提醒快捷键设置注册，避免保存无效快捷键".into()); }
     if key==crate::stockdb_schedule::RECORD_KEY{return Err("更新进度由后台任务维护，不能手动覆盖".into());}
     if key=="research_data_alerts_enabled"{return Err("缺行情提醒已移除；更新失败原因可在数据状态与自动操作记录查看".into());}
     if key=="local_history_auto_update_enabled" && !matches!(value.as_str(),"0"|"1"){return Err("自动更新开关只能为0或1".into());}
@@ -344,7 +346,10 @@ pub fn set_setting(
         return stockdb.set_service_url(&value);
     }
     db.set_setting(&key, &value).map_err(|e| e.to_string())?;
-    if key == "important_alerts_enabled" { crate::important_alerts::refresh_visibility(&app, value == "1")?; }
+    if key == "important_alerts_enabled" {
+        if value == "1" { db.set_setting("important_alerts_visible", "1").map_err(|e| e.to_string())?; }
+        crate::important_alerts::refresh_visibility(&app, value == "1")?;
+    }
     if key == "important_alerts_opacity" {
         if let Some(window) = tauri::Manager::get_webview_window(&app, "important-alerts") {
             let opacity = value.parse::<u32>().map_err(|e| e.to_string())?;

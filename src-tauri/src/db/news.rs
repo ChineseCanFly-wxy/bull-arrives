@@ -171,13 +171,16 @@ impl Database {
     }
 
     pub fn archive_brief_alert(&self, payload: &serde_json::Value) -> Result<(), String> {
+        self.archive_brief_alert_at(payload, chrono::Utc::now())
+    }
+    pub(crate) fn archive_brief_alert_at(&self, payload: &serde_json::Value, now: chrono::DateTime<chrono::Utc>) -> Result<(), String> {
         let id = payload["id"].as_str().ok_or("提醒缺少 ID")?;
         let received_at = payload["received_at"].as_i64()
             .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
             .ok_or("提醒时间无效")?.to_rfc3339();
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute("INSERT OR IGNORE INTO daily_brief_alerts(id,received_at,payload) VALUES(?1,?2,?3)", params![id, received_at, payload.to_string()]).map_err(|e| e.to_string())?;
-        let cutoff = (chrono::Utc::now() - chrono::Duration::days(14)).to_rfc3339();
+        let cutoff = (now - chrono::Duration::days(14)).to_rfc3339();
         conn.execute("DELETE FROM daily_brief_alerts WHERE received_at < ?1", [cutoff]).map_err(|e| e.to_string())?;
         Ok(())
     }

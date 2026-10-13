@@ -24,7 +24,7 @@ interface Run { id: number; run_key?: string; trade_date?: string; phase?: strin
 interface Metrics { win_rate_bps?: number; profit_loss_ratio_bps?: number; expectancy?: string; max_drawdown_bps?: number; total_return_bps?: number; annualized_return_bps?: number; average_holding_days_x100?: number; sample_count?: number; benchmark_return_bps?: number | null }
 interface SourceStats { source: string; orders: number; filled: number; rejected: number; realized_profit: string }
 interface CapitalAdjustment { id: number; old_initial_cash: string; new_initial_cash: string; delta: string; cash_before: string; cash_after: string; created_at: string }
-interface Detail { capital_adjustments?: CapitalAdjustment[]; performance_note?: string; account: Account; targets: Target[]; positions: Position[]; orders: Order[]; recent_runs: Run[]; metrics: Metrics; source_stats: SourceStats[] }
+interface Detail { position_adjustments?: { id:number;symbol:string;quantity:number;refunded_cost:string;cash_after:string;reason:string;created_at:string }[]; capital_adjustments?: CapitalAdjustment[]; performance_note?: string; account: Account; targets: Target[]; positions: Position[]; orders: Order[]; recent_runs: Run[]; metrics: Metrics; source_stats: SourceStats[] }
 
 const props = defineProps<{ show: boolean; preferredAccountId?: number }>();
 const emit = defineEmits<{ 'update:show': [value: boolean] }>();
@@ -400,6 +400,7 @@ watch(selectedId, id => {
             <div><small>成交样本</small><b>{{ detail.metrics.sample_count ?? 0 }}</b></div>
           </div>
           <p v-if="detail?.performance_note" class="hint capital-note">{{detail.performance_note}}</p>
+          <details v-if="detail?.position_adjustments?.length" class="capital-history"><summary>手动持仓清理记录（{{detail.position_adjustments.length}}笔）</summary><div class="table-wrap"><table><thead><tr><th>时间</th><th>股票 / 股数</th><th>退回成本</th><th>清理后现金</th><th>原因</th></tr></thead><tbody><tr v-for="record in detail.position_adjustments" :key="record.id"><td>{{new Date(record.created_at).toLocaleString()}}</td><td>{{record.symbol}} / {{record.quantity}}股</td><td>{{scaledToDecimal(record.refunded_cost)}}</td><td>{{scaledToDecimal(record.cash_after)}}</td><td>{{record.reason}}</td></tr></tbody></table></div></details>
           <div class="runs"><span v-for="row in detail?.source_stats ?? []" :key="row.source"><NTag size="small">{{ row.source }}</NTag>订单 {{ row.orders }} · 成交 {{ row.filled }} · 拒绝 {{ row.rejected }} · 已实现 ¥{{ scaledToDecimal(row.realized_profit) }}</span></div>
           <h4>持仓</h4>
           <div class="table-wrap"><table><thead><tr><th>标的</th><th>持仓</th><th>可卖</th><th>含费成本</th><th v-if="modelManaged">估值 / 数据时间</th></tr></thead><tbody>

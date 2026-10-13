@@ -3,9 +3,30 @@ import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { NSwitch, NButton } from 'naive-ui';
 import { useSettingsStore } from '@/stores/settings';
+import { eventToHotkey, formatHotkeyLabel } from '@/utils/hotkey';
 const settings = useSettingsStore();
 const busy = ref(false); const error = ref(''); const result = ref('');
 const identity = ref<{supported: boolean; registered: boolean; detail: string} | null>(null);
+const capturing = ref(false);
+async function setHotkey(hotkey: string) {
+  busy.value = true; error.value = ''; capturing.value = false;
+  try {
+    await invoke('set_important_alerts_hotkey', { hotkey });
+    await settings.fetchSettings();
+    result.value = '显示 / 隐藏快捷键已保存：' + formatHotkeyLabel(hotkey);
+  } catch (e) { error.value = String(e); } finally { busy.value = false; }
+}
+function captureHotkey(event: KeyboardEvent) {
+  if (!capturing.value) return;
+  event.preventDefault(); event.stopPropagation();
+  if (event.key === 'Escape') { capturing.value = false; return; }
+  const hotkey = eventToHotkey(event);
+  if (hotkey) void setHotkey(hotkey);
+}
+async function showWindow() {
+  busy.value = true; error.value = '';
+  try { await invoke('show_important_alerts'); } catch (e) { error.value = String(e); } finally { busy.value = false; }
+}
 async function save(key: string, value: string) {
   busy.value = true; error.value = '';
   try { if (!await settings.setSetting(key,value)) error.value = settings.error || '保存失败'; }
@@ -30,7 +51,8 @@ async function help(register = false) {
 </script>
 <template>
 <section class="floating-settings" aria-label="悬浮提醒设置">
-  <div class="row"><div><b>重要操作提醒悬浮窗</b><p>只显示模拟买卖、模型条件、市场主线和行情/风险提醒。置顶、逐条保留，确认已读后移除；关闭只隐藏窗口，任务继续运行。</p></div><NSwitch :value="settings.settings.important_alerts_enabled !== '0'" :disabled="busy" aria-label="重要操作提醒悬浮窗" @update:value="save('important_alerts_enabled',$event?'1':'0')" /></div>
+  <div class="row"><div><b>重要操作提醒悬浮窗</b><p>像行情悬浮窗一样常驻置顶，支持拖动、缩放和自适应；无消息时显示等待状态。关闭只隐藏窗口，提醒继续保存，任务继续运行。</p></div><NSwitch :value="settings.settings.important_alerts_enabled !== '0'" :disabled="busy" aria-label="重要操作提醒悬浮窗" @update:value="save('important_alerts_enabled',$event?'1':'0')" /></div>
+  <div class="row"><div><b>显示 / 隐藏快捷键</b><p>隐藏后新消息不会强制弹出；按同一快捷键可恢复，位置和尺寸会记住。Esc 取消录入。</p></div><div class="hotkey-actions"><button type="button" :disabled="busy" @click="capturing=!capturing" @keydown="captureHotkey">{{capturing?'请按组合键…':formatHotkeyLabel(settings.settings.important_alerts_hotkey || 'Alt+W')}}</button><button type="button" :disabled="busy" @click="setHotkey('Alt+W')">重置</button><button type="button" :disabled="busy || settings.settings.important_alerts_enabled==='0'" @click="showWindow">显示窗口</button></div></div>
   <div class="row"><span>重要提醒也发送 Windows 系统通知</span><NSwitch :value="settings.settings.important_alerts_native_enabled === '1'" :disabled="busy" aria-label="重要提醒系统通知" @update:value="save('important_alerts_native_enabled',$event?'1':'0')" /></div>
   <div class="appearance-grid">
     <label>文字颜色<input type="color" :value="settings.settings.important_alerts_text_color || '#EEF5FF'" :disabled="busy" @change="change('important_alerts_text_color',$event)" /></label>
@@ -44,4 +66,5 @@ async function help(register = false) {
   <p v-if="result" role="status">{{ result }}</p><p v-if="error" class="error" role="alert">{{ error }}</p>
 </section>
 </template>
+<style scoped>.hotkey-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.hotkey-actions button{font:inherit;color:inherit;background:var(--color-bg-1);border:1px solid var(--color-border-0);border-radius:5px;padding:5px 9px;cursor:pointer}@media(max-width:500px){.row{align-items:flex-start;flex-wrap:wrap}.hotkey-actions{justify-content:flex-start}}</style>
 <style scoped>.floating-settings{font-size:13px;line-height:1.7;margin-top:16px}.row{display:flex;justify-content:space-between;align-items:center;gap:20px;margin:14px 0}.row b{font-size:15px}.floating-settings p{color:var(--color-text-secondary);margin:6px 0}.appearance-grid{display:flex;flex-wrap:wrap;gap:22px;margin:14px 0}.appearance-grid label{display:flex;align-items:center;gap:10px}.appearance-grid input[type=color]{width:42px;height:28px;padding:0;border:1px solid var(--color-border-0);cursor:pointer}.appearance-grid input[type=range]{max-width:150px}.floating-settings details{margin-top:18px;border-top:1px solid var(--color-border-0);padding-top:12px}.floating-settings summary{cursor:pointer;font-weight:600}.floating-settings .error{color:var(--color-error)}</style>

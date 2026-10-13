@@ -18,6 +18,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use tauri::State;
+use tauri::Manager;
 #[cfg(test)]
 use crate::db::simulation::AccountInput;
 static GATE: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
@@ -673,7 +674,7 @@ fn lots(symbol: &str, budget: i64, price: i64) -> i64 {
     if price <= 0 {
         return 0;
     }
-    let n = budget.max(0) / price;
+    let n = budget.max(0) / price / 100 * 100;
     if symbol.starts_with("sh688") || symbol.starts_with("sh689") {
         if n >= 200 {
             n
@@ -683,6 +684,28 @@ fn lots(symbol: &str, budget: i64, price: i64) -> i64 {
     } else {
         n / 100 * 100
     }
+}
+pub(crate) const STAR_ENABLED_KEY: &str = "research_follow_star_enabled";
+pub(crate) fn star_symbol(symbol: &str) -> bool { symbol.starts_with("sh688") || symbol.starts_with("sh689") }
+fn star_enabled(db: &Database) -> Result<bool, String> {
+    Ok(db.get_setting(STAR_ENABLED_KEY).map_err(|e| e.to_string())?.as_deref() == Some("1"))
+}
+#[tauri::command]
+pub async fn research_follow_star(
+    db: State<'_, Arc<Database>>, enabled: Option<bool>,
+) -> Result<bool, String> {
+    if enabled.is_none() { return star_enabled(&db); }
+    let _permit = manual_permit(gate()).await?;
+    if let Some(value) = enabled {
+        db.set_setting(STAR_ENABLED_KEY, if value { "1" } else { "0" }).map_err(|e| e.to_string())?;
+        db.retire_disallowed_follow_buys()?;
+    }
+    star_enabled(&db)
+}
+#[tauri::command]
+pub async fn research_follow_clear_star(db: State<'_, Arc<Database>>) -> Result<Value, String> {
+    let _permit=manual_permit(gate()).await?;
+    db.clear_follow_star_positions()
 }
 // User simulation: commission/stamp tax only; transfer and price slippage are zero.
 pub(crate) fn follow_fee(gross: i64, side: Side) -> Result<i64, String> {
@@ -700,18 +723,14 @@ pub(crate) fn follow_fee(gross: i64, side: Side) -> Result<i64, String> {
 }
 fn sized_quantity(symbol: &str, budget: i64, price: i64) -> Result<i64, String> {
     let mut qty = lots(symbol, budget, price);
-    let step = if symbol.starts_with("sh688") || symbol.starts_with("sh689") {
-        1
-    } else {
-        100
-    };
+    let minimum = if star_symbol(symbol) { 200 } else { 100 };
     while qty > 0 {
         let gross = qty.checked_mul(price).ok_or("金额超限")?;
         if gross + follow_fee(gross, Side::Buy)? <= budget {
             break;
         }
-        qty -= step;
-        if step == 1 && qty < 200 {
+        qty -= 100;
+        if qty < minimum {
             qty = 0;
         }
     }
@@ -758,6 +777,9 @@ fn exit_reason(
     symbol: &str,
     today: &str,
 ) -> Result<Option<String>, String> {
+    if star_symbol(symbol) && !star_enabled(db)? {
+        return Ok(Some("科创板参与已关闭，退出已有科创板持仓".into()));
+    }
     let rules = model_execution(&ctx.model_id)?;
     let position = detail
         .positions
@@ -952,6 +974,7 @@ async fn drive(
     binding: &mut FollowBinding,
 ) -> Result<(), String> {
     db.enable_follow_automation(binding)?;
+    db.retire_disallowed_follow_buys()?;
     let now = Utc::now();
     expire(db, binding.account_id, now)?;
     if !binding.enabled {
@@ -1169,6 +1192,7 @@ async fn drive(
             .take(ctx.ranked_symbols.len())
         {
             let d = db.get_sim_detail(binding.account_id)?;
+            if star_symbol(symbol) && !star_enabled(db)? { continue; }
             if occupied(&d) >= binding.max_positions as usize {
                 break;
             }
@@ -1337,6 +1361,9 @@ async fn drive(
         let _ = db.record_live_equity(binding.account_id, &mark_ticks, None);
     }
     binding.state = "listening".into();
+    if !star_enabled(db)? && d.positions.iter().any(|p| star_symbol(&p.symbol)) {
+        messages.push("科创板已关闭，已有持仓正在退出；T+1、停牌、盘口不足或委托未成交时继续等待，股份不直接抹除".into());
+    }
     binding.message = if messages.is_empty() {
         format!(
             "按原模型跟踪中：最多{}只，仓位按绑定配置及实际现金/流动性计算；{}条程序委托待撮合；{}",
@@ -1470,7 +1497,8 @@ fn view(db: &Database, b: &FollowBinding) -> Result<Value, String> {
         .parse::<i64>()
         .map_err(|_| "现金无效")?
         - reserved_cash(db, &d, None)?;
-    let candidates: Vec<_> = ctx.ranked_symbols.iter().take(if source_current {30} else {0})
+    let allow_star = star_enabled(db)?;
+    let candidates: Vec<_> = ctx.ranked_symbols.iter().filter(|s| allow_star || !star_symbol(s)).take(if source_current {30} else {0})
         .enumerate().map(|(i,s)| {
             let row = ctx.rows.iter().find(|r| r.symbol == *s);
             let condition = row.ok_or("缺少本模型入场证据".to_string()).and_then(|r| entry_condition(b,&ctx,r));
@@ -2100,6 +2128,9 @@ pub async fn tick_all(db: &Database, manager: &DataSourceManager, app: &tauri::A
             if binding.state=="data_unavailable" {
                 log::warn!(target: "automation::trading", "账户 #{}：{}",binding.account_id,binding.message);
             } else { log::info!(target: "automation::trading", "账户 #{}：{}",binding.account_id,binding.message); }
+        }
+        if let Ok(detail) = db.get_sim_detail(binding.account_id) {
+            app.state::<Arc<crate::operations_log::OperationsLog>>().model_check(&binding, &detail, Utc::now());
         }
         // Publish before processing another model so the first plan is immediately followable.
         if let Ok(notices) = db.follow_notices() {
@@ -3388,7 +3419,7 @@ mod tests {
         );
         assert_eq!(
             sized_quantity("sh688001", 2100 * SCALE, 10 * SCALE).unwrap(),
-            209
+            200
         );
         assert_eq!(
             sized_quantity("sh688001", 1999 * SCALE, 10 * SCALE).unwrap(),
@@ -3396,6 +3427,51 @@ mod tests {
         );
         assert_eq!(follow_fee(10000 * SCALE, Side::Buy).unwrap(), 50000);
         assert_eq!(follow_fee(10000 * SCALE, Side::Sell).unwrap(), 100000);
+    }
+    #[test]
+    fn automatic_buy_sizing_rounds_every_board_down_to_hundreds() {
+        for symbol in ["sh600000","sz300001","sh688001","sh689001"] {
+            let qty = sized_quantity(symbol,3365*SCALE,10*SCALE).unwrap();
+            assert_eq!(qty,300);
+            assert!(qty*10*SCALE+follow_fee(qty*10*SCALE,Side::Buy).unwrap()<=3365*SCALE);
+        }
+        assert_eq!(sized_quantity("sh688001",2000*SCALE,10*SCALE).unwrap(),0);
+    }
+    #[test]
+    fn star_exit_is_explicit_and_does_not_change_other_model_exits() {
+        let (db, root, b, ctx) = test_account();
+        let detail = db.get_sim_detail(b.account_id).unwrap();
+        assert!(!star_enabled(&db).unwrap());
+        assert!(exit_reason(&db,&detail,&ctx,"sh688001","2026-09-22").unwrap().unwrap().contains("科创板"));
+        db.set_setting(STAR_ENABLED_KEY,"1").unwrap();
+        assert!(exit_reason(&db,&detail,&ctx,"sh688001","2026-09-22").is_err());
+        drop(db);std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn closing_star_board_sells_actual_odd_position_only_after_fresh_t_plus_one_quote() {
+        let (db,root,mut b,mut ctx)=automatic_test_account();
+        let symbol="sh688001";
+        ctx.rows[0].symbol=symbol.into();ctx.ranked_symbols=vec![symbol.into()];
+        b.context_json=serde_json::to_string(&ctx).unwrap();db.save_follow_binding(&b).unwrap();
+        let acquired="2026-09-21";
+        crate::db::model_follow::delete_tests::seed_star_position(&db,b.account_id,acquired);
+        let now=Utc.with_ymd_and_hms(2026,9,21,2,0,0).unwrap();
+        let mut tick=sample_tick(now);tick.quote.code=symbol.into();tick.depth.code=symbol.into();
+        let reason=exit_reason(&db,&db.get_sim_detail(b.account_id).unwrap(),&ctx,symbol,acquired).unwrap().unwrap();
+        stage(&db,&b,&ctx,&tick,Side::Sell,336,99900,&reason,now.timestamp()+300,now).unwrap();
+        let first=db.get_sim_detail(b.account_id).unwrap().orders[0].id;
+        let mut fresh=tick.clone();fresh.quote.timestamp+=2;fresh.depth.timestamp+=2;fresh.received_at+=2;
+        let same_day=db.match_sim_order_live_at(first,&fresh,now+chrono::Duration::seconds(2));
+        assert!(same_day.is_err()||same_day.unwrap().status!="filled");
+        assert_eq!(db.get_sim_detail(b.account_id).unwrap().positions[0].quantity,336);
+        db.reject_follow_order(first,"等待下一交易日").unwrap();
+        let next=now+chrono::Duration::days(1);tick.quote.timestamp=next.timestamp();tick.depth.timestamp=next.timestamp();tick.received_at=next.timestamp();
+        stage(&db,&b,&ctx,&tick,Side::Sell,336,99900,&reason,next.timestamp()+300,next).unwrap();
+        let order=db.get_sim_detail(b.account_id).unwrap().orders[0].id;
+        tick.quote.timestamp+=2;tick.depth.timestamp+=2;tick.received_at+=2;
+        assert_eq!(db.match_sim_order_live_at(order,&tick,next+chrono::Duration::seconds(2)).unwrap().status,"filled");
+        assert!(db.get_sim_detail(b.account_id).unwrap().positions.is_empty());
+        drop(db);std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn follow_sessions_use_market_evidence_without_guessing() {

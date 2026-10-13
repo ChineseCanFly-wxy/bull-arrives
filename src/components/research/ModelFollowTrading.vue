@@ -36,6 +36,26 @@ const busy = computed(() => reading.value || action.value !== '');
 const loaded = ref(false);
 const readError = ref('');
 const automatic = ref<FollowAutomaticStatus | null>(null);
+const starEnabled = ref(false);
+const starLoaded = ref(false);
+const starPositions = computed(()=>accounts.value.reduce((count,view)=>count+view.positions.filter(p=>p.symbol.startsWith('sh688')||p.symbol.startsWith('sh689')).length,0));
+async function clearStar() {
+  if(busy.value || !starPositions.value) return;
+  action.value='正在按成本清理科创板持仓…';error.value='';
+  try {
+    const result=await invoke<{cleared_positions:number;refunded_cost_cny:number}>('research_follow_clear_star');
+    starEnabled.value=false;
+    notice.value=`已清理${result.cleared_positions}笔科创板持仓，按成本退回${money(result.refunded_cost_cny)}；手动清理记录可在账户详情查看，不记作市场卖出。`;
+  }catch(e){error.value=String(e);}finally{action.value='';await readAccounts(true);}
+}
+async function toggleStar() {
+  if (busy.value || !starLoaded.value) return;
+  action.value = '正在保存科创板设置…'; error.value = '';
+  try {
+    starEnabled.value = await invoke<boolean>('research_follow_star', { enabled: !starEnabled.value });
+    notice.value = starEnabled.value ? '已允许科创板，新增买入仍按整百股计算，至少200股。' : '已关闭科创板；未成交买单已撤销，已有持仓等待交易时段、T+1及可成交买盘后自动卖出。暂停的账户需先恢复自动运行。';
+  } catch (e) { error.value = String(e); } finally { action.value = ''; }
+}
 const automaticError = ref('');
 const autoStateName = (state: string) => ({paused:'自动运行已暂停',closed:'休市 · 等待交易日',waiting_calendar:'等待交易日核验',waiting_time:'等待定时更新',waiting_update:'等待数据更新',waiting_data:'等待完整日线',waiting_delay:'更新成功 · 等待10分钟',due:'等待自动检查',running:'正在后台检查',complete:'今日已处理 · 等待新交易日',failed:'本日检查失败',retry_wait:'等待后台重试'}[state] ?? state);
 const outcomeName = (row: FollowAutomaticModel) => {
@@ -125,10 +145,12 @@ async function readAccounts(quiet = false) {
   inFlight = true;
   reading.value = !quiet || !loaded.value;
   try {
-    const [views, status] = await Promise.allSettled([
+    const [views, status, star] = await Promise.allSettled([
       invoke<FollowView[]>('research_follow_accounts'),
       invoke<FollowAutomaticStatus>('research_auto_status', { enabled: null }),
+      invoke<boolean>('research_follow_star', { enabled: null }),
     ]);
+    if (star.status === 'fulfilled') { starEnabled.value = star.value === true; starLoaded.value = true; }
     if (disposed || !props.active) return;
     if (views.status === 'fulfilled') {
       views.value.forEach(rememberOrders); accounts.value = views.value;
@@ -261,6 +283,8 @@ defineExpose({ refresh: readAccounts });
       <button type="button" class="follow-automatic-switch" role="switch" :aria-checked="automatic?.enabled ?? false" :disabled="busy || !active || !automatic" @click="toggleAutomatic">{{automatic?.enabled ? '暂停自动运行' : '开启自动运行'}}</button>
     </section>
     <p v-if="automaticError && automatic" class="follow-error" role="alert">{{automaticError}}</p>
+    <section class="follow-automatic-control" aria-label="科创板参与设置"><div><b>允许科创板</b><p>默认关闭。关闭后不新增科创板买入，已有持仓按可成交盘口卖出；T+1、停牌或无买盘时等待。所有新增买入按整百股，科创板至少200股。</p></div><button type="button" role="switch" :aria-checked="starEnabled" :disabled="busy || !active || !starLoaded" @click="toggleStar">{{starEnabled ? '关闭科创板' : '开启科创板'}}</button></section>
+    <section v-if="starPositions" class="follow-automatic-control" aria-label="手动清理科创板持仓"><div><b>现有{{starPositions}}笔科创板模拟持仓</b><p>按剩余持仓成本退回现金并直接移除股份，撤销相关未成交委托，同时关闭科创板。保留手动清理记录与历史成交，其他持仓不变；此操作不是市场卖出。</p></div><button type="button" :disabled="busy || !active" @click="clearStar">按成本清理科创板</button></section>
     <details v-if="automatic?.models.length" class="follow-model-outcomes"><summary>本轮模型结果 · {{automatic.models.length}} 项</summary><ul><li v-for="row in automatic.models" :key="row.model_id"><b>{{modelName(row.model_id)}}</b><span>{{outcomeName(row)}}</span><small>{{row.message || row.error}}</small></li></ul><p v-if="automatic.last_error" class="follow-error">{{automatic.last_error}}</p></details>
     <dl v-if="accounts.length" class="follow-overview"><div><dt>模型账户</dt><dd>{{accounts.length}} <small>运行 {{totals.running}}</small></dd></div><div><dt>持仓合计</dt><dd>{{totals.positions}} 只</dd></div><div><dt>账户净值合计</dt><dd>{{money(totals.equity)}}</dd></div><div><dt>账户现金合计</dt><dd>{{money(totals.cash)}}</dd></div></dl>
     <p v-if="!loaded && !error && !readError" class="follow-muted" role="status">{{ active ? '正在读取自动账户…' : '页面未激活，账户轮询已暂停。' }}</p>

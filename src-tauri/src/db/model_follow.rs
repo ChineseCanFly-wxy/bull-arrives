@@ -134,6 +134,42 @@ pub(super) fn adjust_follow_capital(tx: &rusqlite::Transaction<'_>, account: i64
     tx.execute("UPDATE model_follow_accounts SET binding_json=?2 WHERE account_id=?1", params![account, serde_json::to_string(&binding).map_err(|e| e.to_string())?]).map(|_| ()).map_err(|e| e.to_string())
 }
 impl Database {
+    pub fn clear_follow_star_positions(&self) -> Result<Value, String> {
+        let mut conn=self.conn.lock().unwrap_or_else(|e|e.into_inner());
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e|e.to_string())?;
+        tx.execute("INSERT INTO settings(key,value) VALUES('research_follow_star_enabled','0') ON CONFLICT(key) DO UPDATE SET value='0'",[]).map_err(|e|e.to_string())?;
+        let mut statement=tx.prepare("SELECT l.account_id,l.symbol,SUM(l.quantity),SUM(l.cost_basis) FROM sim_lots l JOIN model_follow_accounts f ON f.account_id=l.account_id WHERE l.symbol LIKE 'sh688%' OR l.symbol LIKE 'sh689%' GROUP BY l.account_id,l.symbol ORDER BY l.account_id,l.symbol").map_err(|e|e.to_string())?;
+        let rows=statement.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?))).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+        drop(statement);
+        let timestamp=chrono::Utc::now().to_rfc3339();let mut total=0i64;let mut adjustments=Vec::new();
+        for (account,symbol,quantity,cost) in &rows {
+            let cash:i64=tx.query_row("SELECT cash FROM sim_accounts WHERE id=?1",[account],|r|r.get(0)).map_err(|e|e.to_string())?;
+            let after=cash.checked_add(*cost).filter(|v|*v<=crate::simulation::MAX_MONEY).ok_or("清理退回资金超出安全范围，未修改账本")?;
+            total=total.checked_add(*cost).ok_or("清理金额超限")?;
+            let reason="手动清理科创板持仓，按剩余持仓成本退回现金；不是市场卖出";
+            tx.execute("INSERT INTO sim_position_adjustments(account_id,symbol,quantity,refunded_cost,cash_before,cash_after,reason,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![account,symbol,quantity,cost,cash,after,reason,timestamp]).map_err(|e|e.to_string())?;
+            tx.execute("UPDATE sim_accounts SET cash=?2,updated_at=?3 WHERE id=?1",params![account,after,timestamp]).map_err(|e|e.to_string())?;
+            tx.execute("DELETE FROM sim_lots WHERE account_id=?1 AND symbol=?2",params![account,symbol]).map_err(|e|e.to_string())?;
+            tx.execute("DELETE FROM sim_live_marks WHERE account_id=?1 AND symbol=?2",params![account,symbol]).map_err(|e|e.to_string())?;
+            let raw:String=tx.query_row("SELECT binding_json FROM model_follow_accounts WHERE account_id=?1",[account],|r|r.get(0)).map_err(|e|e.to_string())?;
+            let mut binding=decode_binding(&raw)?;binding.allocation_equity=None;binding.allocation_date=None;
+            let remaining:i64=tx.query_row("SELECT COUNT(*) FROM sim_lots WHERE account_id=?1",[account],|r|r.get(0)).map_err(|e|e.to_string())?;
+            if remaining==0 {binding.valuation_blocked=false;binding.valuation_block_reason=None;}
+            binding.message="已手动清理科创板持仓并按成本退回现金，等待下一轮检查其他持仓".into();
+            tx.execute("UPDATE model_follow_accounts SET binding_json=?2 WHERE account_id=?1",params![account,serde_json::to_string(&binding).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
+            adjustments.push(serde_json::json!({"account_id":account,"symbol":symbol,"quantity":quantity,"refunded_cost_cny":*cost as f64/crate::simulation::SCALE as f64}));
+        }
+        tx.execute("UPDATE sim_orders SET status='rejected',reject_reason='用户手动清理科创板持仓，撤销相关未成交委托' WHERE account_id IN (SELECT account_id FROM model_follow_accounts) AND (symbol LIKE 'sh688%' OR symbol LIKE 'sh689%') AND status IN ('pending','awaiting_confirmation')",[]).map_err(|e|e.to_string())?;
+        tx.commit().map_err(|e|e.to_string())?;
+        Ok(serde_json::json!({"cleared_positions":rows.len(),"refunded_cost_cny":total as f64/crate::simulation::SCALE as f64,"adjustments":adjustments}))
+    }
+    pub fn retire_disallowed_follow_buys(&self) -> Result<usize, String> {
+        self.conn.lock().unwrap_or_else(|e| e.into_inner()).execute(
+            "UPDATE sim_orders SET status='rejected',reject_reason=CASE WHEN quantity%100<>0 THEN '自动模型买入已改为整百股，撤销旧数量委托' ELSE '科创板参与已关闭，撤销未成交买单' END
+             WHERE account_id IN (SELECT account_id FROM model_follow_accounts) AND side='buy' AND status IN ('pending','awaiting_confirmation')
+             AND (quantity%100<>0 OR ((symbol LIKE 'sh688%' OR symbol LIKE 'sh689%') AND NOT EXISTS(SELECT 1 FROM settings WHERE key='research_follow_star_enabled' AND value='1')))", []
+        ).map_err(|e| e.to_string())
+    }
     pub fn follow_automatic_record(&self) -> Result<AutomaticRecord, String> {
         self.get_setting(AUTOMATIC_RECORD_KEY).map_err(|e| e.to_string())?
             .map(|raw| serde_json::from_str(&raw).map_err(|_| "自动模型调度记录损坏，暂停重复执行".to_string()))
@@ -294,6 +330,7 @@ impl Database {
             "sim_targets",
             "sim_runs",
             "sim_capital_adjustments",
+            "sim_position_adjustments",
             "sim_equity_daily",
             "sim_orders",
             "model_follow_accounts",
@@ -454,9 +491,14 @@ impl Database {
         let board_limit = crate::market_rules::ensure_simulatable(&input.symbol, &input.name)?;
         if side == crate::simulation::Side::Buy {
             crate::market_rules::validate_buy_quantity(&input.symbol, input.quantity)?;
+            if input.quantity % 100 != 0 { return Err("自动模型买入数量须为整百股".into()); }
         }
         let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let tx = conn.transaction().map_err(|e| e.to_string())?;
+        if side == crate::simulation::Side::Buy && crate::commands::model_follow::star_symbol(&input.symbol) {
+            let allowed: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM settings WHERE key='research_follow_star_enabled' AND value='1')", [], |r| r.get(0)).map_err(|e| e.to_string())?;
+            if !allowed { return Err("科创板参与默认关闭，请先开启允许科创板".into()); }
+        }
         let raw: String = tx
             .query_row(
                 "SELECT binding_json FROM model_follow_accounts WHERE account_id=?1",
@@ -806,6 +848,44 @@ pub(crate) mod delete_tests {
     use crate::commands::model_follow::{ContextRow, FollowContext};
     use rusqlite::types::Value as SqlValue;
     use serde_json::json;
+    pub(crate) fn seed_star_position(db: &Database, account: i64, acquired: &str) {
+        db.conn.lock().unwrap().execute("INSERT INTO sim_lots(account_id,symbol,quantity,unit_cost,cost_basis,acquired_date) VALUES(?1,'sh688001',336,100000,33600000,?2)",params![account,acquired]).unwrap();
+    }
+    #[test]
+    fn explicit_star_cleanup_refunds_remaining_cost_once_and_preserves_other_assets() {
+        let (db,binding)=fixture();
+        seed_star_position(&db,binding.account_id,"2026-09-21");
+        db.conn.lock().unwrap().execute("INSERT INTO sim_lots(account_id,symbol,quantity,unit_cost,cost_basis,acquired_date) VALUES(?1,'sh600000',100,100000,10000000,'2026-09-21')",[binding.account_id]).unwrap();
+        let before=db.get_sim_detail(binding.account_id).unwrap();
+        let result=db.clear_follow_star_positions().unwrap();
+        assert_eq!(result["cleared_positions"],1);
+        assert_eq!(result["refunded_cost_cny"],3360.);
+        let after=db.get_sim_detail(binding.account_id).unwrap();
+        assert_eq!(after.account.current_cash.parse::<i64>().unwrap(),before.account.current_cash.parse::<i64>().unwrap()+33600000);
+        assert_eq!(after.account.initial_cash,before.account.initial_cash);
+        assert_eq!(after.positions.len(),1);assert_eq!(after.positions[0].symbol,"sh600000");
+        assert_eq!(after.position_adjustments.len(),1);
+        assert_eq!(after.metrics.filled_sell_count,before.metrics.filled_sell_count);
+        assert_eq!(db.clear_follow_star_positions().unwrap()["cleared_positions"],0);
+        assert_eq!(db.get_sim_detail(binding.account_id).unwrap().account.current_cash,after.account.current_cash);
+        assert_eq!(db.get_sim_detail(binding.account_id).unwrap().position_adjustments.len(),1);
+    }
+    #[test]
+    fn star_default_off_retires_pending_buys_without_erasing_holdings_or_sales() {
+        let (db, binding) = fixture();
+        let conn = db.conn.lock().unwrap();
+        conn.execute("INSERT INTO sim_lots(account_id,symbol,quantity,unit_cost,cost_basis,acquired_date) VALUES(?1,'sh688001',336,100000,33600000,'2026-09-21')", [binding.account_id]).unwrap();
+        for (key,symbol,side,qty) in [("star","sh688001","buy",300),("normal","sh600000","buy",100),("odd","sh600001","buy",336),("sale","sh688001","sell",336)] {
+            conn.execute("INSERT INTO sim_orders(account_id,idempotency_key,symbol,side,quantity,signal_date,source,limit_bps,status,created_at) VALUES(?1,?2,?3,?4,?5,'2026-09-22','rule',2000,'pending','2026-09-22T01:30:00Z')", params![binding.account_id,key,symbol,side,qty]).unwrap();
+        }
+        drop(conn);
+        assert_eq!(db.retire_disallowed_follow_buys().unwrap(),2);
+        let detail = db.get_sim_detail(binding.account_id).unwrap();
+        assert_eq!(detail.positions[0].quantity,336);
+        for order in detail.orders { assert_eq!(order.status,if order.idempotency_key=="star"||order.idempotency_key=="odd" {"rejected"}else{"pending"}); }
+        db.set_setting(crate::commands::model_follow::STAR_ENABLED_KEY,"1").unwrap();
+        assert_eq!(db.retire_disallowed_follow_buys().unwrap(),0);
+    }
 
     const RANK_SOURCE: &str = include_str!("../../../research/research-center-runner/checks/current-rank-forward.json");
     const INDEX_SOURCE: &str =

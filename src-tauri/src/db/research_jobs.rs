@@ -76,8 +76,14 @@ impl Database {
         // Poll only small summaries. Whole-universe scores stay in the full job evidence.
         let summary=SELECT_JOB.replace("context_json,results_json,", "'null',(SELECT json_group_array(json_object('key',json_extract(step.value,'$.key'),'model_id',json_extract(step.value,'$.model_id'),'run_id',json_extract(step.value,'$.run_id'),'comparison',json_extract(step.value,'$.comparison'),'holding_days',json_extract(step.value,'$.holding_days'),'metrics',json_extract(step.value,'$.metrics'),'state',json_extract(step.value,'$.state'),'as_of',json_extract(step.value,'$.as_of'),'year',json_extract(step.value,'$.year'),'evaluations',json_extract(step.value,'$.evaluations'),'accounts',json_extract(step.value,'$.accounts'),'bank_size',json_extract(step.value,'$.bank_size'))) FROM json_each(research_jobs.results_json) AS step),");
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        // Keep the latest progress record and any still-running work. Account
+        // ledgers and saved model evidence have their own tables and survive.
+        if let Some(scan) = conn.query_row(&format!("{SELECT_JOB} WHERE kind='scan' AND state='complete' ORDER BY id DESC LIMIT 1"), [], read_job).optional().map_err(|e|e.to_string())? {
+            conn.execute("INSERT INTO settings(key,value) VALUES('latest_completed_model_scan',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [scan.to_string()]).map_err(|e|e.to_string())?;
+        }
+        conn.execute("DELETE FROM research_jobs WHERE id<>(SELECT MAX(id) FROM research_jobs) AND state NOT IN ('queued','running')", []).map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare(&format!("{summary} ORDER BY id DESC LIMIT 30"))
+            .prepare(&format!("{summary} ORDER BY id DESC LIMIT 1"))
             .map_err(|e| e.to_string())?;
         let rows = stmt.query_map([], read_job).map_err(|e| e.to_string())?;
         rows.collect::<Result<Vec<_>, _>>()
@@ -218,7 +224,9 @@ impl Database {
             )
             .optional()
             .map_err(|e| e.to_string())?;
-        Ok(value)
+        if value.is_some() { return Ok(value); }
+        let cached: Option<String> = conn.query_row("SELECT value FROM settings WHERE key='latest_completed_model_scan'", [], |r|r.get(0)).optional().map_err(|e|e.to_string())?;
+        cached.map(|raw| serde_json::from_str(&raw).map_err(|_|"最新模型候选记录损坏".into())).transpose()
     }
     pub fn save_condition_watch(&self, identity: &str, config: &Value) -> Result<i64, String> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
@@ -315,6 +323,22 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn progress_history_keeps_latest_and_active_work_without_removing_scan_evidence() {
+        let root=std::env::temp_dir().join(format!("latest-research-job-{}",uuid::Uuid::new_v4()));
+        let db=Database::open(root.clone()).unwrap();
+        let scan=db.create_research_job("scan",&json!({"models":["breadth22_rank20"]}),1).unwrap();
+        db.activate_research_job(scan).unwrap();
+        db.checkpoint_research_job(scan,&json!({"key":"scan","group":{"model_id":"breadth22_rank20"}})).unwrap();
+        db.finish_research_job(scan,"complete","done").unwrap();
+        let active=db.create_research_job("forward",&json!({"models":["breadth22_rank20"]}),1).unwrap();
+        let latest=db.create_research_job("scan",&json!({"models":["index26_h20"]}),1).unwrap();
+        let listed=db.research_jobs().unwrap();
+        assert_eq!(listed.len(),1);assert_eq!(listed[0]["id"],latest);
+        assert!(db.research_job(scan).is_err());assert!(db.research_job(active).is_ok());
+        assert_eq!(db.latest_model_scan_steps().unwrap().unwrap()["results"][0]["group"]["model_id"],"breadth22_rank20");
+        drop(db);std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn jobs_survive_reopening_and_resume_only_matching_identity() {
         let path = std::env::temp_dir().join(format!("research-jobs-{}", uuid::Uuid::new_v4()));

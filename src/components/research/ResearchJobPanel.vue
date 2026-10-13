@@ -5,9 +5,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { jobActive, jobState, MODEL_CATALOG, type ResearchJob } from '@/types/research';
 const props = defineProps<{ kind?: string; selectedId?: number | null }>();
 const emit = defineEmits<{ complete: [ResearchJob]; updated: [ResearchJob[]]; selectRun: [number] }>();
-const jobs = ref<ResearchJob[]>([]); const error = ref(''); const acting = ref<number | null>(null); const expanded = ref(false);
+const jobs = ref<ResearchJob[]>([]); const error = ref(''); const acting = ref<number | null>(null);
 const seen = new Set<number>(); let disposed = false; let loading = false; let timer: ReturnType<typeof setInterval> | undefined;
-const visible = computed(() => jobs.value.filter(j => !props.kind || j.kind === props.kind).slice(0, expanded.value ? 12 : 3));
+const visible = computed(() => jobs.value.filter(j => !props.kind || j.kind === props.kind).sort((a,b)=>b.id-a.id).slice(0, 1));
 const active = computed(() => jobs.value.some(jobActive));
 const kindName = (kind: string) => ({ scan: '模型筛选', replay: '历史回放', forward: '纸上账户', compare: '有限对照', explore:'技术组合研究' }[kind] ?? kind);
 const modelName = (id: string) => MODEL_CATALOG.find(m => m.id === id)?.name ?? id;
@@ -39,7 +39,7 @@ defineExpose({ refresh, active });
 <template>
   <section class="research-jobs" aria-label="研究任务进度">
     <header><b>{{ active ? '后台任务正在运行' : '任务记录' }}</b><HelpTooltip label="后台任务说明">关闭此页面后任务继续。退出应用会中断当前项，重新打开可续跑；只跳过已完成且输入版本一致的步骤。取消只停止本应用启动的研究进程。进度按真正完成的配置计数，校验前不生成结果。</HelpTooltip><button @click="refresh">刷新记录</button></header>
-    <p class="job-help">查看模型任务进度、失败原因和已核验结果。刷新只读取记录，不启动计算或切换账户。</p>
+    <p class="job-help">只保留最新一次任务的进度、失败原因和已核验结果。新任务替换旧运行记录，账户和成交账本保留。刷新不启动计算或切换账户。</p>
     <details class="job-help"><summary>取消与续跑</summary><p>关闭页面后任务继续。取消保留已核验结果；模型筛选和前向任务中断后可继续，输入版本改变时需重新计算。暂停自动买卖请在对应账户操作。</p></details>
     <p v-if="error" class="job-error">{{ error }}</p>
     <p v-if="!visible.length" class="job-empty">尚无模型任务。自动运行或模型筛选产生记录后会显示在这里。</p>
@@ -59,7 +59,6 @@ defineExpose({ refresh, active });
         </div>
       </details>
     </article>
-    <button v-if="jobs.filter(j => !kind || j.kind === kind).length > 3" class="job-more" @click="expanded = !expanded">{{ expanded ? '收起记录' : '展开更多记录' }}</button>
   </section>
 </template>
 <style scoped>

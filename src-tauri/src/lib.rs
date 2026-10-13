@@ -263,6 +263,7 @@ pub fn run() {
         .manage(navigation::PendingNavigation::default())
         .manage(desktop_toast::DesktopToastState::default())
         .manage(important_alerts::ImportantAlerts::default())
+        .manage(important_alerts::ImportantAlertHotkey::default())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -280,6 +281,7 @@ pub fn run() {
                     if group_hotkeys::handle(app, shortcut) {
                         return;
                     }
+                    if important_alerts::handle_hotkey(app, shortcut) { return; }
                     let state = app.state::<HotkeyState>();
                     let is_active = state
                         .0
@@ -922,6 +924,7 @@ pub fn run() {
             }
 
             group_hotkeys::restore(app.handle(), &db);
+            important_alerts::restore_hotkey(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -982,6 +985,8 @@ pub fn run() {
             commands::model_follow::research_follow_delete,
             commands::model_follow::research_follow_refresh,
             commands::model_follow::research_follow_order,
+            commands::model_follow::research_follow_star,
+            commands::model_follow::research_follow_clear_star,
             news::get_news_archive,
             daily_brief::get_daily_briefs,
             commands::agent::inspect_agent_task,
@@ -1030,6 +1035,9 @@ pub fn run() {
             notifications::clear_notification_history,
             notifications::test_notification,
             important_alerts::get_important_alerts,
+            important_alerts::toggle_important_alerts,
+            important_alerts::show_important_alerts,
+            important_alerts::set_important_alerts_hotkey,
             important_alerts::dismiss_important_alert,
             important_alerts::view_important_alert,
             news::analyze_archived_news,

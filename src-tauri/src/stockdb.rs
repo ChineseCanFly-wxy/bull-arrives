@@ -879,6 +879,19 @@ impl StockDbManager {
             if let Some(result) = result {
                 return result.map_err(|error|format!("{error}；更新日志：{}",log_path.display()));
             }
+            // Legacy tools may finish syncing and keep their console open.
+            // Close only this managed updater after its explicit completion
+            // message; the restored service still verifies the actual data.
+            if !cli && legacy_updater_finished(&log_path) {
+                let mut runtime = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(job) = runtime.updater_job.take() { job.terminate(); }
+                if let Some(mut child) = runtime.updater_child.take() {
+                    let _ = child.kill();
+                    child.wait().map_err(|e| format!("关闭已完成的更新程序失败：{e}"))?;
+                }
+                log::info!("[stockdb] 更新程序报告同步完成，已自动关闭；接下来恢复服务并核验日期");
+                return Ok(());
+            }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
     }
@@ -914,6 +927,26 @@ impl StockDbManager {
 
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+fn legacy_updater_finished(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else { return false; };
+    let Ok(size) = file.metadata().map(|m| m.len()) else { return false; };
+    if file.seek(SeekFrom::Start(size.saturating_sub(64 * 1024))).is_err() { return false; }
+    let mut bytes = Vec::new();
+    if file.take(64 * 1024).read_to_end(&mut bytes).is_err() { return false; }
+    let utf8 = String::from_utf8_lossy(&bytes);
+    let (gbk, _, _) = encoding_rs::GBK.decode(&bytes);
+    [utf8.as_ref(), gbk.as_ref()].iter().any(|text| text.lines().any(|line| {
+        let line = line.trim().trim_matches(|c: char| c == '=' || c == '*' || c.is_whitespace());
+        if line == "[run] waiting for the next scheduled sync" { return true; }
+        let explicit = ["数据更新完成", "全部数据更新完成", "数据同步完成", "全部数据同步完成", "同步完成", "更新完成", "数据更新成功"]
+            .iter().any(|marker| line.starts_with(marker));
+        explicit && !["失败", "错误", "未完成", "error", "failed"].iter().any(|word| line.contains(word))
+            && (line.ends_with("完成") || line.ends_with("完成！") || line.ends_with("完成。") || line.ends_with("成功")
+                || ["回车", "任意键", "退出", "press enter", "Press Enter", "Press any"].iter().any(|word| line.contains(word)))
+    }))
 }
 
 fn canonical_file(path: &Path, expected_name: &str) -> Result<PathBuf, String> {
@@ -1098,7 +1131,6 @@ mod local_service {
     #[link(name = "kernel32")]
     extern "system" {
         fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> HANDLE;
-        fn GetSystemDirectoryW(buffer: *mut u16, size: u32) -> u32;
         fn ProcessIdToSessionId(pid: u32, session: *mut u32) -> BOOL;
         fn Process32FirstW(snapshot: HANDLE, entry: *mut ProcessEntry) -> BOOL;
         fn Process32NextW(snapshot: HANDLE, entry: *mut ProcessEntry) -> BOOL;
@@ -1129,14 +1161,6 @@ mod local_service {
         unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info) }
             .map_err(|e| format!("无法核对引擎文件身份：{e}"))?;
         Ok(FileId(info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow))
-    }
-
-    fn system_console_host(path: &Path) -> Result<bool, String> {
-        let mut directory = vec![0u16; 32768];
-        let length = unsafe { GetSystemDirectoryW(directory.as_mut_ptr(), directory.len() as u32) } as usize;
-        if length == 0 || length >= directory.len() { return Err(error("无法核对 Windows 控制台宿主身份")); }
-        let console = PathBuf::from(OsString::from_wide(&directory[..length])).join("conhost.exe");
-        Ok(file_id(path)? == file_id(&console)?)
     }
 
     struct VerifiedProcess {
@@ -1271,14 +1295,14 @@ mod local_service {
             let parent_created = processes[index].created;
             for (&pid, &parent) in &parents {
                 if parent != parent_pid || processes.iter().any(|p| p.pid == pid) { continue; }
-                let child = VerifiedProcess::open(pid, false)?;
+                let Ok(child) = VerifiedProcess::open(pid, false) else { continue; };
                 if child.created < parent_created { continue; } // Reused parent PID.
                 if file_id(&child.image)? != selected {
-                    // Windows attaches its console host even to hidden console
-                    // processes. It does not hold StockDB data and is never a
-                    // termination target. Require the actual system file ID.
-                    if system_console_host(&child.image)? { continue; }
-                    return Err(format!("StockDB 进程树的子进程 PID {pid}（{}）与所选引擎不匹配，未停止任何进程", child.image.display()));
+                    // StockDB may open Edge or its documentation page. These
+                    // processes are outside the engine family and are never
+                    // adopted, traversed or stopped. Listener/root identity
+                    // checks above still reject unrelated port occupants.
+                    continue;
                 }
                 let managed = VerifiedProcess::open(pid, true)?;
                 if managed.created != child.created || file_id(&managed.image)? != selected {
@@ -1570,6 +1594,17 @@ mod local_service {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_updater_closes_only_after_explicit_complete_output() {
+        let path = std::env::temp_dir().join(format!("updater-complete-{}.log", uuid::Uuid::new_v4()));
+        for text in ["v0.3.5\n", "进度 100%\n", "文件更新完成：part1\n", "数据更新完成，但部分失败\n"] {
+            std::fs::write(&path, text).unwrap(); assert!(!legacy_updater_finished(&path));
+        }
+        for text in ["数据更新完成\n", "同步完成，请按任意键退出\n", "[run] waiting for the next scheduled sync\n"] {
+            std::fs::write(&path, text).unwrap(); assert!(legacy_updater_finished(&path));
+        }
+        std::fs::remove_file(path).unwrap();
+    }
 
     struct MockUpdateService {
         events: Arc<Mutex<Vec<&'static str>>>,
@@ -1704,6 +1739,7 @@ mod tests {
         use std::io::Write;
         let Ok(address) = std::env::var("BULL_STOCKDB_TEST_ADDRESS") else { return; };
         let role = std::env::var("BULL_STOCKDB_TEST_ROLE").unwrap();
+        if role == "browser" { loop { std::thread::sleep(Duration::from_secs(1)); } }
         if role == "supervisor" {
             let mut command = Command::new(std::env::current_exe().unwrap());
             command.args(["stockdb::tests::isolated_service_process", "--exact", "--ignored", "--nocapture", "--test-threads=1"])
@@ -1714,6 +1750,15 @@ mod tests {
             return;
         }
         let listener = std::net::TcpListener::bind(&address).unwrap();
+        if std::env::var_os("BULL_STOCKDB_BROWSER_FIXTURE").is_some() {
+            let browser = std::env::current_exe().unwrap().with_file_name("browser-fixture.exe");
+            let mut command = Command::new(browser);
+            command.args(["stockdb::tests::isolated_service_process", "--exact", "--ignored", "--nocapture", "--test-threads=1"])
+                .env("BULL_STOCKDB_TEST_ROLE", "browser").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+            hide_window(&mut command);
+            let child = command.spawn().unwrap();
+            std::fs::write("browser-pid.txt", child.id().to_string()).unwrap();
+        }
         for stream in listener.incoming() {
             let mut stream = stream.unwrap();
             let report = format!("{}\n{}\n{}", std::env::current_dir().unwrap().display(),
@@ -1736,10 +1781,14 @@ mod tests {
     #[cfg(windows)]
     impl IsolatedService {
         fn start(supervisor: bool) -> Self {
+            Self::start_with_browser(supervisor, false)
+        }
+        fn start_with_browser(supervisor: bool, browser: bool) -> Self {
             let root = std::env::temp_dir().join(format!("bull-stockdb-isolated-{}", uuid::Uuid::new_v4())).join("服务 参数");
             std::fs::create_dir_all(&root).unwrap();
             let engine = root.join(ENGINE_FILE);
             std::fs::copy(std::env::current_exe().unwrap(), &engine).unwrap();
+            if browser { std::fs::copy(&engine, root.join("browser-fixture.exe")).unwrap(); }
             let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let address = socket.local_addr().unwrap();
             drop(socket);
@@ -1752,6 +1801,7 @@ mod tests {
                 .env("BULL_STOCKDB_TEST_VALUE", "参数 空格 custom=keep")
                 .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
             hide_window(&mut command);
+            if browser { command.env("BULL_STOCKDB_BROWSER_FIXTURE", "1"); }
             let mut child = command.spawn().unwrap();
             let job = crate::agent::ProcessJob::assign(&child).unwrap_or_else(|error| {
                 let _ = child.kill(); let _ = child.wait();
@@ -1861,6 +1911,23 @@ fn isolated_report(address: &std::net::SocketAddr) -> String {
         let error = local_service::capture(&engine, &fixture.endpoint, None).err().unwrap();
         assert!(error.contains("不匹配"));
         assert!(fixture.report().contains("custom=keep"));
+    }
+    #[cfg(windows)]
+    #[test]
+    fn unrelated_browser_child_is_never_adopted_or_stopped() {
+        use windows::Win32::System::Threading::{OpenProcess, GetExitCodeProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        use windows::Win32::Foundation::CloseHandle;
+        let fixture = IsolatedService::start_with_browser(false, true);
+        let browser: u32 = std::fs::read_to_string(fixture.root.join("browser-pid.txt")).unwrap().parse().unwrap();
+        let pid = fixture.child.id();
+        let mut selected = local_service::capture(&fixture.engine, &fixture.endpoint, Some(pid)).unwrap().unwrap();
+        selected.revalidate(&fixture.endpoint).unwrap();
+        selected.stop().unwrap();
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, browser).unwrap();
+            let mut exit = 0; GetExitCodeProcess(handle, &mut exit).unwrap();
+            CloseHandle(handle).unwrap(); assert_eq!(exit, 259, "unrelated browser was terminated");
+        }
     }
 
     #[cfg(windows)]

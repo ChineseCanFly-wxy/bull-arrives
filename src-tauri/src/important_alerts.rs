@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::VecDeque, sync::Mutex};
 use tauri::{Emitter, Manager};
+use std::sync::Arc;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 const LIMIT: usize = 100;
 pub const PENDING_KEY: &str = "important_alerts_pending";
@@ -9,6 +11,11 @@ pub const PENDING_KEY: &str = "important_alerts_pending";
 pub struct Snapshot { version: u64, pub entries: VecDeque<Value> }
 #[derive(Default)]
 pub struct ImportantAlerts(Mutex<Snapshot>);
+#[derive(Default)]
+pub struct ImportantAlertHotkey(pub Mutex<Option<Shortcut>>);
+const VISIBLE_KEY: &str = "important_alerts_visible";
+const HOTKEY_KEY: &str = "important_alerts_hotkey";
+pub const DEFAULT_HOTKEY: &str = "Alt+W";
 
 fn insert(state: &mut Snapshot, payload: Value) -> Result<(), String> {
     if state.entries.iter().any(|row| row["id"] == payload["id"]) { return Ok(()); }
@@ -24,12 +31,12 @@ fn broadcast(app: &tauri::AppHandle) -> Result<(), String> {
     let handle = app.clone();
     // 在窗口线程读取最新状态，避免并发确认与新提醒把窗口错误隐藏。
     app.run_on_main_thread(move || {
-        let state = get_important_alerts(handle.clone());
         let db = handle.state::<std::sync::Arc<crate::db::Database>>();
         let enabled = db.get_setting("important_alerts_enabled").ok().flatten().as_deref() != Some("0");
         if let Some(window) = handle.get_webview_window("important-alerts") {
-            let visible = enabled && !state.entries.is_empty();
-            let result = if visible { window.show() } else { window.hide() };
+            let visible = enabled && db.get_setting(VISIBLE_KEY).ok().flatten().as_deref() != Some("0");
+            let currently_visible = window.is_visible().unwrap_or(false);
+            let result = if visible == currently_visible { Ok(()) } else if visible { window.show() } else { window.hide() };
             if let Err(error) = result { log::warn!("重要提醒窗口显示失败：{error}"); }
             if visible {
                 crate::apply_tool_window_style(&window);
@@ -91,6 +98,59 @@ pub fn view_important_alert(app: tauri::AppHandle, id: String) -> Result<(), Str
 pub fn refresh_visibility(app: &tauri::AppHandle, enabled: bool) -> Result<(), String> {
     if enabled { broadcast(app) }
     else { app.get_webview_window("important-alerts").ok_or("重要提醒窗口不可用")?.hide().map_err(|e| e.to_string()) }
+}
+
+#[tauri::command]
+pub fn toggle_important_alerts(app: tauri::AppHandle) -> Result<(), String> {
+    let db = app.state::<Arc<crate::db::Database>>();
+    if db.get_setting("important_alerts_enabled").map_err(|e| e.to_string())?.as_deref() == Some("0") {
+        return Err("请先在悬浮提醒设置中开启重要提醒窗口".into());
+    }
+    let window = app.get_webview_window("important-alerts").ok_or("重要提醒窗口不可用")?;
+    let visible = window.is_visible().map_err(|e| e.to_string())?;
+    db.set_setting(VISIBLE_KEY, if visible { "0" } else { "1" }).map_err(|e| e.to_string())?;
+    broadcast(&app)
+}
+#[tauri::command]
+pub fn show_important_alerts(app: tauri::AppHandle) -> Result<(), String> {
+    app.state::<Arc<crate::db::Database>>().set_setting(VISIBLE_KEY, "1").map_err(|e| e.to_string())?;
+    broadcast(&app)
+}
+#[tauri::command]
+pub fn set_important_alerts_hotkey(app: tauri::AppHandle, hotkey: String) -> Result<(), String> {
+    let candidate = hotkey.parse::<Shortcut>().map_err(|e| format!("快捷键无效：{e}"))?;
+    let state = app.state::<ImportantAlertHotkey>();
+    let mut current = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let db = app.state::<Arc<crate::db::Database>>();
+    if current.as_ref() == Some(&candidate) { return db.set_setting(HOTKEY_KEY, &hotkey).map_err(|e| e.to_string()); }
+    let shortcuts = app.global_shortcut();
+    if shortcuts.is_registered(candidate) { return Err("该快捷键已被行情窗口、分组或其他功能使用".into()); }
+    let previous = db.get_setting(HOTKEY_KEY).map_err(|e| e.to_string())?;
+    shortcuts.register(candidate).map_err(|e| format!("快捷键被占用，原设置保留：{e}"))?;
+    if let Err(error) = db.set_setting(HOTKEY_KEY, &hotkey) {
+        let _ = shortcuts.unregister(candidate);
+        return Err(error.to_string());
+    }
+    if let Some(old) = *current {
+        if let Err(error) = shortcuts.unregister(old) {
+            let _ = db.set_setting(HOTKEY_KEY, previous.as_deref().unwrap_or(DEFAULT_HOTKEY));
+            let _ = shortcuts.unregister(candidate);
+            return Err(format!("原快捷键注销失败，未切换：{error}"));
+        }
+    }
+    *current = Some(candidate);
+    Ok(())
+}
+pub fn restore_hotkey(app: &tauri::AppHandle) {
+    let db = app.state::<Arc<crate::db::Database>>();
+    let hotkey = db.get_setting(HOTKEY_KEY).ok().flatten().unwrap_or_else(|| DEFAULT_HOTKEY.into());
+    if let Err(error) = set_important_alerts_hotkey(app.clone(), hotkey) { log::warn!("重要提醒快捷键注册失败：{error}"); }
+}
+pub fn handle_hotkey(app: &tauri::AppHandle, shortcut: &Shortcut) -> bool {
+    let matches = app.state::<ImportantAlertHotkey>().0.lock().unwrap_or_else(|e| e.into_inner()).as_ref() == Some(shortcut);
+    if !matches { return false; }
+    if let Err(error) = toggle_important_alerts(app.clone()) { log::warn!("重要提醒窗口切换失败：{error}"); }
+    true
 }
 
 #[cfg(test)]
