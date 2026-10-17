@@ -78,6 +78,11 @@ let inFlight = false;
 const candidates = computed(() => [...(account.value?.candidates ?? [])].sort((left, right) => left.rank - right.rank));
 const currentNewOrderIds = computed(() => account.value ? newOrderIds.value[account.value.account_id] ?? [] : []);
 const activeOrder = (order: FollowOrder) => order.status === 'awaiting_confirmation' || order.status === 'pending';
+const occupiedSlots = computed(() => {
+  const view = account.value;
+  if (!view) return 0;
+  return view.occupied_positions ?? new Set([...view.positions.map(p => p.symbol), ...view.orders.filter(o => activeOrder(o) && o.side === 'buy').map(o => o.symbol)]).size;
+});
 const latestFirst = (left: FollowOrder, right: FollowOrder) =>
   (right.filled_at || right.created_at).localeCompare(left.filled_at || left.created_at) || right.id - left.id;
 const orderGroups = computed(() => {
@@ -312,6 +317,8 @@ defineExpose({ refresh: readAccounts });
       <p v-if="account.valuation_note" class="follow-muted">{{ account.valuation_note }}</p>
 
       <p v-if="signalSchedule" class="follow-muted follow-signal-schedule"><b>{{signalSchedule.label}}</b> · {{signalSchedule.note}}</p>
+      <p class="follow-muted follow-reminder-schedule">交易日 09:28 预告当日模型买卖计划，委托提交后再提示待成交，实际成交单独确认。请保持程序运行、模型数据就绪并开启“模拟买卖”提醒。</p>
+      <p class="follow-muted follow-capacity-note">当前上限 {{account.max_positions}} 只<template v-if="account.recommended_max_positions"> · 模型推荐 {{account.recommended_max_positions}} 只</template>；持仓和待买委托共占 {{occupiedSlots}} 个名额。满额继续按原模型持有，不自动扩仓或换股；卖出释放名额后，仍须在 09:30–09:35 内满足入场条件。</p>
       <div class="follow-daily-controls" aria-label="当前账户控制">
         <button type="button" class="follow-trading-switch" :disabled="busy || !active" @click="toggle">{{ account.enabled ? '暂停此账户买卖' : '恢复此账户买卖' }}</button>
         <button type="button" class="follow-account-details" @click="openAccount(account.account_id)">账户明细与配置</button>
@@ -329,22 +336,26 @@ defineExpose({ refresh: readAccounts });
         <div class="follow-position-grid">
           <article v-for="position in account.positions" :key="position.symbol" class="follow-position">
             <b>{{ position.name || position.symbol }} <span>{{ position.symbol }}</span></b>
+            <div class="follow-position-profit" :class="{up:(position.profit_cny ?? 0)>0,down:(position.profit_cny ?? 0)<0}"><span>持仓盈亏<strong>{{ money(position.profit_cny) }}</strong></span><span>收益率<strong>{{ percent(position.return_pct) }}</strong></span></div>
             <dl class="follow-row-data">
+              <div><dt>持仓市值</dt><dd>{{ money(position.market_value_cny) }}</dd></div>
               <div><dt>持有数量</dt><dd>{{ position.quantity }} 股</dd></div>
               <div><dt>T+1 可卖量</dt><dd>{{ position.available_quantity }} 股</dd></div>
-              <div><dt>成本价 / 股</dt><dd>{{ money(position.cost_cny) }}</dd></div>
+              <div><dt>含费成本 / 股</dt><dd>{{ money(position.cost_cny) }}</dd></div>
               <div><dt>估值价格</dt><dd>{{ money(position.mark_cny) }}</dd></div>
               <div v-if="position.mark_at"><dt>估值数据时间</dt><dd>{{ timestamp(position.mark_at) }}</dd></div>
               <div><dt>入场日期</dt><dd>{{ timestamp(position.entry_date) }}</dd></div>
               <div><dt>已持交易日</dt><dd>{{ position.holding_sessions }} 日</dd></div>
             </dl>
+            <p class="follow-muted">最长计划持有 {{account.execution.holding_days}} 个交易日；可因原模型风险条件提前卖出。<template v-if="position.exit_reference_cny != null">日线退出参考线 {{money(position.exit_reference_cny)}}，按已完成日收盘确认。</template>无固定止盈目标价。</p>
             <p v-if="position.exit_reason" class="follow-muted">计划退出原因：{{ position.exit_reason }}</p>
           </article>
         </div>
+        <p v-if="account.positions.length" class="follow-muted">持仓盈亏按标明时间的估值计算，成本含买入费用，尚未扣除未来卖出费用；已实现净盈亏可在研究中心“历史盈亏”查询。</p>
       </section>
 
       <details v-for="group in orderGroups" :key="group.key" class="follow-order-group" :open="group.key!=='closed'"><summary>{{group.title}} · {{group.total}} 笔{{ group.total > group.rows.length ? ' · 显示最近10笔' : '' }}</summary><section class="follow-section" :aria-label="group.title">
-        <p v-if="group.key === 'active'" class="follow-muted">信号表示模型候选，委托已提交表示等待成交；只有“已成交”才计入持仓与收益。自动买卖交易提醒在实际成交后发送，显示股数与成交价；关闭提醒仍继续交易。</p>
+        <p v-if="group.key === 'active'" class="follow-muted">09:28 先预告模型计划，委托提交时提醒待成交；只有“已成交”才计入持仓与收益，成交后另发实际股数与价格。盘前价格和数量为参考，开盘复核可能少买或不买；关闭提醒仍继续交易。</p>
         <p v-if="!group.rows.length" class="follow-empty">{{ group.key === 'active' ? '当前没有待处理委托。' : '暂无模拟成交。' }}</p>
         <article v-for="order in group.rows" :key="order.id" class="follow-order" :class="{ 'is-new': currentNewOrderIds.includes(order.id) }">
           <header><b>{{ order.side === 'buy' ? '买入' : '卖出' }} {{ order.name || order.symbol }} · {{ order.quantity }} 股</b><span>{{ order.symbol }} · #{{ order.id }}</span><span class="follow-badge" :class="{ 'needs-confirmation': order.status === 'awaiting_confirmation' }">{{ statusName(order.status) }}</span><strong v-if="currentNewOrderIds.includes(order.id)" class="follow-new">新委托</strong></header>
@@ -490,6 +501,7 @@ defineExpose({ refresh: readAccounts });
 </template>
 
 <style scoped>
+.follow-position-profit{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:10px 0;font-variant-numeric:tabular-nums}.follow-position-profit span{display:grid;font-size:12px}.follow-position-profit strong{font-size:19px;line-height:1.5}.follow-position-profit.up{color:var(--color-up)}.follow-position-profit.down{color:var(--color-down)}
 .model-follow{width:100%;min-width:0;display:grid;gap:12px;padding:16px;border:1px solid var(--color-border-0);border-radius:12px;background:var(--color-surface-1);color:var(--color-text-primary);font-size:13px;line-height:1.7;overflow-wrap:anywhere}
 .model-follow *, .model-follow *::before, .model-follow *::after{box-sizing:border-box;min-width:0}
 .model-follow h2,.model-follow h3,.model-follow p,.model-follow dl{margin:0}

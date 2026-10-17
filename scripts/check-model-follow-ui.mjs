@@ -50,6 +50,7 @@ function installMock(catalog, evidence, timing, commandArgs) {
     const per=admitted?10:relative?6:8,total=admitted?50:account.max_positions*per;
     account.allocation_policy=admitted?'rank5_equal50':relative?'relative6':'baseline8';
     account.automatic_execution=true;
+    account.recommended_max_positions=model?.recommendation.default_max_positions??3;
     account.execution={position_pct:per,total_entry_pct:total,holding_days:model?.recommendation.execution.holding_sessions??20,max_gap_pct:model?.recommendation.execution.max_gap_pct??4,buy_window:'09:30–09:35（北京时间）',fee_note:'隔离费用样例，实际费用以服务端成交记录为准。',allocation_note:'隔离账户：按本模型与数量的配置，单票 '+per+'%、总入场预算 '+total+'%。'};
     const timingModel=timing.models[account.model_id], timingConfig=timingModel?.active_configuration;
     const match=timingConfig?.max_positions===account.max_positions&&timingConfig?.allocation_policy===account.allocation_policy;
@@ -80,7 +81,7 @@ function installMock(catalog, evidence, timing, commandArgs) {
     if (!order || order.status !== 'pending') throw Error('Mock contract: only pending can receive fill');
     Object.assign(order, { status: 'filled', filled_at: '2026-09-21T01:31:16Z', filled_price_cny: 10, fee_cny: 5, quote_at: '2026-09-21T01:31:16Z' });
     account.cash_cny -= order.quantity * 10 + 5;
-    account.positions.push({ symbol: order.symbol, name: order.name, quantity: order.quantity, available_quantity: 0, cost_cny: 10 + 5 / order.quantity, mark_cny: 10, mark_at: '2026-09-21T01:31:16Z', entry_date: '20260921', holding_sessions: 0, exit_reason: null });
+    account.positions.push({ symbol: order.symbol, name: order.name, quantity: order.quantity, available_quantity: 0, cost_cny: 10 + 5 / order.quantity, cost_basis_cny:order.quantity*10+5, market_value_cny:order.quantity*10, profit_cny:-5, return_pct:-5/(order.quantity*10+5)*100, exit_reference_cny:9.4, mark_cny: 10, mark_at: '2026-09-21T01:31:16Z', entry_date: '20260921', holding_sessions: 0, exit_reason: null });
     account.equity_cny = account.cash_cny + order.quantity * 10;
     account.net_return_pct = (account.equity_cny / account.initial_cash_cny - 1) * 100;
     account.performance.filled_buys += 1;
@@ -326,6 +327,17 @@ try {
    assert.match(await t.evaluate('document.querySelector(".follow-fill-price").innerText'),/800 股/);
    assert.match(await t.evaluate('document.querySelector(".follow-fill-price").innerText'),/2026-09-21 09:31:16/);
    assert.match(await t.evaluate('document.querySelector(".follow-order").innerText'),/待撮合/);
+ });
+ await check('Holding cards show fee-inclusive PnL and explain model limits and preopen reminders',async()=>{
+   const text=await t.evaluate('document.querySelector(".follow-position").innerText');
+   assert.match(text,/持仓盈亏[\s\S]*-5\.00[\s\S]*收益率[\s\S]*-0\.06%/);
+   assert.match(text,/持仓市值[\s\S]*8,000\.00/);
+   assert.match(text,/3?日线退出参考线[\s\S]*9\.40[\s\S]*按已完成日收盘确认/);
+   assert.match(await t.evaluate('document.querySelector(".follow-reminder-schedule").innerText'),/09:28.*预告.*待成交.*成交/);
+   assert.match(await t.evaluate('document.querySelector(".follow-capacity-note").innerText'),/模型推荐.*满额.*不自动扩仓或换股/);
+   await t.evaluate('window.__followMock.accounts[0].positions[0].profit_cny=null;window.__followMock.accounts[0].positions[0].return_pct=null');await refresh();
+   assert.match(await t.evaluate('document.querySelector(".follow-position-profit").innerText'),/持仓盈亏[\s\S]*--[\s\S]*收益率[\s\S]*--/);
+   await t.evaluate('window.__followMock.accounts[0].positions[0].profit_cny=-5;window.__followMock.accounts[0].positions[0].return_pct=-5/8005*100');await refresh();
  });
  await check('Per-account pause submits the real camelCase IPC and does not alter other accounts',async()=>{
    const before=await t.evaluate('window.__followMock.accounts[0].cash_cny');await click('.follow-trading-switch');await t.wait('document.querySelector(".follow-trading-switch").innerText.includes("恢复")');

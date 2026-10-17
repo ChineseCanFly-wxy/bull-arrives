@@ -1,0 +1,1886 @@
+{
+  "schema": "retrospective-profit-exit-summary-v1",
+  "recorded_on": "2026-10-17",
+  "history": [
+    20200101,
+    20260930
+  ],
+  "history_previously_observed": true,
+  "runtime_policy_changed": false,
+  "production_admission": false,
+  "configuration_boundary": "v3.0.6 frozen signals and budgets; v3.0.7 default-off STAR filter was not applied. The study does not certify v3.0.7 default-filter account returns.",
+  "protocol": {
+    "schema": "frozen-six-model-profit-exit-verification-v1",
+    "registered_local_date": "2026-10-17",
+    "question": "Does adding profit-taking improve each current frozen model while reducing profit giveback?",
+    "history": {
+      "start": 20200101,
+      "end": 20260930,
+      "selection": [
+        20200101,
+        20211231
+      ],
+      "evaluation": [
+        20220101,
+        20260930
+      ],
+      "all_history_previously_observed": true
+    },
+    "unchanged": "Annual frozen predictions and thresholds; own-score ranking; current entry filters, slots and allocation; initial cash100000; original entry-fixed3ATR risk exit,20-session inclusive deadline,ST/unknown,T+1,lot/cash/fees/limit/corporate-action constraints.",
+    "models": {
+      "breadth22_h20": {
+        "name": "技术＋市场广度",
+        "slots": 2,
+        "position_pct": 8,
+        "entry": "baseline"
+      },
+      "index26_h20": {
+        "name": "技术＋广度＋大盘",
+        "slots": 3,
+        "position_pct": 8,
+        "entry": "index_support"
+      },
+      "breadth22_excess_csi20": {
+        "name": "相对大盘超额",
+        "slots": 3,
+        "position_pct": 6,
+        "entry": "baseline"
+      },
+      "breadth22_rank20": {
+        "name": "全市场强弱排序",
+        "slots": 5,
+        "position_pct": 10,
+        "entry": "baseline",
+        "total_budget_pct": 50
+      },
+      "breadth22_open_downside20": {
+        "name": "下行惩罚收益",
+        "slots": 2,
+        "position_pct": 8,
+        "entry": "baseline"
+      },
+      "mean_confirmed_by_median": {
+        "name": "均值＋中位数确认",
+        "slots": 2,
+        "position_pct": 8,
+        "entry": "baseline"
+      }
+    },
+    "exit_policies": {
+      "original": "Current deadline/ST/entry-minus3ATR stop; no profit exit.",
+      "fixed_profit_3atr": "Completed adjusted close>=actual adjusted entry fill+3entryATR requests full exit; original3ATR stop retained.",
+      "trailing_profit_2_1_5atr": "Only completed adjusted closes since actual entry may form the peak; peak>=entry+2entryATR arms protection, close<=peak-1.5entryATR requests full exit; original3ATR stop retained. Never use pre-entry signal close as a held peak."
+    },
+    "exit_execution": "Decide from completed D close, execute earliest tradable D+1 open proxy after T+1; new profit requests persist if execution blocked. Deadline then ST then original stop retain priority. No intraday high/low touch fills, same-day sell, perfect limit fill or forced deadline liquidation.",
+    "scenarios": {
+      "base": [
+        20200101,
+        20260930
+      ],
+      "double": [
+        20200101,
+        20260930
+      ],
+      "delay": [
+        20200101,
+        20260930
+      ],
+      "early": [
+        20200101,
+        20211231
+      ],
+      "middle": [
+        20220101,
+        20241231
+      ],
+      "late": [
+        20250101,
+        20260930
+      ],
+      "annual_empty_cash_starts": [
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025,
+        2026
+      ]
+    },
+    "cost_basis": "Reuse historical date-dependent commission, minimum fee, transfer fee, stamp tax and10bp per-side proxy slippage; double scenario doubles all costs. Report proxy mismatch to current live fees explicitly.",
+    "delay": "One-session delay of frozen qualification/ranking and entry-condition source date, while current completed eligibility and tradability still gate entry; exit observes latest completed held day. Same for controls and candidates.",
+    "selection": "Select one of the3 exits by2020-2021 continuous net_return_pct-2*max_drawdown_pct with>=20completed cycles; original wins ties. Do not change parameters or switch to a later-history winner.",
+    "acceptance": [
+      "Selected exit differs from original",
+      "All3 independent era resets positive and>=50later completed cycles",
+      "Whole and later continuous returns positive; either higher return with DD<=1.1baseline+0.5pp, or DD<=0.8baseline while retaining>=0.8baseline CAGR",
+      "Double-cost and delayed-signal later returns positive and DD<=1.1same-scenario baseline+0.5pp",
+      ">=3of5later continuous-year utility improvements and>=3of5independent annual-start utility improvements",
+      "Later mean adjusted-close peak-to-exit price giveback lower, and fraction of positive-peak cycles ending net loss no higher"
+    ],
+    "validation": [
+      "SHA-bound full historical score caches, frozen inputs and current config",
+      "Reproduce all6current base ledgers exactly on curve/orders/cycles/unclosed",
+      "Independent cash/share/fee/action reconstruction of every account",
+      "Independent first-trigger/earliest-tradable sell audit and deliberate fault detection",
+      "Synthetic boundary,blocked,T+1 and future-prefix invariance",
+      "Read-only source SHA before/after"
+    ],
+    "limitations": "All history observed; this is a finite retrospective comparison, not a fresh holdout or live admission. Daily-close signals cannot verify intraday stops or09:28/09:30depth fills. Verified corporate-action overlay used; unresolved claims,stale marks and locked shares remain explicit. No retraining,network,StockDB/service/user DB writes,app policy/default edits,EXE replacement or release."
+  },
+  "decisions": {
+    "breadth22_h20": {
+      "early_selected": "original",
+      "checks": {
+        "early_selected_nonbaseline": false,
+        "positive_era_resets": true,
+        "50_later_cycles": true,
+        "overall_return_risk": false,
+        "later_return_risk": false,
+        "double": true,
+        "delay": true,
+        "3of5_continuous_years": false,
+        "3of5_reset_years": false,
+        "giveback": false
+      },
+      "passed": false,
+      "continuous_improved_years": [],
+      "reset_improved_years": []
+    },
+    "index26_h20": {
+      "early_selected": "original",
+      "checks": {
+        "early_selected_nonbaseline": false,
+        "positive_era_resets": true,
+        "50_later_cycles": true,
+        "overall_return_risk": false,
+        "later_return_risk": false,
+        "double": true,
+        "delay": true,
+        "3of5_continuous_years": false,
+        "3of5_reset_years": false,
+        "giveback": false
+      },
+      "passed": false,
+      "continuous_improved_years": [],
+      "reset_improved_years": []
+    },
+    "breadth22_excess_csi20": {
+      "early_selected": "fixed_profit_3atr",
+      "checks": {
+        "early_selected_nonbaseline": true,
+        "positive_era_resets": false,
+        "50_later_cycles": true,
+        "overall_return_risk": false,
+        "later_return_risk": false,
+        "double": false,
+        "delay": false,
+        "3of5_continuous_years": false,
+        "3of5_reset_years": true,
+        "giveback": false
+      },
+      "passed": false,
+      "continuous_improved_years": [
+        2024,
+        2026
+      ],
+      "reset_improved_years": [
+        2024,
+        2025,
+        2026
+      ]
+    },
+    "breadth22_rank20": {
+      "early_selected": "original",
+      "checks": {
+        "early_selected_nonbaseline": false,
+        "positive_era_resets": true,
+        "50_later_cycles": true,
+        "overall_return_risk": false,
+        "later_return_risk": false,
+        "double": true,
+        "delay": true,
+        "3of5_continuous_years": false,
+        "3of5_reset_years": false,
+        "giveback": false
+      },
+      "passed": false,
+      "continuous_improved_years": [],
+      "reset_improved_years": []
+    },
+    "breadth22_open_downside20": {
+      "early_selected": "original",
+      "checks": {
+        "early_selected_nonbaseline": false,
+        "positive_era_resets": true,
+        "50_later_cycles": true,
+        "overall_return_risk": false,
+        "later_return_risk": false,
+        "double": true,
+        "delay": true,
+        "3of5_continuous_years": false,
+        "3of5_reset_years": false,
+        "giveback": false
+      },
+      "passed": false,
+      "continuous_improved_years": [],
+      "reset_improved_years": []
+    },
+    "mean_confirmed_by_median": {
+      "early_selected": "trailing_profit_2_1_5atr",
+      "checks": {
+        "early_selected_nonbaseline": true,
+        "positive_era_resets": true,
+        "50_later_cycles": true,
+        "overall_return_risk": false,
+        "later_return_risk": false,
+        "double": false,
+        "delay": true,
+        "3of5_continuous_years": false,
+        "3of5_reset_years": false,
+        "giveback": true
+      },
+      "passed": false,
+      "continuous_improved_years": [
+        2024,
+        2026
+      ],
+      "reset_improved_years": [
+        2024,
+        2026
+      ]
+    }
+  },
+  "models": {
+    "breadth22_h20": {
+      "original": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 26.84222759999999,
+              "drawdown_pct": 6.1667492045231365,
+              "cycles": 176
+            },
+            "later": {
+              "return_pct": 22.712654237926078,
+              "drawdown_pct": 6.1667492045231365,
+              "cycles": 125
+            },
+            "early": {
+              "return_pct": 3.3652384000000035,
+              "drawdown_pct": 5.246006203941256,
+              "cycles": 51
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 166,
+              "mean_giveback_pp": 8.34699451553776,
+              "median_giveback_pp": 6.104777505736154,
+              "p90_giveback_pp": 18.922111809514305,
+              "positive_peak_cycles": 144,
+              "positive_peak_to_net_loss": 59,
+              "positive_peak_to_net_loss_pct": 40.97222222222222
+            },
+            "later": {
+              "cycles": 121,
+              "mean_giveback_pp": 8.664810636295465,
+              "median_giveback_pp": 5.9756297825474025,
+              "p90_giveback_pp": 19.038105501281688,
+              "positive_peak_cycles": 104,
+              "positive_peak_to_net_loss": 41,
+              "positive_peak_to_net_loss_pct": 39.42307692307692
+            },
+            "corporate_action_cycles_excluded": 10
+          },
+          "holding_mean": 18.83,
+          "unresolved": {
+            "receivable_cny": 763.28,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 21.20644759999999,
+              "drawdown_pct": 7.090694246810758,
+              "cycles": 176
+            },
+            "later": {
+              "return_pct": 20.046173244784615,
+              "drawdown_pct": 6.6010023479653235,
+              "cycles": 125
+            }
+          },
+          "holding_mean": 18.84,
+          "unresolved": {
+            "receivable_cny": 736.88,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 13.630579199999993,
+              "drawdown_pct": 9.493265734516942,
+              "cycles": 175
+            },
+            "later": {
+              "return_pct": 11.470890008596912,
+              "drawdown_pct": 6.434651199508523,
+              "cycles": 122
+            }
+          },
+          "holding_mean": 18.9,
+          "unresolved": {
+            "receivable_cny": 1496.44,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        }
+      },
+      "fixed_profit_3atr": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 13.756031600000007,
+              "drawdown_pct": 8.50474299564331,
+              "cycles": 190
+            },
+            "later": {
+              "return_pct": 9.440622069266391,
+              "drawdown_pct": 8.50474299564331,
+              "cycles": 135
+            },
+            "early": {
+              "return_pct": 3.9431514999999973,
+              "drawdown_pct": 5.6091599034410855,
+              "cycles": 55
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 179,
+              "mean_giveback_pp": 7.037175496775189,
+              "median_giveback_pp": 5.53283105324718,
+              "p90_giveback_pp": 16.81674364134458,
+              "positive_peak_cycles": 158,
+              "positive_peak_to_net_loss": 76,
+              "positive_peak_to_net_loss_pct": 48.10126582278481
+            },
+            "later": {
+              "cycles": 130,
+              "mean_giveback_pp": 7.194681183912298,
+              "median_giveback_pp": 5.519450238577525,
+              "p90_giveback_pp": 17.34638921287845,
+              "positive_peak_cycles": 115,
+              "positive_peak_to_net_loss": 57,
+              "positive_peak_to_net_loss_pct": 49.56521739130435
+            },
+            "corporate_action_cycles_excluded": 11
+          },
+          "holding_mean": 17.42,
+          "unresolved": {
+            "receivable_cny": 906.56,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": -1.4803710000000025,
+              "drawdown_pct": 12.256958826607855,
+              "cycles": 187
+            },
+            "later": {
+              "return_pct": -1.9365608441283988,
+              "drawdown_pct": 12.256958826607855,
+              "cycles": 132
+            }
+          },
+          "holding_mean": 17.73,
+          "unresolved": {
+            "receivable_cny": 651.68,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 21.999558499999992,
+              "drawdown_pct": 8.971794622516406,
+              "cycles": 196
+            },
+            "later": {
+              "return_pct": 12.280575983216613,
+              "drawdown_pct": 8.971794622516406,
+              "cycles": 135
+            }
+          },
+          "holding_mean": 16.9,
+          "unresolved": {
+            "receivable_cny": 1418.488,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        }
+      },
+      "trailing_profit_2_1_5atr": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 21.478032999999996,
+              "drawdown_pct": 7.261095463558487,
+              "cycles": 185
+            },
+            "later": {
+              "return_pct": 17.661552300055682,
+              "drawdown_pct": 7.261095463558487,
+              "cycles": 133
+            },
+            "early": {
+              "return_pct": 3.243609000000003,
+              "drawdown_pct": 6.546304557498539,
+              "cycles": 52
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 179,
+              "mean_giveback_pp": 8.010750042403464,
+              "median_giveback_pp": 7.019172044392802,
+              "p90_giveback_pp": 15.85898701967157,
+              "positive_peak_cycles": 158,
+              "positive_peak_to_net_loss": 67,
+              "positive_peak_to_net_loss_pct": 42.405063291139236
+            },
+            "later": {
+              "cycles": 129,
+              "mean_giveback_pp": 7.721822359378742,
+              "median_giveback_pp": 7.019172044392802,
+              "p90_giveback_pp": 15.252755465670218,
+              "positive_peak_cycles": 112,
+              "positive_peak_to_net_loss": 43,
+              "positive_peak_to_net_loss_pct": 38.392857142857146
+            },
+            "corporate_action_cycles_excluded": 6
+          },
+          "holding_mean": 17.83,
+          "unresolved": {
+            "receivable_cny": 416.0,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 14.0060152,
+              "drawdown_pct": 7.65799544470076,
+              "cycles": 187
+            },
+            "later": {
+              "return_pct": 12.081029349142014,
+              "drawdown_pct": 7.65799544470076,
+              "cycles": 135
+            }
+          },
+          "holding_mean": 17.67,
+          "unresolved": {
+            "receivable_cny": 865.84,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 24.496514200000007,
+              "drawdown_pct": 9.617458695552461,
+              "cycles": 194
+            },
+            "later": {
+              "return_pct": 26.195929156061524,
+              "drawdown_pct": 6.565829521474365,
+              "cycles": 135
+            }
+          },
+          "holding_mean": 17.04,
+          "unresolved": {
+            "receivable_cny": 725.328,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        }
+      }
+    },
+    "index26_h20": {
+      "original": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 35.5463841,
+              "drawdown_pct": 5.757898281593466,
+              "cycles": 136
+            },
+            "later": {
+              "return_pct": 16.266028078007523,
+              "drawdown_pct": 5.757898281593466,
+              "cycles": 91
+            },
+            "early": {
+              "return_pct": 16.582966100000007,
+              "drawdown_pct": 4.953074473080288,
+              "cycles": 45
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 127,
+              "mean_giveback_pp": 8.744196459486064,
+              "median_giveback_pp": 7.387290494223649,
+              "p90_giveback_pp": 19.750250197705412,
+              "positive_peak_cycles": 107,
+              "positive_peak_to_net_loss": 42,
+              "positive_peak_to_net_loss_pct": 39.25233644859813
+            },
+            "later": {
+              "cycles": 86,
+              "mean_giveback_pp": 8.20891556654824,
+              "median_giveback_pp": 7.045131781949396,
+              "p90_giveback_pp": 19.525925458681975,
+              "positive_peak_cycles": 71,
+              "positive_peak_to_net_loss": 27,
+              "positive_peak_to_net_loss_pct": 38.028169014084504
+            },
+            "corporate_action_cycles_excluded": 9
+          },
+          "holding_mean": 18.6,
+          "unresolved": {
+            "receivable_cny": 705.12,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 27.984576400000005,
+              "drawdown_pct": 6.079909450065957,
+              "cycles": 136
+            },
+            "later": {
+              "return_pct": 13.333266405516596,
+              "drawdown_pct": 6.079909450065957,
+              "cycles": 91
+            }
+          },
+          "holding_mean": 18.51,
+          "unresolved": {
+            "receivable_cny": 661.12,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 33.91507170000001,
+              "drawdown_pct": 5.9503120432383705,
+              "cycles": 138
+            },
+            "later": {
+              "return_pct": 16.686944978961016,
+              "drawdown_pct": 5.9503120432383705,
+              "cycles": 93
+            }
+          },
+          "holding_mean": 18.6,
+          "unresolved": {
+            "receivable_cny": 757.12,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        }
+      },
+      "fixed_profit_3atr": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 36.97975889999998,
+              "drawdown_pct": 4.779445366609558,
+              "cycles": 160
+            },
+            "later": {
+              "return_pct": 25.118040419833143,
+              "drawdown_pct": 4.779445366609558,
+              "cycles": 107
+            },
+            "early": {
+              "return_pct": 9.480422200000005,
+              "drawdown_pct": 3.5875473823887893,
+              "cycles": 53
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 149,
+              "mean_giveback_pp": 5.836088817545915,
+              "median_giveback_pp": 3.7942332667682535,
+              "p90_giveback_pp": 15.865101101900885,
+              "positive_peak_cycles": 127,
+              "positive_peak_to_net_loss": 46,
+              "positive_peak_to_net_loss_pct": 36.22047244094488
+            },
+            "later": {
+              "cycles": 101,
+              "mean_giveback_pp": 5.454054214179484,
+              "median_giveback_pp": 3.897957817114094,
+              "p90_giveback_pp": 13.517877405977083,
+              "positive_peak_cycles": 83,
+              "positive_peak_to_net_loss": 27,
+              "positive_peak_to_net_loss_pct": 32.53012048192771
+            },
+            "corporate_action_cycles_excluded": 11
+          },
+          "holding_mean": 15.19,
+          "unresolved": {
+            "receivable_cny": 681.952,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 33.48383730000002,
+              "drawdown_pct": 5.184186185547423,
+              "cycles": 158
+            },
+            "later": {
+              "return_pct": 23.222432888553858,
+              "drawdown_pct": 5.184186185547423,
+              "cycles": 105
+            }
+          },
+          "holding_mean": 15.32,
+          "unresolved": {
+            "receivable_cny": 681.728,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 34.861445700000004,
+              "drawdown_pct": 6.453599496059392,
+              "cycles": 160
+            },
+            "later": {
+              "return_pct": 14.730490846615684,
+              "drawdown_pct": 6.453599496059392,
+              "cycles": 106
+            }
+          },
+          "holding_mean": 15.86,
+          "unresolved": {
+            "receivable_cny": 706.624,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        }
+      },
+      "trailing_profit_2_1_5atr": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 13.708455799999996,
+              "drawdown_pct": 4.383697278799026,
+              "cycles": 103
+            },
+            "later": {
+              "return_pct": 10.534333744560476,
+              "drawdown_pct": 3.908798388129875,
+              "cycles": 67
+            },
+            "early": {
+              "return_pct": 2.871616399999999,
+              "drawdown_pct": 4.327605410101432,
+              "cycles": 36
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 95,
+              "mean_giveback_pp": 8.579202089788291,
+              "median_giveback_pp": 7.913870164743393,
+              "p90_giveback_pp": 19.004718589154912,
+              "positive_peak_cycles": 80,
+              "positive_peak_to_net_loss": 28,
+              "positive_peak_to_net_loss_pct": 35.0
+            },
+            "later": {
+              "cycles": 63,
+              "mean_giveback_pp": 7.3381933984666725,
+              "median_giveback_pp": 7.553237101614978,
+              "p90_giveback_pp": 12.941522698924711,
+              "positive_peak_cycles": 51,
+              "positive_peak_to_net_loss": 17,
+              "positive_peak_to_net_loss_pct": 33.33333333333333
+            },
+            "corporate_action_cycles_excluded": 8
+          },
+          "holding_mean": 16.2,
+          "unresolved": {
+            "receivable_cny": 800.96,
+            "locked_mark_cny": 276.0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 9.342008999999996,
+              "drawdown_pct": 4.7986904463664715,
+              "cycles": 103
+            },
+            "later": {
+              "return_pct": 8.331163224440164,
+              "drawdown_pct": 4.0790276761570325,
+              "cycles": 67
+            }
+          },
+          "holding_mean": 16.25,
+          "unresolved": {
+            "receivable_cny": 800.96,
+            "locked_mark_cny": 276.0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 2.4109130000000034,
+              "drawdown_pct": 9.163896487144408,
+              "cycles": 116
+            },
+            "later": {
+              "return_pct": 1.4727948804019952,
+              "drawdown_pct": 6.271704999085703,
+              "cycles": 70
+            }
+          },
+          "holding_mean": 16.22,
+          "unresolved": {
+            "receivable_cny": 851.36,
+            "locked_mark_cny": 1212.3999786376953,
+            "stale_positions": 0
+          }
+        }
+      }
+    },
+    "breadth22_excess_csi20": {
+      "original": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 23.5641636,
+              "drawdown_pct": 12.688099253618912,
+              "cycles": 258
+            },
+            "later": {
+              "return_pct": 16.248678002787507,
+              "drawdown_pct": 12.688099253618912,
+              "cycles": 189
+            },
+            "early": {
+              "return_pct": 6.292962400000013,
+              "drawdown_pct": 7.9095022000000075,
+              "cycles": 69
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 241,
+              "mean_giveback_pp": 9.211482325576423,
+              "median_giveback_pp": 7.278652934886338,
+              "p90_giveback_pp": 20.576057221545653,
+              "positive_peak_cycles": 204,
+              "positive_peak_to_net_loss": 93,
+              "positive_peak_to_net_loss_pct": 45.588235294117645
+            },
+            "later": {
+              "cycles": 179,
+              "mean_giveback_pp": 8.354179043927836,
+              "median_giveback_pp": 6.80580160608265,
+              "p90_giveback_pp": 17.705111283035738,
+              "positive_peak_cycles": 155,
+              "positive_peak_to_net_loss": 73,
+              "positive_peak_to_net_loss_pct": 47.096774193548384
+            },
+            "corporate_action_cycles_excluded": 17
+          },
+          "holding_mean": 18.72,
+          "unresolved": {
+            "receivable_cny": 966.48,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 20.0130978,
+              "drawdown_pct": 12.552671021850792,
+              "cycles": 243
+            },
+            "later": {
+              "return_pct": 13.706123519657275,
+              "drawdown_pct": 12.552671021850792,
+              "cycles": 174
+            }
+          },
+          "holding_mean": 18.51,
+          "unresolved": {
+            "receivable_cny": 1001.072,
+            "locked_mark_cny": 2099.0699410438538,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 12.7930149,
+              "drawdown_pct": 8.536862292822512,
+              "cycles": 260
+            },
+            "later": {
+              "return_pct": 8.91282022107096,
+              "drawdown_pct": 8.536862292822512,
+              "cycles": 192
+            }
+          },
+          "holding_mean": 18.57,
+          "unresolved": {
+            "receivable_cny": 864.48,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        }
+      },
+      "fixed_profit_3atr": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 7.9900396999999845,
+              "drawdown_pct": 12.286039690518113,
+              "cycles": 218
+            },
+            "later": {
+              "return_pct": 1.452583635648641,
+              "drawdown_pct": 12.286039690518113,
+              "cycles": 148
+            },
+            "early": {
+              "return_pct": 6.443853700000002,
+              "drawdown_pct": 6.841818232524666,
+              "cycles": 70
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 204,
+              "mean_giveback_pp": 8.064215973365132,
+              "median_giveback_pp": 6.086908368298424,
+              "p90_giveback_pp": 20.18614832680637,
+              "positive_peak_cycles": 167,
+              "positive_peak_to_net_loss": 76,
+              "positive_peak_to_net_loss_pct": 45.50898203592814
+            },
+            "later": {
+              "cycles": 141,
+              "mean_giveback_pp": 7.903383574404477,
+              "median_giveback_pp": 6.266282736870972,
+              "p90_giveback_pp": 18.830156790013735,
+              "positive_peak_cycles": 118,
+              "positive_peak_to_net_loss": 57,
+              "positive_peak_to_net_loss_pct": 48.30508474576271
+            },
+            "corporate_action_cycles_excluded": 14
+          },
+          "holding_mean": 16.22,
+          "unresolved": {
+            "receivable_cny": 543.552,
+            "locked_mark_cny": 3405.599899291992,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 4.570773700000008,
+              "drawdown_pct": 12.774325230743933,
+              "cycles": 217
+            },
+            "later": {
+              "return_pct": -1.3513523265891503,
+              "drawdown_pct": 12.774325230743933,
+              "cycles": 147
+            }
+          },
+          "holding_mean": 16.28,
+          "unresolved": {
+            "receivable_cny": 516.512,
+            "locked_mark_cny": 3405.599899291992,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 9.708606099999994,
+              "drawdown_pct": 11.845840575903676,
+              "cycles": 288
+            },
+            "later": {
+              "return_pct": 6.710912699372051,
+              "drawdown_pct": 11.482159486117583,
+              "cycles": 212
+            }
+          },
+          "holding_mean": 16.57,
+          "unresolved": {
+            "receivable_cny": 912.8,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        }
+      },
+      "trailing_profit_2_1_5atr": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 6.2800165999999935,
+              "drawdown_pct": 12.66277262493679,
+              "cycles": 281
+            },
+            "later": {
+              "return_pct": 0.8939841646669722,
+              "drawdown_pct": 12.66277262493679,
+              "cycles": 205
+            },
+            "early": {
+              "return_pct": 5.338308799999991,
+              "drawdown_pct": 7.040258,
+              "cycles": 76
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 266,
+              "mean_giveback_pp": 9.173200915768978,
+              "median_giveback_pp": 7.769714082433634,
+              "p90_giveback_pp": 17.856586958930265,
+              "positive_peak_cycles": 224,
+              "positive_peak_to_net_loss": 97,
+              "positive_peak_to_net_loss_pct": 43.30357142857143
+            },
+            "later": {
+              "cycles": 196,
+              "mean_giveback_pp": 8.62249736442301,
+              "median_giveback_pp": 7.3405220046790705,
+              "p90_giveback_pp": 16.929886406077465,
+              "positive_peak_cycles": 169,
+              "positive_peak_to_net_loss": 75,
+              "positive_peak_to_net_loss_pct": 44.37869822485207
+            },
+            "corporate_action_cycles_excluded": 15
+          },
+          "holding_mean": 17.19,
+          "unresolved": {
+            "receivable_cny": 886.576,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 3.056644899999994,
+              "drawdown_pct": 13.242445068122844,
+              "cycles": 282
+            },
+            "later": {
+              "return_pct": -1.5621645535708995,
+              "drawdown_pct": 13.242445068122844,
+              "cycles": 206
+            }
+          },
+          "holding_mean": 17.03,
+          "unresolved": {
+            "receivable_cny": 886.576,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 16.18610709999999,
+              "drawdown_pct": 8.03600415651009,
+              "cycles": 283
+            },
+            "later": {
+              "return_pct": 13.299455306832275,
+              "drawdown_pct": 8.03600415651009,
+              "cycles": 207
+            }
+          },
+          "holding_mean": 17.13,
+          "unresolved": {
+            "receivable_cny": 947.264,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        }
+      }
+    },
+    "breadth22_rank20": {
+      "original": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 72.77676389999999,
+              "drawdown_pct": 24.672032544501533,
+              "cycles": 247
+            },
+            "later": {
+              "return_pct": 41.48407439662507,
+              "drawdown_pct": 24.672032544501533,
+              "cycles": 174
+            },
+            "early": {
+              "return_pct": 22.117464200000004,
+              "drawdown_pct": 5.645082978526728,
+              "cycles": 73
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 234,
+              "mean_giveback_pp": 7.166735291188895,
+              "median_giveback_pp": 5.152321825857726,
+              "p90_giveback_pp": 17.575971519456267,
+              "positive_peak_cycles": 214,
+              "positive_peak_to_net_loss": 87,
+              "positive_peak_to_net_loss_pct": 40.654205607476634
+            },
+            "later": {
+              "cycles": 164,
+              "mean_giveback_pp": 6.982683808215889,
+              "median_giveback_pp": 4.6051663791567625,
+              "p90_giveback_pp": 18.180858615197554,
+              "positive_peak_cycles": 150,
+              "positive_peak_to_net_loss": 61,
+              "positive_peak_to_net_loss_pct": 40.666666666666664
+            },
+            "corporate_action_cycles_excluded": 13
+          },
+          "holding_mean": 18.66,
+          "unresolved": {
+            "receivable_cny": 2838.768,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 39.0959748,
+              "drawdown_pct": 25.27557178764921,
+              "cycles": 248
+            },
+            "later": {
+              "return_pct": 24.082535239946836,
+              "drawdown_pct": 25.27557178764921,
+              "cycles": 174
+            }
+          },
+          "holding_mean": 18.58,
+          "unresolved": {
+            "receivable_cny": 2410.88,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 49.685736800000015,
+              "drawdown_pct": 20.075056032729456,
+              "cycles": 251
+            },
+            "later": {
+              "return_pct": 46.22404013313917,
+              "drawdown_pct": 20.075056032729456,
+              "cycles": 175
+            }
+          },
+          "holding_mean": 18.32,
+          "unresolved": {
+            "receivable_cny": 2239.4,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        }
+      },
+      "fixed_profit_3atr": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 59.12572659999999,
+              "drawdown_pct": 21.304349151237034,
+              "cycles": 255
+            },
+            "later": {
+              "return_pct": 32.60487394090741,
+              "drawdown_pct": 21.304349151237034,
+              "cycles": 171
+            },
+            "early": {
+              "return_pct": 19.999907900000014,
+              "drawdown_pct": 8.297887651945658,
+              "cycles": 84
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 240,
+              "mean_giveback_pp": 4.970251750622136,
+              "median_giveback_pp": 2.74578938434977,
+              "p90_giveback_pp": 13.026003359358574,
+              "positive_peak_cycles": 216,
+              "positive_peak_to_net_loss": 78,
+              "positive_peak_to_net_loss_pct": 36.11111111111111
+            },
+            "later": {
+              "cycles": 158,
+              "mean_giveback_pp": 5.080969798825619,
+              "median_giveback_pp": 2.74578938434977,
+              "p90_giveback_pp": 16.16221902481969,
+              "positive_peak_cycles": 141,
+              "positive_peak_to_net_loss": 52,
+              "positive_peak_to_net_loss_pct": 36.87943262411347
+            },
+            "corporate_action_cycles_excluded": 15
+          },
+          "holding_mean": 14.93,
+          "unresolved": {
+            "receivable_cny": 2868.272,
+            "locked_mark_cny": 1132.8000183105469,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 36.59856500000001,
+              "drawdown_pct": 20.625790574894232,
+              "cycles": 256
+            },
+            "later": {
+              "return_pct": 24.073803285082107,
+              "drawdown_pct": 20.625790574894232,
+              "cycles": 172
+            }
+          },
+          "holding_mean": 14.96,
+          "unresolved": {
+            "receivable_cny": 2594.464,
+            "locked_mark_cny": 1132.8000183105469,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 49.4152438,
+              "drawdown_pct": 19.979568400161263,
+              "cycles": 298
+            },
+            "later": {
+              "return_pct": 44.710678794067135,
+              "drawdown_pct": 19.979568400161263,
+              "cycles": 207
+            }
+          },
+          "holding_mean": 14.76,
+          "unresolved": {
+            "receivable_cny": 1658.88,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        }
+      },
+      "trailing_profit_2_1_5atr": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 67.33152290000002,
+              "drawdown_pct": 21.268646861536233,
+              "cycles": 233
+            },
+            "later": {
+              "return_pct": 46.71307617968614,
+              "drawdown_pct": 21.268646861536233,
+              "cycles": 161
+            },
+            "early": {
+              "return_pct": 14.053584899999993,
+              "drawdown_pct": 5.802358276399467,
+              "cycles": 72
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 219,
+              "mean_giveback_pp": 6.826546157108069,
+              "median_giveback_pp": 4.764717863599485,
+              "p90_giveback_pp": 17.30177713291427,
+              "positive_peak_cycles": 197,
+              "positive_peak_to_net_loss": 67,
+              "positive_peak_to_net_loss_pct": 34.01015228426396
+            },
+            "later": {
+              "cycles": 152,
+              "mean_giveback_pp": 6.972083964071933,
+              "median_giveback_pp": 4.234113091697422,
+              "p90_giveback_pp": 18.00008132862832,
+              "positive_peak_cycles": 136,
+              "positive_peak_to_net_loss": 47,
+              "positive_peak_to_net_loss_pct": 34.55882352941176
+            },
+            "corporate_action_cycles_excluded": 14
+          },
+          "holding_mean": 16.2,
+          "unresolved": {
+            "receivable_cny": 1996.064,
+            "locked_mark_cny": 1132.8000183105469,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 59.645209599999994,
+              "drawdown_pct": 25.252763241118735,
+              "cycles": 274
+            },
+            "later": {
+              "return_pct": 39.4476754950732,
+              "drawdown_pct": 25.252763241118735,
+              "cycles": 191
+            }
+          },
+          "holding_mean": 16.27,
+          "unresolved": {
+            "receivable_cny": 2699.32,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 57.194057900000004,
+              "drawdown_pct": 18.040050786763196,
+              "cycles": 237
+            },
+            "later": {
+              "return_pct": 41.078680820530856,
+              "drawdown_pct": 18.040050786763196,
+              "cycles": 161
+            }
+          },
+          "holding_mean": 16.08,
+          "unresolved": {
+            "receivable_cny": 1437.0919,
+            "locked_mark_cny": 1037.4000024795532,
+            "stale_positions": 0
+          }
+        }
+      }
+    },
+    "breadth22_open_downside20": {
+      "original": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 12.365051000000005,
+              "drawdown_pct": 7.841393060663693,
+              "cycles": 125
+            },
+            "later": {
+              "return_pct": 8.89425757681035,
+              "drawdown_pct": 7.841393060663693,
+              "cycles": 87
+            },
+            "early": {
+              "return_pct": 3.1873062000000063,
+              "drawdown_pct": 4.216599046766689,
+              "cycles": 38
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 115,
+              "mean_giveback_pp": 5.695281646797971,
+              "median_giveback_pp": 4.761179986716841,
+              "p90_giveback_pp": 12.857925533147945,
+              "positive_peak_cycles": 95,
+              "positive_peak_to_net_loss": 45,
+              "positive_peak_to_net_loss_pct": 47.368421052631575
+            },
+            "later": {
+              "cycles": 81,
+              "mean_giveback_pp": 5.760410503953267,
+              "median_giveback_pp": 5.057216390212515,
+              "p90_giveback_pp": 14.185813260855218,
+              "positive_peak_cycles": 67,
+              "positive_peak_to_net_loss": 32,
+              "positive_peak_to_net_loss_pct": 47.76119402985074
+            },
+            "corporate_action_cycles_excluded": 10
+          },
+          "holding_mean": 18.23,
+          "unresolved": {
+            "receivable_cny": 2396.8,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 8.274017000000011,
+              "drawdown_pct": 8.066116082991325,
+              "cycles": 125
+            },
+            "later": {
+              "return_pct": 6.852524633663237,
+              "drawdown_pct": 7.918783664833617,
+              "cycles": 87
+            }
+          },
+          "holding_mean": 18.21,
+          "unresolved": {
+            "receivable_cny": 2396.8,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 14.242887400000015,
+              "drawdown_pct": 9.685134979034949,
+              "cycles": 127
+            },
+            "later": {
+              "return_pct": 5.362205582573321,
+              "drawdown_pct": 9.685134979034949,
+              "cycles": 88
+            }
+          },
+          "holding_mean": 17.85,
+          "unresolved": {
+            "receivable_cny": 2030.8,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        }
+      },
+      "fixed_profit_3atr": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 12.673274600000006,
+              "drawdown_pct": 6.906673970178268,
+              "cycles": 136
+            },
+            "later": {
+              "return_pct": 12.366336625102603,
+              "drawdown_pct": 6.906673970178268,
+              "cycles": 93
+            },
+            "early": {
+              "return_pct": 0.2731582999999871,
+              "drawdown_pct": 3.327069168859309,
+              "cycles": 43
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 129,
+              "mean_giveback_pp": 4.725359905125114,
+              "median_giveback_pp": 3.5303363831626413,
+              "p90_giveback_pp": 10.487239753215013,
+              "positive_peak_cycles": 109,
+              "positive_peak_to_net_loss": 47,
+              "positive_peak_to_net_loss_pct": 43.11926605504588
+            },
+            "later": {
+              "cycles": 89,
+              "mean_giveback_pp": 4.9826752741645945,
+              "median_giveback_pp": 3.142429037338268,
+              "p90_giveback_pp": 11.170154887010462,
+              "positive_peak_cycles": 75,
+              "positive_peak_to_net_loss": 32,
+              "positive_peak_to_net_loss_pct": 42.66666666666667
+            },
+            "corporate_action_cycles_excluded": 7
+          },
+          "holding_mean": 16.29,
+          "unresolved": {
+            "receivable_cny": 1376.8,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 7.566216600000009,
+              "drawdown_pct": 7.558186559407876,
+              "cycles": 136
+            },
+            "later": {
+              "return_pct": 9.14339563984834,
+              "drawdown_pct": 7.558186559407876,
+              "cycles": 93
+            }
+          },
+          "holding_mean": 16.33,
+          "unresolved": {
+            "receivable_cny": 1376.8,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 15.441506999999998,
+              "drawdown_pct": 9.055366527517151,
+              "cycles": 138
+            },
+            "later": {
+              "return_pct": 12.867256571584317,
+              "drawdown_pct": 8.780212668769261,
+              "cycles": 95
+            }
+          },
+          "holding_mean": 15.93,
+          "unresolved": {
+            "receivable_cny": 1600.0,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        }
+      },
+      "trailing_profit_2_1_5atr": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 16.623195300000006,
+              "drawdown_pct": 7.4707901215142485,
+              "cycles": 135
+            },
+            "later": {
+              "return_pct": 16.59692787770002,
+              "drawdown_pct": 7.4707901215142485,
+              "cycles": 91
+            },
+            "early": {
+              "return_pct": 0.022528399999988125,
+              "drawdown_pct": 5.730140688644692,
+              "cycles": 44
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 129,
+              "mean_giveback_pp": 5.859719731863876,
+              "median_giveback_pp": 5.048215521776482,
+              "p90_giveback_pp": 12.413634801713636,
+              "positive_peak_cycles": 108,
+              "positive_peak_to_net_loss": 46,
+              "positive_peak_to_net_loss_pct": 42.592592592592595
+            },
+            "later": {
+              "cycles": 86,
+              "mean_giveback_pp": 5.923583478980498,
+              "median_giveback_pp": 5.207579291116659,
+              "p90_giveback_pp": 12.609896631021625,
+              "positive_peak_cycles": 73,
+              "positive_peak_to_net_loss": 32,
+              "positive_peak_to_net_loss_pct": 43.83561643835616
+            },
+            "corporate_action_cycles_excluded": 6
+          },
+          "holding_mean": 16.64,
+          "unresolved": {
+            "receivable_cny": 1787.2,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 11.030312900000006,
+              "drawdown_pct": 8.535370776982997,
+              "cycles": 135
+            },
+            "later": {
+              "return_pct": 13.281476267550163,
+              "drawdown_pct": 8.122007596850732,
+              "cycles": 91
+            }
+          },
+          "holding_mean": 16.61,
+          "unresolved": {
+            "receivable_cny": 1739.2,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 16.00500260000002,
+              "drawdown_pct": 9.673603421210819,
+              "cycles": 137
+            },
+            "later": {
+              "return_pct": 10.712241903779907,
+              "drawdown_pct": 9.673603421210819,
+              "cycles": 92
+            }
+          },
+          "holding_mean": 16.5,
+          "unresolved": {
+            "receivable_cny": 2346.8,
+            "locked_mark_cny": 0,
+            "stale_positions": 0
+          }
+        }
+      }
+    },
+    "mean_confirmed_by_median": {
+      "original": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 37.278014800000015,
+              "drawdown_pct": 6.292321880435281,
+              "cycles": 169
+            },
+            "later": {
+              "return_pct": 24.49560022803665,
+              "drawdown_pct": 6.292321880435281,
+              "cycles": 122
+            },
+            "early": {
+              "return_pct": 10.267362499999999,
+              "drawdown_pct": 6.000007016151976,
+              "cycles": 47
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 162,
+              "mean_giveback_pp": 8.435357938647334,
+              "median_giveback_pp": 6.633316318063757,
+              "p90_giveback_pp": 16.885412548817865,
+              "positive_peak_cycles": 144,
+              "positive_peak_to_net_loss": 57,
+              "positive_peak_to_net_loss_pct": 39.58333333333333
+            },
+            "later": {
+              "cycles": 118,
+              "mean_giveback_pp": 7.713354977831818,
+              "median_giveback_pp": 5.983035203525217,
+              "p90_giveback_pp": 16.262589207633628,
+              "positive_peak_cycles": 104,
+              "positive_peak_to_net_loss": 39,
+              "positive_peak_to_net_loss_pct": 37.5
+            },
+            "corporate_action_cycles_excluded": 7
+          },
+          "holding_mean": 18.73,
+          "unresolved": {
+            "receivable_cny": 562.88,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 30.537462000000005,
+              "drawdown_pct": 6.657487149628716,
+              "cycles": 170
+            },
+            "later": {
+              "return_pct": 21.326478983291164,
+              "drawdown_pct": 5.866754993413625,
+              "cycles": 123
+            }
+          },
+          "holding_mean": 18.59,
+          "unresolved": {
+            "receivable_cny": 660.48,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 4.5800840999999926,
+              "drawdown_pct": 13.235424977114107,
+              "cycles": 104
+            },
+            "later": {
+              "return_pct": 9.386127585263804,
+              "drawdown_pct": 6.36787746075237,
+              "cycles": 61
+            }
+          },
+          "holding_mean": 18.14,
+          "unresolved": {
+            "receivable_cny": 338.816,
+            "locked_mark_cny": 3607.199935913086,
+            "stale_positions": 0
+          }
+        }
+      },
+      "fixed_profit_3atr": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 29.81069379999999,
+              "drawdown_pct": 5.487790705240969,
+              "cycles": 191
+            },
+            "later": {
+              "return_pct": 28.875665022824528,
+              "drawdown_pct": 5.487790705240969,
+              "cycles": 139
+            },
+            "early": {
+              "return_pct": 0.7255277999999921,
+              "drawdown_pct": 4.800342678226521,
+              "cycles": 52
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 184,
+              "mean_giveback_pp": 6.14887962763739,
+              "median_giveback_pp": 4.387126975668921,
+              "p90_giveback_pp": 14.888733340459723,
+              "positive_peak_cycles": 162,
+              "positive_peak_to_net_loss": 64,
+              "positive_peak_to_net_loss_pct": 39.50617283950617
+            },
+            "later": {
+              "cycles": 134,
+              "mean_giveback_pp": 5.779435394804572,
+              "median_giveback_pp": 3.7050308656542468,
+              "p90_giveback_pp": 14.531302711422905,
+              "positive_peak_cycles": 118,
+              "positive_peak_to_net_loss": 42,
+              "positive_peak_to_net_loss_pct": 35.59322033898305
+            },
+            "corporate_action_cycles_excluded": 7
+          },
+          "holding_mean": 16.72,
+          "unresolved": {
+            "receivable_cny": 426.88,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 22.713502,
+              "drawdown_pct": 8.282702951846188,
+              "cycles": 192
+            },
+            "later": {
+              "return_pct": 26.052768020528873,
+              "drawdown_pct": 6.519455807114161,
+              "cycles": 140
+            }
+          },
+          "holding_mean": 16.55,
+          "unresolved": {
+            "receivable_cny": 403.68,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 0.8121642000000096,
+              "drawdown_pct": 12.291484153574384,
+              "cycles": 114
+            },
+            "later": {
+              "return_pct": 5.953859618128932,
+              "drawdown_pct": 5.782483878374755,
+              "cycles": 69
+            }
+          },
+          "holding_mean": 16.51,
+          "unresolved": {
+            "receivable_cny": 354.8288,
+            "locked_mark_cny": 2885.7599487304688,
+            "stale_positions": 0
+          }
+        }
+      },
+      "trailing_profit_2_1_5atr": {
+        "base": {
+          "periods": {
+            "overall": {
+              "return_pct": 33.997829999999986,
+              "drawdown_pct": 8.293977062722247,
+              "cycles": 182
+            },
+            "later": {
+              "return_pct": 17.11266487407621,
+              "drawdown_pct": 8.293977062722247,
+              "cycles": 129
+            },
+            "early": {
+              "return_pct": 14.417881399999999,
+              "drawdown_pct": 5.310210653880699,
+              "cycles": 53
+            }
+          },
+          "giveback": {
+            "overall": {
+              "cycles": 176,
+              "mean_giveback_pp": 7.8522349285712885,
+              "median_giveback_pp": 6.380193509414834,
+              "p90_giveback_pp": 14.764203835925708,
+              "positive_peak_cycles": 162,
+              "positive_peak_to_net_loss": 61,
+              "positive_peak_to_net_loss_pct": 37.65432098765432
+            },
+            "later": {
+              "cycles": 124,
+              "mean_giveback_pp": 7.570542743144365,
+              "median_giveback_pp": 6.059514380999806,
+              "p90_giveback_pp": 14.94334400163117,
+              "positive_peak_cycles": 110,
+              "positive_peak_to_net_loss": 38,
+              "positive_peak_to_net_loss_pct": 34.54545454545455
+            },
+            "corporate_action_cycles_excluded": 6
+          },
+          "holding_mean": 17.04,
+          "unresolved": {
+            "receivable_cny": 521.6,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "double": {
+          "periods": {
+            "overall": {
+              "return_pct": 23.1426001,
+              "drawdown_pct": 9.001030584660686,
+              "cycles": 183
+            },
+            "later": {
+              "return_pct": 12.756266145179307,
+              "drawdown_pct": 9.001030584660686,
+              "cycles": 130
+            }
+          },
+          "holding_mean": 16.99,
+          "unresolved": {
+            "receivable_cny": 486.4,
+            "locked_mark_cny": 0.0,
+            "stale_positions": 0
+          }
+        },
+        "delay": {
+          "periods": {
+            "overall": {
+              "return_pct": 0.6003157000000092,
+              "drawdown_pct": 13.154998370808524,
+              "cycles": 115
+            },
+            "later": {
+              "return_pct": 5.6406707434449865,
+              "drawdown_pct": 6.698504034746488,
+              "cycles": 68
+            }
+          },
+          "holding_mean": 16.39,
+          "unresolved": {
+            "receivable_cny": 324.736,
+            "locked_mark_cny": 3607.199935913086,
+            "stale_positions": 0
+          }
+        }
+      }
+    }
+  },
+  "verification": {
+    "status": "passed",
+    "accounts": 234,
+    "orders": 34469,
+    "account_days": 147240,
+    "deliberate_faults_detected": [
+      "forged_exit_reason",
+      "forged_price",
+      "forged_qty"
+    ],
+    "frozen_sources_unchanged": true,
+    "six_current_control_groups_exact": true
+  },
+  "source_sha256": {
+    "timing": "fdf8dd87c830b8234f66088a0976a4cc9d71e58c2cf3b14c4f651dd54c252cb2",
+    "allocation": "049b5319df078ca4d434961605bd8c20526d65fd92cece800f934f08f8897dbd",
+    "cash_audit": "89ea0b4b55db71ca9d5178566921e941e1496a6a53a9d6b2fae4d6d5b828d3e1",
+    "protocol": "0998a065451205c5628de49d983bc076412b3378e7f509830296a0d9ecba6813",
+    "script": "5ba171b04330f4db6fdbd42ba0aaa00abb1815c94fc5e196f96252081c1cb938",
+    "timing_config": "598db8d99bdda69b58dffdbd7f36db388dafb3c597d9534ebabbc9fde4ebf413",
+    "approved_config": "be0aa09bb93faabcee185425b6e9198eeab9b42a222d942518daa9770e4086ca",
+    "median_score": "979aa5221dae6d0d1072c9a6abb10e879d9a13f00b266185f198b87bf89748be",
+    "score_breadth22_h20": "558d4b952b6915e418d7c410c3f853709d08b61d3d6c89717e2b59d0c26b5544",
+    "score_index26_h20": "d08d9e9112d4cd22416a52eaea7adb106557229be1db8d8fb16f2e7cd91f9e6b",
+    "score_breadth22_excess_csi20": "4a07ca88796baa700e5facff8d586eccc702b07fe1bf37dc6ba157c82a091572",
+    "score_breadth22_rank20": "97ec06ba39ab49af0fb7d3c4e71131b6dcf7164235d6feb4c830f1f234e5ed1c",
+    "score_breadth22_open_downside20": "93c6cc496bc6591d53c8eef446e99d3dffcca8656eadb35651184c7724862115"
+  },
+  "raw_artifact_sha256": {
+    "summary.json": "fcba3c54b8e9bc627a8f64c1d3c1d3c577aab8c02f901e5da330d0bd02a004fb",
+    "verification.json": "58f0664a7bf19bce975419a86cca10638f4cb8d2e7818173360bec292a88cc30",
+    "manifest.json": "913f3d2584771dea7f3e3a06d666958b649fc54847b5cbaf1781ca6f1008fbce",
+    "paired-entries.json": "0274d6f0aeb23dbe2166524e6b4b9fc572e1a753c6844b79fb5829cc27c9fc62"
+  }
+}

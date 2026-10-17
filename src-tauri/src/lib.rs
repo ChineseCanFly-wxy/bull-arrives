@@ -979,6 +979,7 @@ pub fn run() {
             commands::simulation_live::simulation_live_status,
             commands::model_follow::research_auto_status,
             commands::model_follow::research_follow_accounts,
+            commands::model_follow::research_follow_profit_history,
             commands::model_follow::research_follow_start,
             commands::model_follow::research_follow_setup,
             commands::model_follow::research_follow_update,

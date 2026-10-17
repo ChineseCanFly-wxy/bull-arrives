@@ -9,6 +9,18 @@ pub const AUTOMATIC_RECORD_KEY: &str = "research_auto_trade_record";
 pub const AUTOMATIC_ENABLED_KEY: &str = "research_auto_trade_enabled";
 pub fn automatic_excluded_key(model: &str) -> String { format!("research_auto_excluded_{model}") }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FollowProfitQuery {
+    pub account_id: Option<i64>,
+    #[serde(default)]
+    pub keyword: String,
+    pub start: Option<String>,
+    pub end: Option<String>,
+    #[serde(default)]
+    pub page: u32,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AutomaticRecord {
@@ -343,6 +355,8 @@ impl Database {
         }
         tx.execute("DELETE FROM sim_accounts WHERE id=?1", [account_id])
             .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM settings WHERE key=?1", [format!("follow_preopen_{account_id}")])
+            .map_err(|e| e.to_string())?;
 
         // A paused follow still owns its source. Manual watches share maintenance by the
         // frozen model identity, not by job/run ID or runner version.
@@ -393,6 +407,69 @@ impl Database {
             )
             .map_err(|_| "跟随账户不存在")?;
         decode_binding(&raw)
+    }
+    pub fn follow_profit_history(&self, query: &FollowProfitQuery) -> Result<Value, String> {
+        for day in [&query.start, &query.end].into_iter().flatten() {
+            if chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")
+                .map(|d| d.to_string())
+                .as_ref()
+                != Ok(day)
+            {
+                return Err("查询日期应为有效的 YYYY-MM-DD".into());
+            }
+        }
+        if query
+            .start
+            .as_ref()
+            .zip(query.end.as_ref())
+            .is_some_and(|(a, b)| a > b)
+            || query.account_id.is_some_and(|id| id <= 0)
+            || query.keyword.chars().count() > 80
+            || query.page > 1_000_000
+        {
+            return Err("历史盈亏查询条件无效".into());
+        }
+        let accounts = self.follow_bindings()?;
+        if query
+            .account_id
+            .is_some_and(|id| !accounts.iter().any(|b| b.account_id == id))
+        {
+            return Err("自动模型账户不存在".into());
+        }
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        // Use the ledger's consumed lot cost, including buy fees and partial-sale allocation.
+        let history = "FROM sim_orders o JOIN model_follow_accounts a ON a.account_id=o.account_id
+            WHERE o.status='filled' AND o.side='sell'
+            AND (?1 IS NULL OR o.account_id=?1)
+            AND (instr(lower(o.symbol),lower(?2))>0 OR instr(o.name,?2)>0)
+            AND (?3 IS NULL OR date(o.filled_at,'+8 hours')>=?3)
+            AND (?4 IS NULL OR date(o.filled_at,'+8 hours')<=?4)";
+        let args = params![
+            query.account_id,
+            query.keyword.trim(),
+            query.start,
+            query.end
+        ];
+        let (count,cost,net,fees,profit,wins): (i64,i64,i64,i64,i64,i64) = conn.query_row(
+            &format!("SELECT COUNT(*),COALESCE(SUM(o.cost_basis),0),COALESCE(SUM(o.cash_delta),0),COALESCE(SUM(o.fee),0),COALESCE(SUM(o.cash_delta-o.cost_basis),0),COALESCE(SUM(CASE WHEN o.cash_delta>o.cost_basis THEN 1 ELSE 0 END),0) {history}"),
+            args, |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)),
+        ).map_err(|e| e.to_string())?;
+        let mut stmt=conn.prepare(&format!("SELECT o.id,o.account_id,json_extract(a.binding_json,'$.model_name'),o.symbol,o.name,o.quantity,o.price,o.cost_basis,o.cash_delta,o.fee,o.filled_at,o.holding_days,o.decision_reason {history} ORDER BY julianday(o.filled_at) DESC,o.id DESC LIMIT 50 OFFSET ?5")).map_err(|e|e.to_string())?;
+        let records=stmt.query_map(params![query.account_id,query.keyword.trim(),query.start,query.end,i64::from(query.page)*50], |r| {
+            let cost=r.get::<_,i64>(7)?;
+            let net=r.get::<_,i64>(8)?;
+            let money=|v:i64| v as f64/crate::simulation::SCALE as f64;
+            Ok(serde_json::json!({"order_id":r.get::<_,i64>(0)?,"account_id":r.get::<_,i64>(1)?,"model_name":r.get::<_,String>(2)?,"symbol":r.get::<_,String>(3)?,"name":r.get::<_,String>(4)?,"quantity":r.get::<_,i64>(5)?,"price_cny":money(r.get(6)?),"cost_cny":money(cost),"net_proceeds_cny":money(net),"sell_fee_cny":money(r.get(9)?),"profit_cny":money(net-cost),"return_pct":if cost>0{Some((net-cost) as f64/cost as f64*100.)}else{None},"filled_at":r.get::<_,String>(10)?,"holding_sessions":r.get::<_,Option<i64>>(11)?,"reason":r.get::<_,Option<String>>(12)?}))
+        }).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+        let money = |v: i64| v as f64 / crate::simulation::SCALE as f64;
+        Ok(
+            serde_json::json!({"accounts":accounts.iter().map(|b|serde_json::json!({"account_id":b.account_id,"model_name":b.model_name})).collect::<Vec<_>>(),"records":records,"page":query.page,"page_size":50,"summary":{"count":count,"profit_cny":money(profit),"cost_cny":money(cost),"net_proceeds_cny":money(net),"sell_fee_cny":money(fees),"return_pct":if cost>0{Some(profit as f64/cost as f64*100.)}else{None},"wins":wins}}),
+        )
+    }
+    pub fn claim_follow_preopen(&self, account: i64, day: &str) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE settings.value<>excluded.value",params![format!("follow_preopen_{account}"),day])
+            .map(|changed|changed>0).map_err(|e|e.to_string())
     }
     pub fn save_follow_binding(&self, binding: &FollowBinding) -> Result<(), String> {
         self.save_follow_binding_inner(binding, false)
@@ -762,6 +839,9 @@ impl Database {
     }
     // Claim each order transition once, including after restart. Delivery uses the existing alert preference.
     pub fn follow_notices(&self) -> Result<Vec<Value>, String> {
+        self.follow_notices_at(Utc::now())
+    }
+    pub(crate) fn follow_notices_at(&self, now: DateTime<Utc>) -> Result<Vec<Value>, String> {
         let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         let notices = {
@@ -822,6 +902,13 @@ impl Database {
                             "automatic":meta.automatic_submission, "side":side, "quantity":qty,
                             "filled_price_cny":filled_price, "filled_at":filled_at
                         }
+                    }))
+                } else if status == "pending" && meta.valid_until > now.timestamp() {
+                    Some(serde_json::json!({
+                        "signal_kind":"research", "signal_tag":"模型跟随交易", "code":symbol,
+                        "title":format!("{name} · 计划{action}{qty}股 · 委托待成交"),
+                        "body":format!("账户 #{}；程序已提交模拟委托，尚未成交；限价 {:.2}；{}",account,meta.limit_price as f64/10000.,reason.unwrap_or_default()),
+                        "model_snapshot":{"follow_account_id":account,"order_id":id,"status":"pending","side":side,"quantity":qty,"limit_price_cny":meta.limit_price as f64/10000.,"automatic":meta.automatic_submission,"context_as_of":meta.context_as_of}
                     }))
                 } else {
                     None
@@ -1041,6 +1128,44 @@ pub(crate) mod delete_tests {
     }
 
     // Discover every table, so preservation and orphan assertions also cover schema additions.
+    #[test]
+    fn profit_history_filters_accounts_and_beijing_dates_with_stable_pages_without_writes() {
+        let (db,binding)=fixture();
+        let second=add_follow(&db,INDEX_SOURCE);
+        let manual=manual_account(&db,"不计入自动模型盈亏");
+        {
+            let conn=db.conn.lock().unwrap();
+            for (account,count) in [(binding.account_id,51),(second.account_id,1),(manual,1)] {
+                for i in 0..count {
+                    conn.execute("INSERT INTO sim_orders(account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,limit_bps,status,price,gross,fee,cash_delta,cost_basis,filled_at,created_at)
+                        VALUES(?1,?2,'sh600000','盈亏测试','sell',100,'2026-09-22','rule',1000,'filled',100000,10000000,55000,9945000,10025000,'2026-09-21T17:00:00Z','2026-09-21T17:00:00Z')",params![account,format!("profit-{i}")]).unwrap();
+                }
+            }
+            for (side,status) in [("buy","filled"),("sell","rejected"),("sell","pending")] {
+                conn.execute("INSERT INTO sim_orders(account_id,idempotency_key,symbol,side,quantity,signal_date,source,limit_bps,status,created_at) VALUES(?1,?2,'sh600000',?3,100,'2026-09-22','rule',1000,?4,'2026-09-21T17:00:00Z')",params![binding.account_id,format!("excluded-{side}-{status}"),side,status]).unwrap();
+            }
+        }
+        let before=snapshot(&db,None);
+        let mut query=FollowProfitQuery{start:Some("2026-09-22".into()),end:Some("2026-09-22".into()),..Default::default()};
+        let first=db.follow_profit_history(&query).unwrap();
+        assert_eq!(first["summary"]["count"],52);
+        assert_eq!(first["summary"]["profit_cny"],-416.);
+        assert_eq!(first["records"].as_array().unwrap().len(),50);
+        query.page=1;
+        let page=db.follow_profit_history(&query).unwrap();
+        assert_eq!(page["summary"],first["summary"]);
+        assert_eq!(page["records"].as_array().unwrap().len(),2);
+        assert!(first["records"].as_array().unwrap().iter().all(|a|page["records"].as_array().unwrap().iter().all(|b|a["order_id"]!=b["order_id"])));
+        query.account_id=Some(binding.account_id);
+        let account=db.follow_profit_history(&query).unwrap();
+        assert_eq!(account["summary"]["count"],51);
+        assert_eq!(account["records"].as_array().unwrap().len(),1);
+        query.start=Some("2026-09-21".into());query.end=query.start.clone();
+        assert_eq!(db.follow_profit_history(&query).unwrap()["summary"]["count"],0);
+        query.account_id=Some(manual);
+        assert!(db.follow_profit_history(&query).is_err());
+        assert_eq!(snapshot(&db,None),before);
+    }
     fn snapshot(db: &Database, account: Option<i64>) -> Vec<(String, Vec<Vec<SqlValue>>)> {
         let conn = db.conn.lock().unwrap();
         let tables = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").unwrap()

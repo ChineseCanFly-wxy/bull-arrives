@@ -13,6 +13,11 @@ export interface FollowPosition {
   quantity: number;
   available_quantity: number;
   cost_cny: number;
+  cost_basis_cny?: number;
+  market_value_cny?: number | null;
+  profit_cny?: number | null;
+  return_pct?: number | null;
+  exit_reference_cny?: number | null;
   mark_cny: number | null;
   mark_at?: string | null;
   entry_date: string;
@@ -142,6 +147,8 @@ export interface FollowView {
   model_name: string;
   as_of: string;
   max_positions: number;
+  recommended_max_positions?: number;
+  occupied_positions?: number;
   enabled: boolean;
   effective_enabled?: boolean;
   automatic_execution?: boolean;
@@ -207,4 +214,12 @@ export interface FollowAutomaticStatus {
 
 export interface FollowAutomaticPreset {
   initial_cash_cny: number;
+}
+
+export interface FollowProfitHistory {
+  accounts: { account_id: number; model_name: string }[];
+  page: number;
+  page_size: number;
+  summary: { count: number; profit_cny: number; cost_cny: number; net_proceeds_cny: number; sell_fee_cny: number; return_pct: number | null; wins: number };
+  records: { order_id: number; account_id: number; model_name: string; symbol: string; name: string; quantity: number; price_cny: number; cost_cny: number; net_proceeds_cny: number; sell_fee_cny: number; profit_cny: number; return_pct: number | null; filled_at: string; holding_sessions: number | null; reason: string | null }[];
 }

@@ -9,7 +9,7 @@ use crate::{
     simulation::{Side, SCALE},
     simulation_live::{scaled, LiveTick},
 };
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, TimeZone, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -800,6 +800,21 @@ fn exit_reason(
     if row.is_st != Some(0) {
         return Ok(Some("原模型收盘数据标记ST或风险状态未知，尝试退出".into()));
     }
+    let threshold = exit_reference_adjusted(db, detail, ctx, symbol)?;
+    if row.adjusted_close.is_some_and(|v| v < threshold) {
+        return Ok(Some(format!(
+            "本模型已完成日收盘跌破入场价减{}倍入场ATR，下一交易日退出",
+            rules.entry_atr_multiple
+        )));
+    }
+    Ok(None)
+}
+fn exit_reference_adjusted(
+    db: &Database,
+    detail: &SimDetail,
+    ctx: &FollowContext,
+    symbol: &str,
+) -> Result<f64, String> {
     let entry = detail
         .orders
         .iter()
@@ -813,16 +828,151 @@ fn exit_reason(
         .parse::<i64>()
         .map_err(|_| "入场价无效")? as f64
         / SCALE as f64;
-    if row
-        .adjusted_close
-        .is_some_and(|v| v < entry_price * meta.factor - rules.entry_atr_multiple * meta.atr)
+    Ok(entry_price * meta.factor - model_execution(&ctx.model_id)?.entry_atr_multiple * meta.atr)
+}
+fn preopen_notice(
+    db: &Database,
+    binding: &FollowBinding,
+    now: DateTime<Utc>,
+) -> Result<Option<Value>, String> {
+    let local = now.with_timezone(&cst());
+    let day = local.date_naive().to_string();
+    if !(9 * 3600 + 28 * 60..9 * 3600 + 30 * 60).contains(&local.num_seconds_from_midnight())
+        || !binding.enabled
+        || !binding.auto_execute
+        || binding.valuation_blocked
+        || !automatic_enabled(db)?
+        || db
+            .get_setting(&format!("follow_preopen_{}", binding.account_id))
+            .map_err(|e| e.to_string())?
+            .as_deref()
+            == Some(day.as_str())
     {
-        return Ok(Some(format!(
-            "本模型已完成日收盘跌破入场价减{}倍入场ATR，下一交易日退出",
-            rules.entry_atr_multiple
-        )));
+        return Ok(None);
     }
-    Ok(None)
+    let ctx = context(binding)?;
+    if !context_is_current(binding, &source(db, binding.source_run_id)?)
+        || next_session(date(&ctx.as_of)?)? != local.date_naive()
+    {
+        return Ok(None);
+    }
+    let d = db.get_sim_detail(binding.account_id)?;
+    if changed_entry_factor(db, &d, &ctx)?.is_some() {
+        return Ok(None);
+    }
+    let mut plans = Vec::new();
+    let mut sold = HashSet::new();
+    for p in &d.positions {
+        if !sold.insert(&p.symbol) {
+            continue;
+        }
+        if let Some(reason) = exit_reason(db, &d, &ctx, &p.symbol, &day)? {
+            let quantity: i64 = d
+                .positions
+                .iter()
+                .filter(|v| v.symbol == p.symbol && v.acquired_date < day)
+                .map(|v| v.quantity)
+                .sum();
+            let reference = ctx
+                .rows
+                .iter()
+                .find(|r| r.symbol == p.symbol)
+                .and_then(|r| r.close);
+            plans.push(json!({"side":"sell","symbol":p.symbol,"name":p.name,"quantity":quantity,"reference_price_cny":reference,"reason":reason}));
+        }
+    }
+    let free_slots = (binding.max_positions as usize).saturating_sub(occupied(&d));
+    let mut free_cash = d
+        .account
+        .current_cash
+        .parse::<i64>()
+        .map_err(|_| "现金无效")?
+        - reserved_cash(db, &d, None)?;
+    let mut planned = 0;
+    let mut buys = 0;
+    let allow_star = star_enabled(db)?;
+    if let Some(eq) = equity(&d, &ctx) {
+        for symbol in &ctx.ranked_symbols {
+            if buys >= free_slots {
+                break;
+            }
+            if (!allow_star && star_symbol(symbol))
+                || d.positions.iter().any(|p| p.symbol == *symbol)
+                || d.orders.iter().any(|o| {
+                    o.symbol == *symbol && o.side == "buy" && (pending(o) || o.signal_date == day)
+                })
+            {
+                continue;
+            }
+            let row = ctx
+                .rows
+                .iter()
+                .find(|r| r.symbol == *symbol)
+                .ok_or("股票缺少执行数据")?;
+            if !entry_condition(binding, &ctx, row)?
+                || !row.valid
+                || row.is_st != Some(0)
+                || row.atr14.is_none_or(|v| v <= 0.)
+            {
+                continue;
+            }
+            let Some(reference) = row.close.filter(|v| *v > 0.) else {
+                continue;
+            };
+            let budget = entry_budget(db, binding, &d, &ctx, eq)?
+                - if binding.allocation_policy == "rank5_equal50" {
+                    planned
+                } else {
+                    0
+                };
+            let price = scaled(reference * 1.001)?;
+            let quantity = sized_quantity(
+                symbol,
+                (free_cash - 10 * SCALE)
+                    .min(budget)
+                    .min(money_scaled(row.amount.unwrap_or(0.) * 0.01)?),
+                price,
+            )?;
+            if quantity == 0 {
+                continue;
+            }
+            let used = quantity
+                .checked_mul(price)
+                .and_then(|v| follow_fee(v, Side::Buy).ok().and_then(|f| v.checked_add(f)))
+                .ok_or("盘前预算超限")?;
+            free_cash -= used;
+            planned += used;
+            buys += 1;
+            plans.push(json!({"side":"buy","symbol":symbol,"quantity":quantity,"reference_price_cny":reference,"reason":entry_note(&binding.execution_policy)}));
+        }
+    }
+    if plans.is_empty() {
+        return Ok(None);
+    }
+    let lines: Vec<_> = plans
+        .iter()
+        .map(|p| {
+            format!(
+                "{} {}{}：参考{}股，上一完成日收盘参考{}元；{}",
+                if p["side"] == "buy" {
+                    "准备买入"
+                } else {
+                    "准备卖出"
+                },
+                p["name"].as_str().unwrap_or(""),
+                p["symbol"].as_str().unwrap_or(""),
+                p["quantity"],
+                p["reference_price_cny"],
+                p["reason"].as_str().unwrap_or("")
+            )
+        })
+        .collect();
+    if !db.claim_follow_preopen(binding.account_id, &day)? {
+        return Ok(None);
+    }
+    Ok(Some(
+        json!({"signal_kind":"research","signal_tag":"模型盘前计划","title":format!("{} · 09:28盘前买卖预告",binding.model_name),"body":format!("账户 #{}；{}\n{}\n数量和价格按完成日估算，尚未提交或成交；买入仅在09:30–09:35复核资金、名额、高开和盘口，卖出受T+1和可见买盘限制。",binding.account_id,day,lines.join("\n")),"model_snapshot":{"follow_account_id":binding.account_id,"status":"preopen","context_as_of":ctx.as_of,"planned_for":day,"plans":plans}}),
+    ))
 }
 fn changed_entry_factor(
     db: &Database,
@@ -1441,7 +1591,11 @@ fn view(db: &Database, b: &FollowBinding) -> Result<Value, String> {
         } else {
             e = None;
         }
-        positions.push(json!({"symbol":p.symbol,"name":p.name,"quantity":p.quantity,"available_quantity":if p.acquired_date<today{p.quantity}else{0},"cost_cny":p.cost_price.parse::<i64>().ok().map(|v|v as f64/SCALE as f64),"mark_cny":mark,"mark_at":mark_at,"entry_date":p.acquired_date,"holding_sessions":held_sessions(&ctx,&p.acquired_date,&today),"exit_reason":exit_reason(db,&d,&ctx,&p.symbol,&today)?}));
+        let cost=p.cost_basis.parse::<i64>().map_err(|_|"持仓成本无效")?;
+        let market_value=mark.map(scaled).transpose()?.map(|v|v.checked_mul(p.quantity).ok_or("持仓市值超限")).transpose()?;
+        let profit=market_value.map(|v|v-cost);
+        let exit_reference=if blocked{None}else{row.filter(|r|r.factor.is_finite()&&r.factor>0.).map(|r|exit_reference_adjusted(db,&d,&ctx,&p.symbol).map(|v|v/r.factor)).transpose()?.filter(|v|*v>0.)};
+        positions.push(json!({"symbol":p.symbol,"name":p.name,"quantity":p.quantity,"available_quantity":if p.acquired_date<today{p.quantity}else{0},"cost_cny":cost as f64/SCALE as f64/p.quantity as f64,"cost_basis_cny":cost as f64/SCALE as f64,"market_value_cny":market_value.map(|v|v as f64/SCALE as f64),"profit_cny":profit.map(|v|v as f64/SCALE as f64),"return_pct":profit.filter(|_|cost>0).map(|v|v as f64/cost as f64*100.),"exit_reference_cny":exit_reference,"mark_cny":mark,"mark_at":mark_at,"entry_date":p.acquired_date,"holding_sessions":held_sessions(&ctx,&p.acquired_date,&today),"exit_reason":exit_reason(db,&d,&ctx,&p.symbol,&today)?}));
     }
     let mut orders = Vec::new();
     let mut delay_sum = 0i64;
@@ -1517,9 +1671,11 @@ fn view(db: &Database, b: &FollowBinding) -> Result<Value, String> {
             json!({"symbol":s,"rank":i+1,"score":scores.get(s),"reference_quantity":qty,"entry_condition_met":qualifies,"reason":reason})
         }).collect();
     let execution = json!({"signal_basis":"completed_daily","signal_label":"完成日日线选股","entry_schedule":"next_session_open","execution_basis":"live_depth","schedule_note":"前一交易日完整日线确定候选，下一交易日09:30–09:35用实时盘口买入；盘中实时检查委托与卖出。","position_pct":position_pct,"total_entry_pct":total_entry_pct,"allocation_note":if b.allocation_policy=="rank5_equal50"{"按已核对的排序模型5只组合，单票入场目标10%、总预算50%；保留20日/3ATR退出，实际数量受现金、费用和流动性限制；仅作模拟，历史回撤与收益一并查看。"}else if b.allocation_policy=="relative6"{"相对大盘模型每票入场预算6%（含费用）、最多3只；保留20日/3ATR退出，旧8%账户不自动换仓位。"}else{"原8%入场目标；实际数量受净值、现金、费用及流动性限制，保持原20日/3ATR退出。"},"entry_policy":b.execution_policy,"entry_note":entry_note(&b.execution_policy),"exit_policy":"original","exit_note":"最多持有20个交易日；可因3ATR或ST/状态风险提前退出；到期遇停牌、跌停无可见买盘或零碎股待核对时持续提示，不伪造清仓。","holding_days":rules.holding_sessions,"max_gap_pct":rules.max_gap_pct,"buy_window":"下一交易日09:30–09:35，北京时间；程序自动提交后等待新盘口，错过不追单","sell_window":"交易日连续竞价时段，14:57前；午休不成交，T+1及无可见买盘时等待","intraday_note":"日线模型：完成日确定入场资格及3ATR退出，盘中自动检查现金、名额、高开、限价、T+1和盘口并撮合；没有新增未回测的盘中价格止损或午后入场。","fee_note":"佣金万3/最低5元、卖出印花税万5；过户费0、滑点0。原研究收益保留原成本口径"});
-    Ok(
-        json!({"account_id":b.account_id,"source_run_id":b.source_run_id,"model_id":b.model_id,"model_name":b.model_name,"as_of":b.as_of,"max_positions":b.max_positions,"enabled":b.enabled,"effective_enabled":b.enabled && automatic_enabled(db)?,"automatic_execution":b.auto_execute,"allocation_policy":b.allocation_policy,"initial_cash_cny":b.initial_cash_cny,"cash_cny":cash,"reserved_cash_cny":reserved,"available_cash_cny":available,"equity_cny":e,"net_return_pct":e.map(|v|(v/b.initial_cash_cny-1.)*100.),"valuation_note":"净值为按持仓报价估算，缺当日标记时用原模型完成日收盘；各持仓展示估值数据时间，公司行动待核对时不计净值。","state":if !b.enabled{"paused"}else if source_current{b.state.as_str()}else{"waiting_model_data"},"message":source_message,"source_sha256":b.source_sha256,"positions":positions,"orders":orders,"candidates":candidates,"allocation_research":allocation_evidence(&b.model_id,b.max_positions),"timing_research":timing_research(b),"execution":execution,"comparison_note":"原研究账户最多10只；跟随入口按模型独立选择默认数量，可调1至10只。仓位方案按已核对模型与数量绑定；实际资金使用和自动提交/盘口差异独立记录，原研究收益不代表本账户收益。","performance":{"filled_buys":d.orders.iter().filter(|o|o.status=="filled"&&o.side=="buy").count(),"filled_sells":d.orders.iter().filter(|o|o.status=="filled"&&o.side=="sell").count(),"cancelled":d.orders.iter().filter(|o|o.status=="rejected"&&o.reject_reason.as_deref().is_some_and(|r|r.contains("撤销"))).count(),"expired":d.orders.iter().filter(|o|o.status=="rejected"&&o.reject_reason.as_deref().is_some_and(|r|r.contains("过期"))).count(),"confirmation_delay_seconds":if delay_count>0{Some(delay_sum/delay_count)}else{None}}}),
-    )
+    let mut result=
+        json!({"account_id":b.account_id,"source_run_id":b.source_run_id,"model_id":b.model_id,"model_name":b.model_name,"as_of":b.as_of,"max_positions":b.max_positions,"enabled":b.enabled,"effective_enabled":b.enabled && automatic_enabled(db)?,"automatic_execution":b.auto_execute,"allocation_policy":b.allocation_policy,"initial_cash_cny":b.initial_cash_cny,"cash_cny":cash,"reserved_cash_cny":reserved,"available_cash_cny":available,"equity_cny":e,"net_return_pct":e.map(|v|(v/b.initial_cash_cny-1.)*100.),"valuation_note":"净值为按持仓报价估算，缺当日标记时用原模型完成日收盘；各持仓展示估值数据时间，公司行动待核对时不计净值。","state":if !b.enabled{"paused"}else if source_current{b.state.as_str()}else{"waiting_model_data"},"message":source_message,"source_sha256":b.source_sha256,"positions":positions,"orders":orders,"candidates":candidates,"allocation_research":allocation_evidence(&b.model_id,b.max_positions),"timing_research":timing_research(b),"execution":execution,"comparison_note":"原研究账户最多10只；跟随入口按模型独立选择默认数量，可调1至10只。仓位方案按已核对模型与数量绑定；实际资金使用和自动提交/盘口差异独立记录，原研究收益不代表本账户收益。","performance":{"filled_buys":d.orders.iter().filter(|o|o.status=="filled"&&o.side=="buy").count(),"filled_sells":d.orders.iter().filter(|o|o.status=="filled"&&o.side=="sell").count(),"cancelled":d.orders.iter().filter(|o|o.status=="rejected"&&o.reject_reason.as_deref().is_some_and(|r|r.contains("撤销"))).count(),"expired":d.orders.iter().filter(|o|o.status=="rejected"&&o.reject_reason.as_deref().is_some_and(|r|r.contains("过期"))).count(),"confirmation_delay_seconds":if delay_count>0{Some(delay_sum/delay_count)}else{None}}});
+    result["recommended_max_positions"]=recommended_slots(&b.model_id).into();
+    result["occupied_positions"]=occupied(&d).into();
+    Ok(result)
 }
 
 const AUTOMATIC_DELAY_SECONDS: i64 = 600;
@@ -1818,6 +1974,10 @@ pub async fn automatic_tick(db: Arc<Database>) {
 #[tauri::command]
 pub fn research_follow_accounts(db: State<'_, Arc<Database>>) -> Result<Vec<Value>, String> {
     db.follow_bindings()?.iter().map(|b| view(&db, b)).collect()
+}
+#[tauri::command]
+pub fn research_follow_profit_history(db: State<'_, Arc<Database>>, query: crate::db::model_follow::FollowProfitQuery) -> Result<Value, String> {
+    db.follow_profit_history(&query)
 }
 /// One initial setup click; all subsequent selection and trading stays in the existing schedulers.
 /// The command continues in the backend if the research panel is closed.
@@ -2124,6 +2284,11 @@ pub async fn tick_all(db: &Database, manager: &DataSourceManager, app: &tauri::A
             binding.message = error;
             let _ = db.save_follow_binding(&binding);
         }
+        match preopen_notice(db,&binding,Utc::now()) {
+            Ok(Some(notice))=>crate::notifications::publish(app,notice),
+            Err(error)=>log::warn!(target:"automation::trading","账户 #{} 盘前计划暂不可用：{}",binding.account_id,error),
+            _=>{}
+        }
         if binding.state != listed.state || binding.message != listed.message {
             if binding.state=="data_unavailable" {
                 log::warn!(target: "automation::trading", "账户 #{}：{}",binding.account_id,binding.message);
@@ -2132,7 +2297,7 @@ pub async fn tick_all(db: &Database, manager: &DataSourceManager, app: &tauri::A
         if let Ok(detail) = db.get_sim_detail(binding.account_id) {
             app.state::<Arc<crate::operations_log::OperationsLog>>().model_check(&binding, &detail, Utc::now());
         }
-        // Publish before processing another model so the first plan is immediately followable.
+        // Newly staged orders cannot fill until the next tick; announce them immediately.
         if let Ok(notices) = db.follow_notices() {
             for notice in notices {
                 crate::notifications::publish(app, notice);
@@ -2797,7 +2962,7 @@ mod tests {
         (db, root, b, ctx)
     }
     #[test]
-    fn automatic_buy_and_sell_need_no_confirmation_and_only_fills_produce_trade_notices() {
+    fn automatic_buy_and_sell_announce_pending_then_fills_without_confirmation() {
         let (db, root, b, ctx) = automatic_test_account();
         db.set_setting("alerts_enabled", "0").unwrap(); // Notification preference never disables the simulation.
         let now = Utc.with_ymd_and_hms(2026, 9, 21, 1, 30, 0).unwrap();
@@ -2824,6 +2989,11 @@ mod tests {
             Some(now.to_rfc3339().as_str())
         );
         assert!(db.follow_order_meta(buy).unwrap().automatic_submission);
+        let submitted=db.follow_notices_at(now).unwrap();
+        assert_eq!(submitted.len(),1);
+        assert_eq!(submitted[0]["model_snapshot"]["status"],"pending");
+        assert!(submitted[0]["title"].as_str().unwrap().contains("待成交"));
+        assert!(submitted[0]["model_snapshot"]["filled_price_cny"].is_null());
         assert!(db.follow_notices().unwrap().is_empty());
         assert!(d.positions.is_empty());
         assert_eq!(d.account.current_cash, "1000000000");
@@ -2908,6 +3078,10 @@ mod tests {
         )
         .unwrap();
         let sell = db.get_sim_detail(b.account_id).unwrap().orders[0].id;
+        let submitted=db.follow_notices_at(next).unwrap();
+        assert_eq!(submitted.len(),1);
+        assert_eq!(submitted[0]["model_snapshot"]["side"],"sell");
+        assert_eq!(submitted[0]["model_snapshot"]["status"],"pending");
         let fresh = next + chrono::Duration::seconds(2);
         assert_eq!(
             db.match_sim_order_live_at(sell, &sample_tick(fresh), fresh)
@@ -3127,6 +3301,9 @@ mod tests {
                 .status,
             "pending"
         );
+        let submitted=db.follow_notices_at(later).unwrap();
+        assert_eq!(submitted.len(),1);
+        assert_eq!(submitted[0]["model_snapshot"]["status"],"pending");
         assert!(db.follow_notices().unwrap().is_empty());
         let expired = now + chrono::Duration::seconds(301);
         assert!(db
@@ -3168,9 +3345,144 @@ mod tests {
             .unwrap()
             .positions
             .is_empty());
+        let submitted=db.follow_notices_at(lunch).unwrap();
+        assert_eq!(submitted.len(),1);
+        assert_eq!(submitted[0]["model_snapshot"]["status"],"pending");
         assert!(db.follow_notices().unwrap().is_empty());
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn expired_pending_orders_never_announce_a_new_trade_after_restart() {
+        let (db,root,b,ctx)=automatic_test_account();
+        let at=Utc.with_ymd_and_hms(2026,9,21,1,30,0).unwrap();
+        stage(&db,&b,&ctx,&sample_tick(at),Side::Buy,100,100100,"过期计划",at.timestamp()+300,at).unwrap();
+        drop(db);
+        let db=Database::open(root.clone()).unwrap();
+        assert!(db.follow_notices_at(at+chrono::Duration::seconds(301)).unwrap().is_empty());
+        let detail=db.get_sim_detail(b.account_id).unwrap();
+        assert!(detail.positions.is_empty());
+        assert_eq!(detail.account.current_cash,"1000000000");
+        drop(db);std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn preopen_uses_current_model_at_0928_and_deduplicates_after_restart() {
+        let (db,root,mut b,ctx)=automatic_test_account();
+        let at=Utc.with_ymd_and_hms(2026,9,21,1,28,0).unwrap();
+        assert!(preopen_notice(&db,&b,at-chrono::Duration::seconds(1)).unwrap().is_none());
+        assert!(preopen_notice(&db,&b,at+chrono::Duration::minutes(2)).unwrap().is_none());
+        assert!(preopen_notice(&db,&b,at-chrono::Duration::days(1)).unwrap().is_none());
+        b.enabled=false;
+        assert!(preopen_notice(&db,&b,at).unwrap().is_none());
+        b.enabled=true;
+        db.set_setting(AUTOMATIC_ENABLED_KEY,"0").unwrap();
+        assert!(preopen_notice(&db,&b,at).unwrap().is_none());
+        db.set_setting(AUTOMATIC_ENABLED_KEY,"1").unwrap();
+        let old_hash=b.source_sha256.clone();
+        b.source_sha256="stale".into();
+        assert!(preopen_notice(&db,&b,at).unwrap().is_none());
+        b.source_sha256=old_hash;
+        let before=db.get_sim_detail(b.account_id).unwrap();
+        let notice=preopen_notice(&db,&b,at).unwrap().unwrap();
+        assert_eq!(notice["model_snapshot"]["status"],"preopen");
+        assert_eq!(notice["model_snapshot"]["plans"][0]["side"],"buy");
+        assert_eq!(notice["model_snapshot"]["context_as_of"],ctx.as_of);
+        assert!(notice["body"].as_str().unwrap().contains("尚未提交或成交"));
+        assert_eq!(db.get_sim_detail(b.account_id).unwrap().account.current_cash,before.account.current_cash);
+        assert!(db.get_sim_detail(b.account_id).unwrap().orders.is_empty());
+        assert!(preopen_notice(&db,&b,at+chrono::Duration::seconds(3)).unwrap().is_none());
+        drop(db);
+        let db=Database::open(root.clone()).unwrap();
+        assert!(preopen_notice(&db,&db.follow_binding(b.account_id).unwrap(),at).unwrap().is_none());
+        drop(db);std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn preopen_respects_star_setting_and_current_round_lot_rules() {
+        let (db,root,mut b,mut ctx)=automatic_test_account();
+        let mut star=ctx.rows[0].clone();star.symbol="sh688001".into();
+        ctx.rows.insert(0,star);ctx.ranked_symbols.insert(0,"sh688001".into());
+        b.max_positions=1;b.context_json=serde_json::to_string(&ctx).unwrap();db.save_follow_binding(&b).unwrap();
+        let at=Utc.with_ymd_and_hms(2026,9,21,1,28,0).unwrap();
+        let notice=preopen_notice(&db,&b,at).unwrap().unwrap();
+        assert_eq!(notice["model_snapshot"]["plans"][0]["symbol"],"sh600000");
+        db.set_setting(&format!("follow_preopen_{}",b.account_id),"").unwrap();
+        db.set_setting(STAR_ENABLED_KEY,"1").unwrap();
+        let notice=preopen_notice(&db,&b,at).unwrap().unwrap();
+        let plan=&notice["model_snapshot"]["plans"][0];
+        assert_eq!(plan["symbol"],"sh688001");
+        let quantity=plan["quantity"].as_i64().unwrap();assert!(quantity>=200&&quantity%100==0);
+        assert!(db.get_sim_detail(b.account_id).unwrap().orders.is_empty());
+        drop(db);std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn preopen_respects_occupied_slots_and_announces_early_risk_exits() {
+        let (db,root,mut b,mut ctx)=automatic_test_account();
+        b.max_positions=1;db.save_follow_binding(&b).unwrap();
+        let at=Utc.with_ymd_and_hms(2026,9,21,1,28,0).unwrap();
+        let open=at+chrono::Duration::minutes(2);
+        stage(&db,&b,&ctx,&sample_tick(open),Side::Buy,100,100100,"占用名额",open.timestamp()+300,open).unwrap();
+        assert!(preopen_notice(&db,&b,at).unwrap().is_none());
+        let id=db.get_sim_detail(b.account_id).unwrap().orders[0].id;
+        let fresh=open+chrono::Duration::seconds(2);
+        db.match_sim_order_live_at(id,&sample_tick(fresh),fresh).unwrap();
+        ctx.as_of="2026-09-21".into();ctx.session_dates.push(ctx.as_of.clone());
+        ctx.rows[0].adjusted_close=Some(9.3);ctx.rows[0].close=Some(9.3);
+        b.as_of=ctx.as_of.clone();b.context_json=serde_json::to_string(&ctx).unwrap();
+        db.save_follow_binding(&b).unwrap();
+        let next=at+chrono::Duration::days(1);
+        assert!(held_sessions(&ctx,"2026-09-21","2026-09-22")<20);
+        let notice=preopen_notice(&db,&b,next).unwrap().unwrap();
+        let plans=notice["model_snapshot"]["plans"].as_array().unwrap();
+        assert_eq!(plans.len(),1);assert_eq!(plans[0]["side"],"sell");assert_eq!(plans[0]["quantity"],100);
+        assert!(plans[0]["reason"].as_str().unwrap().contains("3倍"));
+        assert_eq!(db.get_sim_detail(b.account_id).unwrap().positions[0].quantity,100);
+        drop(db);std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn profit_history_and_position_pnl_use_exact_fee_inclusive_partial_sale_cost() {
+        use crate::db::model_follow::FollowProfitQuery;
+        let (db,root,b,ctx)=automatic_test_account();
+        let buy_at=Utc.with_ymd_and_hms(2026,9,21,1,30,0).unwrap();
+        stage(&db,&b,&ctx,&sample_tick(buy_at),Side::Buy,300,100100,"建仓",buy_at.timestamp()+300,buy_at).unwrap();
+        let buy=db.get_sim_detail(b.account_id).unwrap().orders[0].id;
+        let fresh=buy_at+chrono::Duration::seconds(2);
+        db.match_sim_order_live_at(buy,&sample_tick(fresh),fresh).unwrap();
+        assert_eq!(db.follow_profit_history(&FollowProfitQuery::default()).unwrap()["summary"]["count"],0);
+        let sell_at=buy_at+chrono::Duration::days(1);
+        stage(&db,&b,&ctx,&sample_tick(sell_at),Side::Sell,100,99900,"部分卖出",sell_at.timestamp()+300,sell_at).unwrap();
+        let sell=db.get_sim_detail(b.account_id).unwrap().orders[0].id;
+        let fresh=sell_at+chrono::Duration::seconds(2);
+        db.match_sim_order_live_at(sell,&sample_tick(fresh),fresh).unwrap();
+        let query=FollowProfitQuery{account_id:Some(b.account_id),keyword:"600000".into(),start:Some("2026-09-22".into()),end:Some("2026-09-22".into()),page:0};
+        let history=db.follow_profit_history(&query).unwrap();
+        assert_eq!(history["summary"]["count"],1);
+        assert_eq!(history["summary"]["sell_fee_cny"],5.5);
+        let sold_cost=3005*SCALE/3;
+        let realized=9945*SCALE/10-sold_cost;
+        assert_eq!(history["summary"]["profit_cny"].as_f64().unwrap(),realized as f64/SCALE as f64);
+        let position=&view(&db,&b).unwrap()["positions"][0];
+        assert_eq!(position["quantity"],200);
+        assert_eq!(position["market_value_cny"],2000.);
+        let remaining_cost=3005*SCALE-sold_cost;
+        assert_eq!(position["cost_basis_cny"].as_f64().unwrap(),remaining_cost as f64/SCALE as f64);
+        assert_eq!(position["profit_cny"].as_f64().unwrap(),(2000*SCALE-remaining_cost) as f64/SCALE as f64);
+        assert!(position["return_pct"].as_f64().unwrap()<0.);
+        assert!((position["exit_reference_cny"].as_f64().unwrap()-9.4).abs()<1e-8);
+        let mut query=query;
+        query.page=1;
+        let next=db.follow_profit_history(&query).unwrap();
+        assert_eq!(next["summary"]["count"],1);assert!(next["records"].as_array().unwrap().is_empty());
+        query.keyword="% ' OR 1=1".into();query.page=0;
+        assert_eq!(db.follow_profit_history(&query).unwrap()["summary"]["count"],0);
+        query.keyword="".into();query.end=Some("2026-09-21".into());
+        assert!(db.follow_profit_history(&query).is_err());
+        query.start=Some("2026-02-30".into());
+        assert!(db.follow_profit_history(&query).is_err());
+        let mut blocked=b.clone();blocked.valuation_blocked=true;
+        let position=&view(&db,&blocked).unwrap()["positions"][0];
+        assert!(position["profit_cny"].is_null());assert!(position["return_pct"].is_null());
+        assert!(position["market_value_cny"].is_null());
+        drop(db);std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn cap_does_not_increase_single_name_allocation() {
@@ -3253,6 +3565,7 @@ mod tests {
             quantity: 4500,
             available_quantity: 4500,
             cost_price: (10 * SCALE).to_string(),
+            cost_basis: (45000 * SCALE).to_string(),
             acquired_date: "20260918".into(),
             stop_bps: 0,
             take_bps: 0,

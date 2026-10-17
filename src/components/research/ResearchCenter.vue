@@ -5,6 +5,7 @@ import { emit as emitAppEvent } from '@tauri-apps/api/event';
 import { NModal } from 'naive-ui';
 import DailyResearch from './DailyResearch.vue';
 import ModelFollowTrading from './ModelFollowTrading.vue';
+import ModelProfitHistory from './ModelProfitHistory.vue';
 import ResearchJobPanel from './ResearchJobPanel.vue';
 import ResearchMarketData from './ResearchMarketData.vue';
 import { jobActive, type ResearchJob } from '@/types/research';
@@ -50,10 +51,11 @@ const percent = (value: number) => Number.isFinite(value) ? value.toFixed(2) + '
     :content-style="{ padding: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }">
     <template #header><div class="research-title"><h2>研究中心</h2><p>已确认模型 · 自动模拟交易与运行记录</p></div></template>
     <div class="research-center">
-      <nav class="research-nav" aria-label="研究中心导航"><button v-for="item in tabs" :key="item.id" :class="{ active: tab === item.id }" :aria-current="tab === item.id ? 'page' : undefined" @click="tab = item.id">{{ item.label }}</button></nav>
+      <nav class="research-nav" aria-label="研究中心导航"><button v-for="item in tabs" :key="item.id" :class="{ active: tab === item.id }" :aria-current="tab === item.id ? 'page' : undefined" @click="tab = item.id">{{ item.label }}</button><button class="research-profit-link" :class="{active:tab==='profit'}" :aria-current="tab==='profit'?'page':undefined" @click="tab='profit'">历史盈亏</button></nav>
       <div class="research-scroll" tabindex="0" aria-label="研究内容">
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <ModelFollowTrading v-if="tab === 'tracking'" ref="followPanel" :source-runs="runs" :active="show" @refresh-sources="loadModels" />
+        <ModelProfitHistory v-if="tab === 'profit' && show" @back="tab='tracking'" />
         <DailyResearch v-if="tab === 'daily'" ref="dailyPanel" page="daily" :busy="jobsBusy" @job="startedJob" @records="openRecords" @evidence="openRecords()" @open-settings="openSetting" />
         <section v-if="tab === 'records'" class="research-records">
           <h3>运行记录</h3><p>查看数据更新、模型任务及已有账本。模型研究结果随版本更新，你只需确认自动运行设置。</p>

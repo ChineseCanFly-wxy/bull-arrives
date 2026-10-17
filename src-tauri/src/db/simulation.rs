@@ -103,6 +103,7 @@ pub struct Position {
     pub quantity: i64,
     pub available_quantity: i64,
     pub cost_price: String,
+    pub cost_basis: String,
     pub acquired_date: String,
     pub stop_bps: i64,
     pub take_bps: i64,
@@ -874,7 +875,7 @@ impl Database {
             .collect::<SqliteResult<Vec<_>>>()
             .map_err(|error| error.to_string())?;
         let mut statement = conn.prepare(
-            "SELECT id,account_id,symbol,name,quantity,CASE WHEN acquired_date<date('now','+8 hours') THEN quantity ELSE 0 END,cost_basis/quantity,acquired_date,stop_bps,take_bps,max_hold_days,limit_bps
+            "SELECT id,account_id,symbol,name,quantity,CASE WHEN acquired_date<date('now','+8 hours') THEN quantity ELSE 0 END,cost_basis/quantity,acquired_date,stop_bps,take_bps,max_hold_days,limit_bps,cost_basis
              FROM sim_lots WHERE account_id=?1 ORDER BY acquired_date,id",
         ).map_err(|error| error.to_string())?;
         let positions = statement
@@ -887,6 +888,7 @@ impl Database {
                     quantity: row.get(4)?,
                     available_quantity: row.get(5)?,
                     cost_price: row.get::<_, i64>(6)?.to_string(),
+                    cost_basis: row.get::<_, i64>(12)?.to_string(),
                     acquired_date: row.get(7)?,
                     stop_bps: row.get(8)?,
                     take_bps: row.get(9)?,
