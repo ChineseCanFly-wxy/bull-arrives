@@ -645,6 +645,7 @@ fn entry_budget(
     d: &SimDetail,
     ctx: &FollowContext,
     equity: i64,
+    planned_cash: i64,
 ) -> Result<i64, String> {
     let (per, total) = allocation_targets(b)?;
     let per_budget = equity.checked_mul(per).ok_or("预算超限")? / 100;
@@ -667,6 +668,7 @@ fn entry_budget(
     let remaining = (equity.checked_mul(total).ok_or("总预算超限")? / 100)
         .saturating_sub(invested)
         .saturating_sub(reserved_cash(db, d, None)?)
+        .saturating_sub(planned_cash)
         .max(0);
     Ok(per_budget.min(remaining))
 }
@@ -919,12 +921,7 @@ fn preopen_notice(
             let Some(reference) = row.close.filter(|v| *v > 0.) else {
                 continue;
             };
-            let budget = entry_budget(db, binding, &d, &ctx, eq)?
-                - if binding.allocation_policy == "rank5_equal50" {
-                    planned
-                } else {
-                    0
-                };
+            let budget = entry_budget(db, binding, &d, &ctx, eq, planned)?;
             let price = scaled(reference * 1.001)?;
             let quantity = sized_quantity(
                 symbol,
@@ -1381,7 +1378,7 @@ async fn drive(
                 .map_err(|_| "现金无效")?
                 - reserved_cash(db, &d, None)?;
             let preliminary_budget = (preliminary_cash - 10 * SCALE)
-                .min(entry_budget(db, binding, &d, &ctx, estimate)?)
+                .min(entry_budget(db, binding, &d, &ctx, estimate, 0)?)
                 .min(money_scaled(row.amount.unwrap_or(0.) * 0.01)?);
             if !row.valid
                 || row.is_st != Some(0)
@@ -1447,7 +1444,7 @@ async fn drive(
             };
             let liquidity = money_scaled(amount * 0.01)?;
             let budget = (cash - 10 * SCALE)
-                .min(entry_budget(db, binding, &d, &ctx, eq)?)
+                .min(entry_budget(db, binding, &d, &ctx, eq, 0)?)
                 .min(liquidity);
             let quantity = sized_quantity(symbol, budget, limit)?;
             if quantity == 0 {
@@ -1659,7 +1656,7 @@ fn view(db: &Database, b: &FollowBinding) -> Result<Value, String> {
             let qualifies = matches!(&condition, Ok(true));
             let qty = if qualifies { match (row.and_then(|r| r.close),eq) {
                 (Some(p),Some(v)) => scaled(p*1.001).ok().and_then(|price| sized_quantity(s,
-                    (free-10*SCALE).min(entry_budget(db,b,&d,&ctx,v).unwrap_or(0))
+                    (free-10*SCALE).min(entry_budget(db,b,&d,&ctx,v,0).unwrap_or(0))
                     .min(money_scaled(row.and_then(|r| r.amount).unwrap_or(0.)*0.01).unwrap_or(0)),price).ok()).unwrap_or(0),
                 _ => 0
             }} else {0};
@@ -3397,6 +3394,32 @@ mod tests {
         drop(db);std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn preopen_rank_model_announces_all_affordable_slots_without_spending_or_overallocating() {
+        let (db,root,mut b,mut ctx)=automatic_test_account();
+        b.max_positions=5;b.allocation_policy="rank5_equal50".into();
+        let row=ctx.rows[0].clone();
+        ctx.rows.clear();ctx.ranked_symbols.clear();
+        for n in 0..6 {
+            let mut next=row.clone();next.symbol=format!("sh60000{n}");
+            ctx.ranked_symbols.push(next.symbol.clone());ctx.rows.push(next);
+        }
+        b.context_json=serde_json::to_string(&ctx).unwrap();db.save_follow_binding(&b).unwrap();
+        let at=Utc.with_ymd_and_hms(2026,9,21,1,28,0).unwrap();
+        let notice=preopen_notice(&db,&b,at).unwrap().unwrap();
+        let plans=notice["model_snapshot"]["plans"].as_array().unwrap();
+        assert_eq!(plans.len(),5,"all five model slots need a preopen plan");
+        let mut total=0;
+        for plan in plans {
+            let gross=plan["quantity"].as_i64().unwrap()*scaled(10.01).unwrap();
+            let cost=gross+follow_fee(gross,Side::Buy).unwrap();
+            assert!(cost<=10000*SCALE);total+=cost;
+        }
+        assert!(total<=50000*SCALE);
+        let detail=db.get_sim_detail(b.account_id).unwrap();
+        assert_eq!(detail.account.current_cash,"1000000000");assert!(detail.orders.is_empty());
+        drop(db);std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn preopen_respects_star_setting_and_current_round_lot_rules() {
         let (db,root,mut b,mut ctx)=automatic_test_account();
         let mut star=ctx.rows[0].clone();star.symbol="sh688001".into();
@@ -3554,7 +3577,9 @@ mod tests {
         .unwrap();
         let mut d = db.get_sim_detail(b.account_id).unwrap();
         let eq = 100000 * SCALE;
-        assert_eq!(entry_budget(&db, &b, &d, &ctx, eq).unwrap(), 10000 * SCALE);
+        assert_eq!(entry_budget(&db, &b, &d, &ctx, eq, 0).unwrap(), 10000 * SCALE);
+        assert_eq!(entry_budget(&db, &b, &d, &ctx, eq, 9000 * SCALE).unwrap(), 10000 * SCALE);
+        assert_eq!(entry_budget(&db, &b, &d, &ctx, eq, 48000 * SCALE).unwrap(), (2000 * SCALE - reserved_cash(&db,&d,None).unwrap()).max(0));
         // Independent portfolio snapshot: 45% held, plus the real DB pending buy.
         d.account.current_cash = (55000 * SCALE).to_string();
         d.positions.push(crate::db::simulation::Position {
@@ -3573,18 +3598,18 @@ mod tests {
             limit_bps: 1000,
         });
         let reserved = reserved_cash(&db, &d, None).unwrap();
-        let budget = entry_budget(&db, &b, &d, &ctx, eq).unwrap();
+        let budget = entry_budget(&db, &b, &d, &ctx, eq, 0).unwrap();
         assert_eq!(budget, 5000 * SCALE - reserved);
         assert!(budget + reserved + 45000 * SCALE <= eq / 2);
         d.positions[0].quantity = 4900;
-        assert_eq!(entry_budget(&db, &b, &d, &ctx, eq).unwrap(), 0);
+        assert_eq!(entry_budget(&db, &b, &d, &ctx, eq, 0).unwrap(), 0);
         db.reject_follow_order(d.orders[0].id, "撤销预留测试")
             .unwrap();
         d.orders = db.get_sim_detail(b.account_id).unwrap().orders;
-        assert_eq!(entry_budget(&db, &b, &d, &ctx, eq).unwrap(), 1000 * SCALE);
+        assert_eq!(entry_budget(&db, &b, &d, &ctx, eq, 0).unwrap(), 1000 * SCALE);
         let mut missing = ctx;
         missing.rows[0].close = None;
-        assert!(entry_budget(&db, &b, &d, &missing, eq).is_err());
+        assert!(entry_budget(&db, &b, &d, &missing, eq, 0).is_err());
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -3978,7 +4003,7 @@ mod tests {
         binding.allocation_policy = recommended_allocation(&binding.model_id, 3);
         assert_eq!(allocation_targets(&binding).unwrap(), (6, 18));
         let detail = db.get_sim_detail(binding.account_id).unwrap();
-        assert_eq!(entry_budget(&db, &binding, &detail, &ctx, 100000*SCALE).unwrap(), 6000*SCALE);
+        assert_eq!(entry_budget(&db, &binding, &detail, &ctx, 100000*SCALE, 0).unwrap(), 6000*SCALE);
         binding.model_id = "breadth22_h20".into();
         assert!(allocation_targets(&binding).is_err());
         drop(db);
