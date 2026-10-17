@@ -1,0 +1,139 @@
+{
+  "version": "3.0.9",
+  "application_commit": "9a7c4e9cc720ed4d9e44cc888491fc398e6e58ce",
+  "release_url": "https://github.com/ChineseCanFly-wxy/bull-arrives/releases/tag/v3.0.9",
+  "published": true,
+  "workflow": {
+    "id": 39002704539,
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "prepare",
+        "conclusion": "success"
+      },
+      {
+        "name": "build (windows-latest, --target x86_64-pc-windows-msvc --bundles nsis --ci -- --locked)",
+        "conclusion": "success"
+      },
+      {
+        "name": "build (macos-latest, --target universal-apple-darwin --bundles app,dmg --ci -- --locked)",
+        "conclusion": "success"
+      },
+      {
+        "name": "publish",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "portable": {
+    "name": "BullArrives_3.0.9_x64-portable.zip",
+    "bytes": 386533471,
+    "sha256": "062d5cbba6bea877edb5746703f47d49b3c3efab10b52c119e8c2bb2a802a494",
+    "source": "independent anonymous public download after publication",
+    "archive_crc_structure_frozen_files_x64_pe": "passed"
+  },
+  "native_windows": {
+    "status": "passed",
+    "version": "3.0.9",
+    "source": "downloaded release portable executable; actual Tauri IPC and SQLite, synthetic isolated ledger",
+    "fresh_empty_history": true,
+    "reminder_setting_restart": true,
+    "holding": {
+      "profit_cny": 195,
+      "return_pct": 19.402985074626866,
+      "market_value_cny": 1200
+    },
+    "history": {
+      "count": 1,
+      "profit_cny": 89.45,
+      "sell_fee_cny": 5.55
+    },
+    "ui_navigation_filters_and_back": true,
+    "stockdb_used": false,
+    "live_trading_or_real_preopen_time": false
+  },
+  "runtime": {
+    "python": "3.12.14",
+    "frozen_files": 51,
+    "models_loaded_and_predicted": 6,
+    "external_python_or_cache": false,
+    "state": "passed"
+  },
+  "updater": {
+    "version": "3.0.9",
+    "notes_match_release": true,
+    "platforms": [
+      "windows-x86_64",
+      "windows-x86_64-nsis",
+      "darwin-aarch64",
+      "darwin-x86_64",
+      "darwin-aarch64-app",
+      "darwin-x86_64-app"
+    ],
+    "portable_matches_public_SHA256SUMS": true,
+    "cryptographic_signatures": "verified by native minisign in successful publish job"
+  },
+  "release_assets": [
+    {
+      "name": "BullArrives_3.0.9_universal.dmg",
+      "bytes": 512730518,
+      "digest": "sha256:cfc85fa94c9aabf1ef64cefbdc905fb532a582a20036c2b85f16cc11f7a99f15"
+    },
+    {
+      "name": "BullArrives_3.0.9_x64-portable.zip",
+      "bytes": 386533471,
+      "digest": "sha256:062d5cbba6bea877edb5746703f47d49b3c3efab10b52c119e8c2bb2a802a494"
+    },
+    {
+      "name": "BullArrives_3.0.9_x64-setup.exe",
+      "bytes": 336087814,
+      "digest": "sha256:6dbbb008ac9efd283df709ff6790cd2693a9c7ee53a0c92b44e0d2baba96ce39"
+    },
+    {
+      "name": "BullArrives_3.0.9_x64-setup.exe.sig",
+      "bytes": 424,
+      "digest": "sha256:81455bce4d63dc6af2e6550fb0262a7cef50d27b61a14f3f05d95805e54f1dc9"
+    },
+    {
+      "name": "BullArrives_universal.app.tar.gz",
+      "bytes": 516407402,
+      "digest": "sha256:acaf1a2ebf1b9cf02e48bd48891f44ebaa81384c689accc8fe425cdd65fb2586"
+    },
+    {
+      "name": "BullArrives_universal.app.tar.gz.sig",
+      "bytes": 412,
+      "digest": "sha256:9fbb9588726677cb385f4e88a636b9f29d1590c9e388bd1cb616b5638e5b3509"
+    },
+    {
+      "name": "latest.json",
+      "bytes": 4607,
+      "digest": "sha256:7465f30b679e59e8ebb75c11c68e79f898e311abaef08eb59c31c942075d9192"
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "bytes": 679,
+      "digest": "sha256:8401224fd94925480bf59b5f0a3ed5051b8b85486e76b6968b79a8dbe1a3ca9c"
+    }
+  ],
+  "local_checks": {
+    "rust_passed": 448,
+    "rust_ignored": 42,
+    "frontend_build": "passed",
+    "model_follow_ui_checks": 20,
+    "research_center_history_ui": "passed",
+    "persistent_alerts_ui": "passed",
+    "ranked_preopen_budget_regression": "failed before correction,passed after"
+  },
+  "v3_0_8": {
+    "workflow": 38999859828,
+    "status": "cancelled before publication; tag and draft retained"
+  },
+  "protected_installed_exe_unchanged": true,
+  "stockdb_and_user_accounts_touched": false,
+  "limits": [
+    "Synthetic ledger verifies native PnL/UI/IPC, not market profitability.",
+    "09:28 reminders require app running, fresh model data and enabled notifications; real trading-day clock delivery was not observed.",
+    "macOS universal builds and packages verified in CI; no local macOS GUI test.",
+    "No new take-profit rule adopted."
+  ]
+}
