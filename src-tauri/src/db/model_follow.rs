@@ -477,6 +477,11 @@ impl Database {
         )
         .map_err(|e| e.to_string())?;
         tx.execute(
+            "DELETE FROM model_research_runs WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM model_follow_accounts WHERE source_run_id=?1)",
+            [rebuilt_source_run_id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
             "UPDATE model_research_runs SET identity=?2,bundle_json=?3 WHERE id=?1",
             params![
                 old_source_run_id,
@@ -493,8 +498,6 @@ impl Database {
             params![repaired.account_id, serde_json::to_string(&updated).map_err(|e| e.to_string())?],
         )
         .map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM model_research_runs WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM model_follow_accounts WHERE source_run_id=?1)", [rebuilt_source_run_id])
-            .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
         Ok(updated)
     }
