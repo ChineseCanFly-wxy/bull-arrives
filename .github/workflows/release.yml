@@ -167,10 +167,10 @@ jobs:
             grep -E 'panicked at|FAILED|failures:|test result:|error\[|assertion|left:|right:' src-tauri/target/test-diagnostics/cargo-test.normalized.log | tail -n 40 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          grep -E 'panicked at|FAILED|failures:|test result:|error\[|assertion|left:|right:' src-tauri/target/test-diagnostics/cargo-test.normalized.log | tail -n 20 | while IFS= read -r line; do
+            grep -E 'panicked at|FAILED|failures:|test result:|error\[|assertion|left:|right:|source repair failed' src-tauri/target/test-diagnostics/cargo-test.normalized.log | tail -n 20 | while IFS= read -r line; do
             echo "::error::Rust test: ${line:0:800}"
           done
-          grep -n -A 12 -B 5 'panicked at.*model_follow.rs:1151' src-tauri/target/test-diagnostics/cargo-test.normalized.log | tail -n 24 | while IFS= read -r line; do
+          grep -n -A 12 -B 5 'source repair failed' src-tauri/target/test-diagnostics/cargo-test.normalized.log | tail -n 24 | while IFS= read -r line; do
             echo "::error::Rust test context: ${line:0:800}"
           done
       - name: Upload Rust test diagnostics
