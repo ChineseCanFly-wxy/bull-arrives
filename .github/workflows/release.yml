@@ -153,6 +153,20 @@ jobs:
           npm run release:check -- "$RELEASE_TAG" --tracked
           npm run build
           npm run test:rust -- --lib --locked
+      - name: Collect Rust test diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p src-tauri/target/test-diagnostics
+          npm run test:rust -- --lib --locked -- --format terse --test-threads=1 --nocapture > src-tauri/target/test-diagnostics/cargo-test.log 2>&1 || true
+          find src-tauri/target -path '*/debug/deps/*.log' -type f -print -exec cp {} src-tauri/target/test-diagnostics/ \; 2>/dev/null || true
+      - name: Upload Rust test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-test-diagnostics-${{ matrix.platform }}
+          path: src-tauri/target/test-diagnostics/
+          if-no-files-found: warn
       - name: Run installed frozen model acceptance
         if: matrix.platform == 'windows-latest'
         shell: pwsh
