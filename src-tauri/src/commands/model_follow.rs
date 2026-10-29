@@ -1837,12 +1837,12 @@ async fn automatic_source(
                 .then(|| run["id"].as_i64()).flatten()
         })
     };
-    if let Some(id) = continuation.filter(|id| source(db, *id).is_ok_and(|run| run["as_of"] == expected.as_of)) {
+    if let Some(id) = continuation.filter(|id| source(db, *id).is_ok_and(|run| run["as_of"] == expected.as_of && !super::research::source_needs_market_repair(db, &expected.as_of, &run))) {
         return Ok((id, false));
     }
     match super::research::run_model(db, model.into(), 20, "baseline".into(), "forward".into(), continuation).await {
         Ok(id) => Ok((id, false)),
-        Err(error) if error.contains("增量重放改变旧账户账本") => {
+        Err(error) if error == crate::db::model_research::LEDGER_PREFIX_CHANGED => {
             let old = continuation.ok_or_else(|| error.clone())?;
             let start = source(db, old)?["forward_start"].as_i64().ok_or("原前向账户缺少起点")?;
             let rebuilt = super::research::run_model_with_start(
@@ -1928,7 +1928,7 @@ async fn automatic_worker(db: &Database, input: &AutomaticInput, started: DateTi
         if !automatic_enabled(db)? { return Ok(false); }
         let record = db.follow_automatic_record()?;
         if let Some(done) = record.models.iter().find(|row| row["model_id"] == model && automatic_model_terminal(row)) {
-            let fingerprint_matches = done["source_run_id"].as_i64().is_none_or(|id| source(db, id).is_ok_and(|run| run["content_sha256"] == done["source_sha256"]));
+            let fingerprint_matches = done["source_run_id"].as_i64().is_none_or(|id| source(db, id).is_ok_and(|run| run["content_sha256"] == done["source_sha256"] && !super::research::source_needs_market_repair(db, &input.as_of, &run)));
             if fingerprint_matches { continue; }
         }
         let row = match automatic_model(db, model, input).await {
@@ -1971,7 +1971,7 @@ fn revalidate_automatic_completion(db: &Database, input: &AutomaticInput, now: D
     if automatic_record_state(&current, input, now) != "complete" { return Ok(()); }
     let invalid: HashSet<String> = current.models.iter().filter_map(|row| {
         let id = row["source_run_id"].as_i64()?;
-        (!source(db, id).is_ok_and(|run| run["as_of"] == input.as_of && run["content_sha256"] == row["source_sha256"]))
+        (!source(db, id).is_ok_and(|run| run["as_of"] == input.as_of && run["content_sha256"] == row["source_sha256"] && !super::research::source_needs_market_repair(db, &input.as_of, &run)))
             .then(|| row["model_id"].as_str().unwrap_or("").to_string())
     }).collect();
     if invalid.is_empty() { return Ok(()); }

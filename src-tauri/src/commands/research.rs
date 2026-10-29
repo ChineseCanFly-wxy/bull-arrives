@@ -246,7 +246,7 @@ fn provider_chain_repair_config(db:&Database,c:&ModelRunnerConfig,day:&str)->Opt
     let audit=std::path::Path::new(&c.snapshot).parent()?.join("refresh-audit.json");
     let audit:Value=serde_json::from_str(&std::fs::read_to_string(audit).ok()?).ok()?;
     let fallback_day=audit["as_of"].as_str()?;
-    if audit["mode"].as_str()!=Some("provider_fallback") || fallback_day>=day {return None;}
+    if audit["mode"].as_str()!=Some("provider_fallback") || fallback_day>day {return None;}
     let record=db.stockdb_update_record().ok()?;
     if record.data_as_of.as_deref()!=Some(day) {return None;}
     let root=BUNDLED_ROOT.get()?;
@@ -254,6 +254,18 @@ fn provider_chain_repair_config(db:&Database,c:&ModelRunnerConfig,day:&str)->Opt
         .and_then(|raw|serde_json::from_str::<Value>(&raw).ok())
         .and_then(|value|value["quality"]["last_date"].as_i64())
         .is_some_and(|cutoff|cutoff<fallback_day.replace("-","").parse::<i64>().unwrap_or(0)))
+}
+
+pub(crate) fn source_needs_market_repair(db: &Database, day: &str, run: &Value) -> bool {
+    let Ok(config) = model_config(db) else { return false; };
+    if provider_chain_repair_config(db, &config, day).is_some() { return true; }
+    // After the first model completes the backfill, other models can still carry
+    // the old same-day snapshot. Compare against the verified refresh audit.
+    let Some(parent) = std::path::Path::new(&config.snapshot).parent() else { return false; };
+    let Some(audit) = std::fs::read_to_string(parent.join("refresh-audit.json")).ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok()) else { return false; };
+    audit["as_of"] == day && audit["output_sha256"]["snapshot"].as_str()
+        .is_some_and(|sha| run["data_sha256"]["snapshot"].as_str().is_some_and(|old| old != sha))
 }
 
 pub(crate) async fn run_model_with_start(db:&Database,model:String,hold:i64,comparison:String,mode:String,continuation:Option<i64>,forced_start:Option<i64>)->Result<i64,String>{

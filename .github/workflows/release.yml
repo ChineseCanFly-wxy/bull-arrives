@@ -116,7 +116,8 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
-          cache-targets: true
+          cache-targets: false
+          shared-key: release-dependencies-only-v1
           cache-on-failure: true
       - name: Cache Tauri tools
         uses: actions/cache@v4
@@ -135,6 +136,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           version: '0.12.7'
+          cache-dependency-glob: |
+            scripts/research-requirements.in
+            scripts/research-requirements.txt
       - name: Prepare and verify private research environment
         shell: bash
         env:
@@ -147,6 +151,7 @@ jobs:
           python scripts/research-bundle.py self-check
           python scripts/research-bundle.py prepare "src-tauri/target/research-assets/$ASSET_FILE" src-tauri/target/research-runtime
       - name: Build frontend and run offline unit tests
+        id: unit_tests
         shell: bash
         run: |
           npm ci
@@ -154,7 +159,7 @@ jobs:
           npm run build
           npm run test:rust -- --lib --locked
       - name: Collect Rust test diagnostics
-        if: failure()
+        if: failure() && steps.unit_tests.outcome == 'failure'
         shell: bash
         run: |
           mkdir -p src-tauri/target/test-diagnostics
@@ -174,7 +179,7 @@ jobs:
             echo "::error::Rust test context: ${line:0:800}"
           done
       - name: Upload Rust test diagnostics
-        if: failure()
+        if: failure() && steps.unit_tests.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: rust-test-diagnostics-${{ matrix.platform }}

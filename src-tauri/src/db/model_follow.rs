@@ -463,10 +463,15 @@ impl Database {
             .ok_or("补齐后的模型来源不存在，停止原地修复")?;
         let old = super::model_research::decode_run(&old_raw)?;
         let new = super::model_research::decode_run(&new_raw)?;
-        for key in ["model_id", "holding_days", "comparison", "mode", "forward_start", "model_sha256", "score_cache_sha256", "runner_sha256"] {
+        for key in ["model_id", "holding_days", "comparison", "mode", "forward_start", "model_sha256"] {
             if old[key] != new[key] {
                 return Err("补齐账本改变冻结模型身份，拒绝原地修复".into());
             }
+        }
+        let runtime_changed = ["input_sha256", "score_cache_sha256", "runner_sha256"]
+            .iter().any(|key| old[*key] != new[*key]);
+        if runtime_changed && !super::model_research::runtime_upgrade_allowed(&old, &new) {
+            return Err("运行资源升级没有同一冻结模型的兼容证明，旧账户保留".into());
         }
         if new["as_of"].as_str().ok_or("补齐账本缺完成日")? < old["as_of"].as_str().ok_or("原账本缺完成日")? {
             return Err("补齐账本不能回退完成日".into());
@@ -482,11 +487,12 @@ impl Database {
         )
         .map_err(|e| e.to_string())?;
         tx.execute(
-            "UPDATE model_research_runs SET identity=?2,bundle_json=?3 WHERE id=?1",
+            "UPDATE model_research_runs SET identity=?2,bundle_json=?3,updated_at=?4 WHERE id=?1",
             params![
                 old_source_run_id,
                 new_identity,
-                new_raw
+                new_raw,
+                chrono::Utc::now().to_rfc3339()
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -1204,6 +1210,32 @@ pub(crate) mod delete_tests {
         assert_eq!(after.orders.len(), before.orders.len());
         assert!(after.orders.iter().all(|order| order.status != "pending"));
         assert_eq!(db.follow_binding(binding.account_id).unwrap().source_run_id, binding.source_run_id);
+    }
+
+    #[test]
+    fn source_repair_rejects_untrusted_inputs_and_rolls_back_orders() {
+        let (db, binding) = fixture();
+        db.conn.lock().unwrap().execute("INSERT INTO sim_orders(account_id,idempotency_key,symbol,side,quantity,signal_date,source,limit_bps,status,created_at) VALUES(?1,'repair-rollback','sh600001','buy',100,'2026-09-22','rule',2000,'pending','2026-09-22T01:30:00Z')", [binding.account_id]).unwrap();
+        let old = db.model_run_bundle(binding.source_run_id).unwrap();
+        let mut envelope: Value = serde_json::from_str(&old).unwrap();
+        let mut content: Value = serde_json::from_str(envelope["content"].as_str().unwrap()).unwrap();
+        let key = content["input_sha256"].as_object().unwrap().keys().next().unwrap().clone();
+        content["input_sha256"][&key] = json!("0000000000000000000000000000000000000000000000000000000000000001");
+        envelope["content"] = json!(serde_json::to_string(&content).unwrap());
+        let hash = hex::encode(Sha256::digest(envelope["content"].as_str().unwrap().as_bytes()));
+        envelope["content_sha256"] = json!(hash);
+        let new_source = db.save_model_run(&envelope.to_string(), None).unwrap();
+        let mut repaired = binding.clone();
+        repaired.source_run_id = new_source;
+        repaired.source_sha256 = hash;
+        assert!(db.repair_follow_run_in_place(binding.source_run_id, new_source, &repaired).is_err());
+        assert_eq!(db.model_run_bundle(binding.source_run_id).unwrap(), old);
+        assert!(db.model_run_bundle(new_source).is_ok());
+        let conn = db.conn.lock().unwrap();
+        let status: String = conn.query_row("SELECT status FROM sim_orders WHERE idempotency_key='repair-rollback'", [], |r| r.get(0)).unwrap();
+        assert_eq!(status, "pending");
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM model_research_run_repair_archive", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0);
     }
 
     fn manual_account(db: &Database, name: &str) -> i64 {

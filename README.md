@@ -14,7 +14,7 @@
 
 ## 当前版本
 
-当前版本为 **v3.0.9**（2026-10-17）。新增09:28模型买卖预告、持股盈亏卡片和历史盈亏查询；下载请认准 [Releases](https://github.com/ChineseCanFly-wxy/bull-arrives/releases) 中非草稿、非预发布的版本。
+当前版本为 **v3.0.11**（2026-10-29）。完善行情补齐后的模型来源恢复与账户保护；下载请认准 [Releases](https://github.com/ChineseCanFly-wxy/bull-arrives/releases) 中非草稿、非预发布的版本。
 
 ### v3.0.9 更新
 

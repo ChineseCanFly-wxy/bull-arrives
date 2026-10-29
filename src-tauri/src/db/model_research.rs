@@ -94,7 +94,7 @@ pub fn validate_task(v:&Value)->Result<(),String>{
     match v["comparison"].as_str(){Some("holding15") if v["holding_days"]==15=>Ok(()),Some("baseline"|"cost_double"|"staged"|"verified_actions") if v["holding_days"]==20=>Ok(()),_=>Err("模型执行期限/对照不符，十五日不是重新训练模型".into())}
 }
 
-fn runtime_upgrade_allowed(old: &Value, new: &Value) -> bool {
+pub(super) fn runtime_upgrade_allowed(old: &Value, new: &Value) -> bool {
     let previous: Value = serde_json::from_str(include_str!("../../../docs/research-archive/registry-2026-09-30.json")).unwrap();
     let version: Value = serde_json::from_str(include_str!("../../../docs/research-archive/legacy-runtime.json")).unwrap();
     let current: Value = serde_json::from_str(include_str!("../../../research/research-center-runner/registry.json")).unwrap();
@@ -111,6 +111,8 @@ fn runtime_upgrade_allowed(old: &Value, new: &Value) -> bool {
         && sources_match(old, &previous) && sources_match(new, &current)
 }
 
+pub(crate) const LEDGER_PREFIX_CHANGED: &str = "增量重放改变旧账户账本，暂停更新";
+
 pub(super) fn save_model_run_checked(conn:&rusqlite::Connection,raw:&str,continuation:Option<i64>,expected_sha:Option<&str>)->Result<i64,String>{
         let v=decode_run(raw)?;
         let mechanism=json!({"model":v["model_id"],"hold":v["holding_days"],"comparison":v["comparison"],"mode":v["mode"],"start":v["forward_start"],"source":v["input_sha256"],"data":v["data_sha256"],"runner":v["runner_sha256"]});
@@ -126,7 +128,7 @@ pub(super) fn save_model_run_checked(conn:&rusqlite::Connection,raw:&str,continu
             if v["mode"]!="forward"||v["as_of"].as_str()<old["as_of"].as_str(){return Err("只能向前延续观察".into());}
             for key in ["curve","orders","cycles"] {
                 let before=old["ledger"][key].as_array().unwrap();let after=v["ledger"][key].as_array().unwrap();
-                if after.len()<before.len()||after[..before.len()]!=before[..] {return Err("增量重放改变旧账户账本，暂停更新".into());}
+                if after.len()<before.len()||after[..before.len()]!=before[..] {return Err(LEDGER_PREFIX_CHANGED.into());}
             }
             conn.execute("UPDATE model_research_runs SET identity=?1,bundle_json=?2,updated_at=?3 WHERE id=?4",params![identity,raw,chrono::Utc::now().to_rfc3339(),id]).map_err(|e|e.to_string())?;return Ok(id);
         }
