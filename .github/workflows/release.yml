@@ -160,6 +160,15 @@ jobs:
           mkdir -p src-tauri/target/test-diagnostics
           npm run test:rust -- --lib --locked -- --format terse --test-threads=1 --nocapture > src-tauri/target/test-diagnostics/cargo-test.log 2>&1 || true
           find src-tauri/target -path '*/debug/deps/*.log' -type f -print -exec cp {} src-tauri/target/test-diagnostics/ \; 2>/dev/null || true
+          {
+            echo '## Rust test diagnostics'
+            echo '```text'
+            grep -E 'panicked at|FAILED|failures:|test result:|error\[|assertion|left:|right:' src-tauri/target/test-diagnostics/cargo-test.log | tail -n 40 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -E 'panicked at|FAILED|failures:|test result:|error\[|assertion|left:|right:' src-tauri/target/test-diagnostics/cargo-test.log | tail -n 20 | while IFS= read -r line; do
+            echo "::error::Rust test: ${line:0:800}"
+          done
       - name: Upload Rust test diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
