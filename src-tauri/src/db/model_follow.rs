@@ -233,6 +233,14 @@ impl Database {
             CREATE TRIGGER IF NOT EXISTS model_follow_binding_identity BEFORE UPDATE OF source_run_id,account_id ON model_follow_accounts
             WHEN NEW.source_run_id<>OLD.source_run_id OR NEW.account_id<>OLD.account_id
             BEGIN SELECT RAISE(ABORT,'自动模型专用账户不能改绑到其他模型'); END;
+            DROP TRIGGER IF EXISTS model_follow_binding_identity;
+            CREATE TRIGGER model_follow_binding_identity BEFORE UPDATE OF source_run_id,account_id ON model_follow_accounts
+            WHEN NEW.source_run_id<>OLD.source_run_id OR NEW.account_id<>OLD.account_id
+              AND NOT (
+                json_extract(NEW.binding_json,'$.model_id')=json_extract(OLD.binding_json,'$.model_id')
+                AND json_extract(NEW.binding_json,'$.source_repair')=1
+              )
+            BEGIN SELECT RAISE(ABORT,'自动模型专用账户不能改绑到其他模型'); END;
             CREATE TRIGGER IF NOT EXISTS model_follow_account_config BEFORE UPDATE OF mode,manual_source_enabled,rule_source_enabled,ai_source_enabled ON sim_accounts
             WHEN EXISTS(SELECT 1 FROM model_follow_accounts WHERE account_id=OLD.id)
               AND (NEW.manual_source_enabled<>0 OR NEW.rule_source_enabled<>1 OR NEW.ai_source_enabled<>0 OR NEW.mode<>'auto')
@@ -452,7 +460,11 @@ impl Database {
             params![
                 repaired.account_id,
                 repaired.source_run_id,
-                serde_json::to_string(&updated).map_err(|e| e.to_string())?,
+                {
+                    let mut repair_value = serde_json::to_value(&updated).map_err(|e| e.to_string())?;
+                    repair_value["source_repair"] = serde_json::Value::Number(1.into());
+                    serde_json::to_string(&repair_value).map_err(|e| e.to_string())?
+                },
                 old_source_run_id
             ],
         )
@@ -460,6 +472,16 @@ impl Database {
         if tx.changes() != 1 {
             return Err("原模型账户在修复期间变化，未写入新来源".into());
         }
+        let final_json = {
+            let mut final_value = serde_json::to_value(&updated).map_err(|e| e.to_string())?;
+            final_value["source_repair"] = serde_json::Value::Bool(false);
+            serde_json::to_string(&final_value).map_err(|e| e.to_string())?
+        };
+        tx.execute(
+            "UPDATE model_follow_accounts SET binding_json=?2 WHERE account_id=?1",
+            params![repaired.account_id, final_json],
+        )
+        .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
         Ok(updated)
     }
