@@ -1148,7 +1148,8 @@ pub(crate) mod delete_tests {
         repaired.source_run_id = new_source;
         repaired.source_sha256 = hash;
         repaired.message = "修复测试".into();
-        let saved = db.repair_follow_source(binding.source_run_id, &repaired).unwrap();
+        let saved = db.repair_follow_source(binding.source_run_id, &repaired)
+            .map_err(|error| format!("source repair failed: {error}")).unwrap();
         assert_eq!(saved.account_id, binding.account_id);
         assert_eq!(saved.source_run_id, new_source);
         let after = db.get_sim_detail(binding.account_id).unwrap();
