@@ -239,12 +239,31 @@ pub(crate) fn refresh_model_config_controlled(mut c:ModelRunnerConfig,endpoint:S
     Ok(c)
 }
 pub(crate) async fn run_model(db:&Database,model:String,hold:i64,comparison:String,mode:String,continuation:Option<i64>)->Result<i64,String>{
+    run_model_with_start(db,model,hold,comparison,mode,continuation,None).await
+}
+
+fn provider_chain_repair_config(db:&Database,c:&ModelRunnerConfig,day:&str)->Option<ModelRunnerConfig>{
+    let audit=std::path::Path::new(&c.snapshot).parent()?.join("refresh-audit.json");
+    let audit:Value=serde_json::from_str(&std::fs::read_to_string(audit).ok()?).ok()?;
+    let fallback_day=audit["as_of"].as_str()?;
+    if audit["mode"].as_str()!=Some("provider_fallback") || fallback_day>=day {return None;}
+    let record=db.stockdb_update_record().ok()?;
+    if record.data_as_of.as_deref()!=Some(day) {return None;}
+    let root=BUNDLED_ROOT.get()?;
+    bundled_config(root).filter(|base|std::fs::read_to_string(std::path::Path::new(&base.snapshot).join("matrices-metadata.json")).ok()
+        .and_then(|raw|serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|value|value["quality"]["last_date"].as_i64())
+        .is_some_and(|cutoff|cutoff<fallback_day.replace("-","").parse::<i64>().unwrap_or(0)))
+}
+
+pub(crate) async fn run_model_with_start(db:&Database,model:String,hold:i64,comparison:String,mode:String,continuation:Option<i64>,forced_start:Option<i64>)->Result<i64,String>{
     if model=="fundamental37_h20"&&(mode!="replay"||continuation.is_some()){return Err("财务37的更新与前向执行尚未核验，只能运行冻结历史回放".into());}
     let financial=model=="fundamental37_h20";let mut config=model_config(db)?;
-    let start=if let Some(id)=continuation {let row=db.model_run(id)?;if row["model_id"]!=model||row["holding_days"]!=hold||row["comparison"]!=comparison||mode!="forward" {return Err("延续必须保持原模型、期限与执行对照".into());}Some(row["forward_start"].as_i64().ok_or("账户不是前向模式")?)}else{None};
+    let start=if let Some(id)=continuation {let row=db.model_run(id)?;if row["model_id"]!=model||row["holding_days"]!=hold||row["comparison"]!=comparison||mode!="forward" {return Err("延续必须保持原模型、期限与执行对照".into());}Some(row["forward_start"].as_i64().ok_or("账户不是前向模式")?)}else{forced_start};
     if mode=="forward" {
         let endpoint=db.get_setting("local_history_url").map_err(|e|e.to_string())?.unwrap_or_else(||"http://127.0.0.1:7899".into());
         let day=model_completed_day(chrono::Utc::now())?.to_string();
+        if let Some(repair)=provider_chain_repair_config(db,&config,&day) {config=repair;}
         let require_current=true;
         config=tokio::task::spawn_blocking(move||refresh_model_config(config,endpoint,day,require_current)).await.map_err(|e|e.to_string())??;
     }

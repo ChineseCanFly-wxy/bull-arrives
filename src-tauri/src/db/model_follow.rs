@@ -4,6 +4,8 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(test)]
+use sha2::{Digest, Sha256};
 
 pub const AUTOMATIC_RECORD_KEY: &str = "research_auto_trade_record";
 pub const AUTOMATIC_ENABLED_KEY: &str = "research_auto_trade_enabled";
@@ -386,6 +388,82 @@ impl Database {
             )
             .map_err(|e| e.to_string())
     }
+
+    /// Recover an existing account after a completed-day source was rebuilt from a
+    /// longer StockDB history. Cash, lots, filled orders and equity are deliberately
+    /// retained: only stale plans and the trusted source pointer are replaced.
+    pub fn repair_follow_source(
+        &self,
+        old_source_run_id: i64,
+        repaired: &FollowBinding,
+    ) -> Result<FollowBinding, String> {
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+        let raw: String = tx
+            .query_row(
+                "SELECT binding_json FROM model_follow_accounts WHERE account_id=?1",
+                [repaired.account_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .ok_or("原模型账户不存在，不能原地修复")?;
+        let current = decode_binding(&raw)?;
+        if current.source_run_id != old_source_run_id || current.model_id != repaired.model_id {
+            return Err("原模型账户已变化，停止来源修复".into());
+        }
+        if !current.enabled || !current.auto_execute || !repaired.enabled || !repaired.auto_execute {
+            return Err("来源修复不能改变账户启停状态".into());
+        }
+        if current.max_positions != repaired.max_positions
+            || current.allocation_policy != repaired.allocation_policy
+        {
+            return Err("来源修复不能改变用户仓位设置".into());
+        }
+        let other: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM model_follow_accounts WHERE account_id<>?1 AND source_run_id=?2)",
+                params![repaired.account_id, repaired.source_run_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if other {
+            return Err("修复来源已被其他账户使用，停止原地修复".into());
+        }
+        let mut updated = current.clone();
+        updated.source_run_id = repaired.source_run_id;
+        updated.source_sha256 = repaired.source_sha256.clone();
+        updated.context_json = repaired.context_json.clone();
+        updated.as_of = repaired.as_of.clone();
+        updated.execution_policy = repaired.execution_policy.clone();
+        updated.candidate_cursor = 0;
+        updated.valuation_blocked = repaired.valuation_blocked;
+        updated.valuation_block_reason = repaired.valuation_block_reason.clone();
+        updated.state = repaired.state.clone();
+        updated.message = repaired.message.clone();
+        tx.execute(
+            "UPDATE sim_orders SET status='rejected',reject_reason='行情来源补齐修复，旧计划委托已过期'
+             WHERE account_id=?1 AND status IN ('pending','awaiting_confirmation')",
+            [repaired.account_id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE model_follow_accounts SET source_run_id=?2,binding_json=?3 WHERE account_id=?1 AND source_run_id=?4",
+            params![
+                repaired.account_id,
+                repaired.source_run_id,
+                serde_json::to_string(&updated).map_err(|e| e.to_string())?,
+                old_source_run_id
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        if tx.changes() != 1 {
+            return Err("原模型账户在修复期间变化，未写入新来源".into());
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(updated)
+    }
+
     pub fn follow_bindings(&self) -> Result<Vec<FollowBinding>, String> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let mut statement = conn
@@ -1047,6 +1125,42 @@ pub(crate) mod delete_tests {
         db.create_follow_account(&mut binding).unwrap();
         db.enable_model_observation(source_run_id, true).unwrap();
         binding
+    }
+
+    #[test]
+    fn source_repair_keeps_account_and_ledger_while_replacing_stale_plans() {
+        let (db, binding) = fixture();
+        let conn = db.conn.lock().unwrap();
+        conn.execute("INSERT INTO sim_lots(account_id,symbol,quantity,unit_cost,cost_basis,acquired_date) VALUES(?1,'sh600000',100,100000,10000000,'2026-09-18')", [binding.account_id]).unwrap();
+        conn.execute("INSERT INTO sim_orders(account_id,idempotency_key,symbol,side,quantity,signal_date,source,limit_bps,status,created_at) VALUES(?1,'repair-pending','sh600001','buy',100,'2026-09-22','rule',2000,'pending','2026-09-22T01:30:00Z')", params![binding.account_id]).unwrap();
+        drop(conn);
+        let before = db.get_sim_detail(binding.account_id).unwrap();
+        let old = db.model_run_bundle(binding.source_run_id).unwrap();
+        let mut envelope: Value = serde_json::from_str(&old).unwrap();
+        let mut content: Value = serde_json::from_str(envelope["content"].as_str().unwrap()).unwrap();
+        content["data_sha256"]["snapshot"] = json!("0000000000000000000000000000000000000000000000000000000000000001");
+        envelope["content"] = json!(serde_json::to_string(&content).unwrap());
+        let hash = hex::encode(Sha256::digest(envelope["content"].as_str().unwrap().as_bytes()));
+        envelope["content_sha256"] = json!(hash);
+        let new_source = db.save_model_run(&envelope.to_string(), None).unwrap();
+        assert_ne!(new_source, binding.source_run_id);
+        let mut repaired = binding.clone();
+        repaired.source_run_id = new_source;
+        repaired.source_sha256 = hash;
+        repaired.message = "修复测试".into();
+        let saved = db.repair_follow_source(binding.source_run_id, &repaired).unwrap();
+        assert_eq!(saved.account_id, binding.account_id);
+        assert_eq!(saved.source_run_id, new_source);
+        let after = db.get_sim_detail(binding.account_id).unwrap();
+        assert_eq!(after.account.id, before.account.id);
+        assert_eq!(after.account.current_cash, before.account.current_cash);
+        assert_eq!(after.positions.len(), before.positions.len());
+        assert_eq!(after.positions[0].symbol, before.positions[0].symbol);
+        assert_eq!(after.positions[0].quantity, before.positions[0].quantity);
+        assert_eq!(after.orders.len(), before.orders.len());
+        assert!(after.orders.iter().all(|order| order.status != "pending"));
+        assert_eq!(db.follow_binding(binding.account_id).unwrap().source_run_id, new_source);
+        assert!(db.repair_follow_source(binding.source_run_id, &repaired).is_err());
     }
 
     fn manual_account(db: &Database, name: &str) -> i64 {

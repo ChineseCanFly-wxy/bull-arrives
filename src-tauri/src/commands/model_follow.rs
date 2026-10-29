@@ -1820,22 +1820,48 @@ fn automatic_candidates(binding: &FollowBinding) -> Result<bool, String> {
     Ok(false)
 }
 
+async fn automatic_source(
+    db: &Database,
+    model: &str,
+    expected: &AutomaticInput,
+    existing: Option<&FollowBinding>,
+) -> Result<(i64, bool), String> {
+    let _research = super::research::research_gate()
+        .try_acquire()
+        .map_err(|_| AUTOMATIC_RESEARCH_BUSY)?;
+    let continuation = if let Some(binding) = existing {
+        Some(binding.source_run_id)
+    } else {
+        db.model_runs()?.as_array().ok_or("模型来源列表无效")?.iter().find_map(|run| {
+            (run["model_id"] == model && run["comparison"] == "baseline" && run["mode"] == "forward" && run["holding_days"] == 20)
+                .then(|| run["id"].as_i64()).flatten()
+        })
+    };
+    if let Some(id) = continuation.filter(|id| source(db, *id).is_ok_and(|run| run["as_of"] == expected.as_of)) {
+        return Ok((id, false));
+    }
+    match super::research::run_model(db, model.into(), 20, "baseline".into(), "forward".into(), continuation).await {
+        Ok(id) => Ok((id, false)),
+        Err(error) if error.contains("增量重放改变旧账户账本") => {
+            let old = continuation.ok_or_else(|| error.clone())?;
+            let start = source(db, old)?["forward_start"].as_i64().ok_or("原前向账户缺少起点")?;
+            let rebuilt = super::research::run_model_with_start(
+                db, model.into(), 20, "baseline".into(), "forward".into(), None, Some(start),
+            ).await?;
+            log::warn!(target: "automation::model", "模型 {model} 的历史行情被完整来源修正；保留账户与账本，准备原地修复研究来源 {old} -> {rebuilt}");
+            Ok((rebuilt, true))
+        },
+        Err(error) => Err(error),
+    }
+}
+
 async fn automatic_model(db: &Database, model: &str, expected: &AutomaticInput) -> Result<Value, String> {
     if db.automatic_model_excluded(model)? { return Ok(json!({"model_id":model,"state":"excluded","message":"用户暂停或删除的模型，后台不重新开启"})); }
     let existing = model_binding(db, model)?;
     if let Some(binding) = &existing {
         if !binding.enabled { return Ok(json!({"model_id":model,"account_id":binding.account_id,"state":"paused","message":"保留用户暂停设置"})); }
     }
-    let source_id = {
-        let _research = super::research::research_gate().try_acquire().map_err(|_| AUTOMATIC_RESEARCH_BUSY)?;
-        let continuation = if let Some(binding) = &existing { Some(binding.source_run_id) } else {
-            db.model_runs()?.as_array().ok_or("模型来源列表无效")?.iter().find_map(|run| {
-                (run["model_id"] == model && run["comparison"] == "baseline" && run["mode"] == "forward" && run["holding_days"] == 20).then(|| run["id"].as_i64()).flatten()
-            })
-        };
-        if let Some(id) = continuation.filter(|id| source(db, *id).is_ok_and(|run| run["as_of"] == expected.as_of)) { id }
-        else { super::research::run_model(db, model.into(), 20, "baseline".into(), "forward".into(), continuation).await? }
-    };
+    let (source_id, source_repaired) = automatic_source(db, model, expected, existing.as_ref()).await?;
     let run = source(db, source_id)?;
     if run["as_of"] != expected.as_of { return Err("模型只接受本次已完成日线；行情日期已改变，等待下一轮核验".into()); }
     if existing.is_none() && run["signal_watch"].as_array().is_some_and(Vec::is_empty) {
@@ -1850,7 +1876,7 @@ async fn automatic_model(db: &Database, model: &str, expected: &AutomaticInput) 
     }
     // Research/context work deliberately runs outside the follow gate: existing ledgers keep trading.
     let cash = db.simulation_auto_preset()?.initial_cash_cny;
-    let prepared = prepare_follow_binding(db, FollowStart { source_run_id: source_id, initial_cash_cny: cash,
+    let mut prepared = prepare_follow_binding(db, FollowStart { source_run_id: source_id, initial_cash_cny: cash,
         max_positions: existing.as_ref().map(|binding| binding.max_positions) }).await?;
     let _follow = gate().try_acquire().map_err(|_| AUTOMATIC_RESEARCH_BUSY)?;
     let current = automatic_input(db, Utc::now())?;
@@ -1858,7 +1884,24 @@ async fn automatic_model(db: &Database, model: &str, expected: &AutomaticInput) 
     if db.automatic_model_excluded(model)? { return Ok(json!({"model_id":model,"state":"excluded","message":"用户暂停或删除的模型，后台不重新开启"})); }
     if let Some(mut binding) = model_binding(db, model)? {
         if !binding.enabled { return Ok(json!({"model_id":model,"account_id":binding.account_id,"state":"paused","message":"保留用户暂停设置"})); }
-        if binding.source_run_id != source_id { return Err("模型已有其他来源的独立账户，保留原绑定等待刷新".into()); }
+        if binding.source_run_id != source_id {
+            if !source_repaired {
+                return Err("模型已有其他来源的独立账户，保留原绑定等待刷新".into());
+            }
+            let old_source_id = binding.source_run_id;
+            prepared.account_id = binding.account_id;
+            prepared.allocation_policy = binding.allocation_policy.clone();
+            prepared.execution_policy = recommended_execution(
+                &binding.model_id,
+                binding.max_positions,
+                &binding.allocation_policy,
+            );
+            prepared.state = "waiting_session".into();
+            prepared.message = "行情来源已补齐并原地修复；账户、资金、持仓和成交记录保留，旧未成交委托已撤销".into();
+            let repaired = db.repair_follow_source(old_source_id, &prepared)?;
+            db.enable_model_observation(source_id, true)?;
+            return Ok(json!({"model_id":model,"state":"following","account_id":binding.account_id,"as_of":expected.as_of,"source_run_id":source_id,"source_sha256":repaired.source_sha256,"message":repaired.message}));
+        }
         apply_follow_context(db, &mut binding, context(&prepared)?)?;
         db.enable_model_observation(source_id, true)?;
         return Ok(json!({"model_id":model,"state":"following","account_id":binding.account_id,"as_of":expected.as_of,"source_run_id":source_id,"source_sha256":prepared.source_sha256,"message":"已更新原账户的完成日计划，账户本金、持仓和数量设置保留"}));
