@@ -1848,7 +1848,7 @@ async fn automatic_source(
             let rebuilt = super::research::run_model_with_start(
                 db, model.into(), 20, "baseline".into(), "forward".into(), None, Some(start),
             ).await?;
-            log::warn!(target: "automation::model", "模型 {model} 的历史行情被完整来源修正；保留账户与账本，准备原地修复研究来源 {old} -> {rebuilt}");
+            log::warn!(target: "automation::model", "模型 {model} 的历史行情被完整来源修正；保留原账号与绑定，准备原地修复来源账本 {old} -> {rebuilt}");
             Ok((rebuilt, true))
         },
         Err(error) => Err(error),
@@ -1898,9 +1898,9 @@ async fn automatic_model(db: &Database, model: &str, expected: &AutomaticInput) 
             );
             prepared.state = "waiting_session".into();
             prepared.message = "行情来源已补齐并原地修复；账户、资金、持仓和成交记录保留，旧未成交委托已撤销".into();
-            let repaired = db.repair_follow_source(old_source_id, &prepared)?;
-            db.enable_model_observation(source_id, true)?;
-            return Ok(json!({"model_id":model,"state":"following","account_id":binding.account_id,"as_of":expected.as_of,"source_run_id":source_id,"source_sha256":repaired.source_sha256,"message":repaired.message}));
+            let repaired = db.repair_follow_run_in_place(old_source_id, source_id, &prepared)?;
+            db.enable_model_observation(repaired.source_run_id, true)?;
+            return Ok(json!({"model_id":model,"state":"following","account_id":binding.account_id,"as_of":expected.as_of,"source_run_id":repaired.source_run_id,"source_sha256":repaired.source_sha256,"message":repaired.message}));
         }
         apply_follow_context(db, &mut binding, context(&prepared)?)?;
         db.enable_model_observation(source_id, true)?;
