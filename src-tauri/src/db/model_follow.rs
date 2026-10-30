@@ -1061,6 +1061,28 @@ pub(crate) mod delete_tests {
         db.conn.lock().unwrap().execute("INSERT INTO sim_lots(account_id,symbol,quantity,unit_cost,cost_basis,acquired_date) VALUES(?1,'sh688001',336,100000,33600000,?2)",params![account,acquired]).unwrap();
     }
     #[test]
+    fn manual_valuation_sale_updates_ledger_and_respects_t_plus_one() {
+        use chrono::TimeZone;
+        let (db, binding) = fixture();
+        seed_star_position(&db, binding.account_id, "2026-09-21");
+        seed_star_position(&db, binding.account_id, "2026-09-22");
+        let before = db.get_sim_detail(binding.account_id).unwrap();
+        let meta = FollowOrderMeta { order_id: 0, limit_price: 120000, estimated_fee: 0, factor: 1., atr: 0., quote_at: 0, valid_until: 0, context_as_of: binding.as_of.clone(), context_sha256: binding.source_sha256.clone(), allocation_policy: binding.allocation_policy.clone(), execution_policy: binding.execution_policy.clone(), automatic_submission: false };
+        let at = Utc.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
+        db.sell_follow_at_mark(binding.account_id, "sh688001", 120000, at.timestamp(), &meta, at).unwrap();
+        let after = db.get_sim_detail(binding.account_id).unwrap();
+        assert_eq!(after.positions.len(), 1);
+        assert_eq!(after.positions[0].quantity, 336);
+        let sale = after.orders.iter().find(|o| o.side == "sell").unwrap();
+        assert_eq!(sale.quantity, 336);
+        assert_eq!(sale.status, "filled");
+        let fee = crate::commands::model_follow::follow_fee(120000 * 336, crate::simulation::Side::Sell).unwrap();
+        assert_eq!(after.account.current_cash.parse::<i64>().unwrap(), before.account.current_cash.parse::<i64>().unwrap() + 120000 * 336 - fee);
+        assert!(db.follow_order_meta(sale.id).is_ok());
+        assert!(db.sell_follow_at_mark(binding.account_id, "sh688001", 120000, at.timestamp(), &meta, at).is_err());
+        assert_eq!(db.get_sim_detail(binding.account_id).unwrap().account.current_cash, after.account.current_cash);
+    }
+    #[test]
     fn explicit_star_cleanup_refunds_remaining_cost_once_and_preserves_other_assets() {
         let (db,binding)=fixture();
         seed_star_position(&db,binding.account_id,"2026-09-21");

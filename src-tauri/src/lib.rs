@@ -986,6 +986,7 @@ pub fn run() {
             commands::model_follow::research_follow_delete,
             commands::model_follow::research_follow_refresh,
             commands::model_follow::research_follow_order,
+            commands::model_follow::research_follow_sell,
             commands::model_follow::research_follow_star,
             commands::model_follow::research_follow_clear_star,
             news::get_news_archive,

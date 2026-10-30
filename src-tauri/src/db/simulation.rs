@@ -844,6 +844,31 @@ impl Database {
         Ok(order)
     }
 
+    // A user-requested valuation sale is a simulated ledger operation, not a market fill.
+    pub(crate) fn sell_follow_at_mark(&self, account: i64, symbol: &str, price: i64, quote_at: i64, meta: &crate::db::model_follow::FollowOrderMeta, at: chrono::DateTime<chrono::Utc>) -> Result<(), String> {
+        if price <= 0 { return Err("估值价格无效".into()); }
+        let date = at.with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap()).format("%Y-%m-%d").to_string();
+        let stamp = at.to_rfc3339();
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM model_follow_accounts WHERE account_id=?1)", [account], |r| r.get(0)).map_err(|e| e.to_string())?;
+        if !exists { return Err("模型账户不存在".into()); }
+        let (qty, name): (i64, String) = tx.query_row("SELECT COALESCE(SUM(quantity),0),COALESCE(MAX(name),'') FROM sim_lots WHERE account_id=?1 AND symbol=?2 AND acquired_date<?3", params![account,symbol,date], |r| Ok((r.get(0)?,r.get(1)?))).map_err(|e| e.to_string())?;
+        if qty <= 0 { return Err("没有 T+1 可卖持仓".into()); }
+        let gross = price.checked_mul(qty).ok_or("卖出金额超限")?;
+        let fee = crate::commands::model_follow::follow_fee(gross, Side::Sell)?;
+        let proceeds = gross.checked_sub(fee).filter(|v| *v >= 0).ok_or("卖出金额不足以支付费用")?;
+        let (cost, days) = consume_lots(&tx, account, symbol, &date, qty)?;
+        tx.execute("UPDATE sim_orders SET status='rejected',reject_reason='手动估值卖出，撤销该股票未成交委托' WHERE account_id=?1 AND symbol=?2 AND status IN ('pending','awaiting_confirmation')", params![account,symbol]).map_err(|e| e.to_string())?;
+        tx.execute("UPDATE sim_accounts SET cash=cash+?1,updated_at=?2 WHERE id=?3", params![proceeds,stamp,account]).map_err(|e| e.to_string())?;
+        let key = format!("manual-mark-sell:{}:{}", symbol, at.timestamp_nanos_opt().unwrap_or_default());
+        tx.execute("INSERT INTO sim_orders(account_id,idempotency_key,symbol,name,side,quantity,signal_date,source,limit_bps,status,price,gross,fee,cash_delta,cost_basis,created_at,confirmed_at,filled_at,holding_days,decision_reason) VALUES(?1,?2,?3,?4,'sell',?5,?6,'manual',1000,'filled',?7,?8,?9,?10,?11,?12,?12,?12,?13,'用户手动按估值卖出（模拟成交）')", params![account,key,symbol,name,qty,date,price,gross,fee,proceeds,cost,stamp,days]).map_err(|e| e.to_string())?;
+        let id = tx.last_insert_rowid();
+        let mut entry = meta.clone(); entry.order_id = id; entry.limit_price = price; entry.estimated_fee = fee; entry.quote_at = quote_at;
+        tx.execute("INSERT INTO model_follow_orders(order_id,meta_json,notified_status) VALUES(?1,?2,'filled')", params![id,serde_json::to_string(&entry).map_err(|e| e.to_string())?]).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())
+    }
+
     pub fn get_sim_detail(&self, account_id: i64) -> Result<SimDetail, String> {
         let conn = self.conn.lock().unwrap_or_else(|error| error.into_inner());
         let mut account = conn.query_row(

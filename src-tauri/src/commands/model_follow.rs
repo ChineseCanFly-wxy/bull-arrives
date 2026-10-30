@@ -2295,6 +2295,51 @@ async fn refresh_account(
     view(&db, &b)
 }
 #[tauri::command]
+pub async fn research_follow_sell(db: State<'_, Arc<Database>>, manager: State<'_, Arc<DataSourceManager>>, account_id: i64, symbol: String) -> Result<(), String> {
+    let _permit = manual_permit(gate()).await?;
+    let binding = db.follow_binding(account_id)?;
+    let current = view(&db, &binding)?;
+    let position = current["positions"].as_array().and_then(|rows| rows.iter().find(|p| p["symbol"] == symbol)).ok_or("持仓不存在或已卖出")?;
+    if position["available_quantity"].as_i64().unwrap_or(0) <= 0 { return Err("没有 T+1 可卖持仓".into()); }
+    if position["mark_cny"].is_null() { return Err("持仓估值不可用，请先核对行情或公司行动".into()); }
+    let now = Utc::now();
+    let local = now.with_timezone(&cst());
+    let minute = local.hour()*60 + local.minute();
+    let in_hours = ((570..=690).contains(&minute) || (780..=900).contains(&minute)) && crate::datasource::trading_calendar::is_trading_day_at(now, local.date_naive())?;
+    let ctx = context(&binding)?;
+    let row = ctx.rows.iter().find(|r| r.symbol == symbol).ok_or("缺少持仓行情依据")?;
+    let mut chosen = position["mark_cny"].as_f64().zip(position["mark_at"].as_str().and_then(|s| DateTime::parse_from_rfc3339(s).ok()).map(|t| t.timestamp()));
+    let mut sources = manager.all_sources();
+    let active = manager.active_name();
+    sources.sort_by_key(|(name, _)| *name != active);
+    let mut fresh = false;
+    for (_, source) in sources {
+        let response = tokio::time::timeout(std::time::Duration::from_secs(3), source.fetch_realtime(&[symbol.clone()], "CN")).await;
+        if let Ok(Ok(quotes)) = response {
+            if let Some(q) = quotes.into_iter().find(|q| q.code == symbol && q.price.is_finite() && q.price > 0. && q.timestamp > 0 && q.timestamp <= now.timestamp() + 5) {
+                if in_hours && now.timestamp() - q.timestamp > 120 { continue; }
+                // A changed previous close may indicate a corporate action; do not silently price through it.
+                if local.date_naive().to_string() > ctx.as_of && row.close.is_some_and(|close| (q.prev_close-close).abs() > 0.011) { return Err("行情昨收与模型数据不一致，请先核对公司行动或更新数据".into()); }
+                fresh = in_hours;
+                if chosen.is_none_or(|(_, stamp)| q.timestamp > stamp) { chosen = Some((q.price, q.timestamp)); }
+                if in_hours { chosen = Some((q.price, q.timestamp)); break; }
+            }
+        }
+    }
+    if in_hours && !fresh { return Err("盘中实时行情不可用或已过期，未卖出，请稍后重试".into()); }
+    let (price, quote_at) = chosen.ok_or("没有可用的最新估值，未卖出")?;
+    if !in_hours {
+        let last_day = if minute >= 570 && crate::datasource::trading_calendar::is_trading_day_at(now, local.date_naive())? {
+            local.date_naive()
+        } else { super::research::model_completed_day(now)? };
+        let quote_day = DateTime::from_timestamp(quote_at, 0).ok_or("估值时间无效")?.with_timezone(&cst()).date_naive();
+        if quote_day < last_day { return Err("最新估值早于最近交易日，未卖出；请先更新行情".into()); }
+    }
+    let meta = FollowOrderMeta { order_id: 0, limit_price: scaled(price)?, estimated_fee: 0, factor: row.factor, atr: row.atr14.unwrap_or(0.), quote_at, valid_until: now.timestamp(), context_as_of: ctx.as_of.clone(), context_sha256: ctx.source_run_sha256.clone(), allocation_policy: binding.allocation_policy.clone(), execution_policy: binding.execution_policy.clone(), automatic_submission: false };
+    db.sell_follow_at_mark(account_id, &symbol, scaled(price)?, quote_at, &meta, now)
+}
+
+#[tauri::command]
 pub async fn research_follow_order(
     db: State<'_, Arc<Database>>,
     order_id: i64,

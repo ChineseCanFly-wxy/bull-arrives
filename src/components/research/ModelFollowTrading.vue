@@ -12,6 +12,7 @@ const props = withDefaults(defineProps<{ sourceRuns: FollowSourceRun[]; active?:
 const accounts = ref<FollowView[]>([]);
 const selectedId = ref<number | ''>('');
 const removalId = ref<number | null>(null);
+const sellSymbol = ref<string | null>(null);
 const removalPanel = ref<HTMLElement | null>(null);
 const account = computed(() => accounts.value.find(view => view.account_id === selectedId.value) ?? null);
 
@@ -39,6 +40,16 @@ const automatic = ref<FollowAutomaticStatus | null>(null);
 const starEnabled = ref(false);
 const starLoaded = ref(false);
 const starPositions = computed(()=>accounts.value.reduce((count,view)=>count+view.positions.filter(p=>p.symbol.startsWith('sh688')||p.symbol.startsWith('sh689')).length,0));
+async function sellPosition(symbol: string) {
+  if (busy.value || !account.value) return;
+  const accountId = account.value.account_id;
+  action.value = '正在按最新估值卖出…'; error.value = ''; notice.value = '';
+  try {
+    await invoke<void>('research_follow_sell', { accountId, symbol });
+    sellSymbol.value = null;
+    notice.value = '已按最新估值完成模拟卖出，成交价格和费用可在最近成交中查看。';
+  } catch (e) { error.value = String(e); } finally { action.value = ''; await readAccounts(true); }
+}
 async function clearStar() {
   if(busy.value || !starPositions.value) return;
   action.value='正在按成本清理科创板持仓…';error.value='';
@@ -77,6 +88,7 @@ let inFlight = false;
 
 const candidates = computed(() => [...(account.value?.candidates ?? [])].sort((left, right) => left.rank - right.rank));
 const currentNewOrderIds = computed(() => account.value ? newOrderIds.value[account.value.account_id] ?? [] : []);
+const sellable = (symbol: string) => (account.value?.positions ?? []).filter(p => p.symbol === symbol).reduce((sum, p) => sum + p.available_quantity, 0);
 const activeOrder = (order: FollowOrder) => order.status === 'awaiting_confirmation' || order.status === 'pending';
 const occupiedSlots = computed(() => {
   const view = account.value;
@@ -305,7 +317,7 @@ defineExpose({ refresh: readAccounts });
     <div v-if="account" :key="account.account_id" class="follow-selected-account" :data-selected-account-id="account.account_id">
       <div class="follow-account-heading"><h3>{{ account.model_name }} <small>#{{account.account_id}}</small></h3><span>数据截至 {{ timestamp(account.as_of) }} · {{accountState(account)}}</span></div>
       <p v-if="account.message" class="follow-muted">{{ account.message }}</p>
-      <p v-if="!account.enabled" class="follow-paused" role="status">暂停期间不成交。已有持仓保留，未成交委托已撤销；自动发现不会恢复你暂停的账户。</p>
+      <p v-if="!account.enabled" class="follow-paused" role="status">暂停期间自动交易不成交，仍可手动按估值卖出可卖持仓。未成交委托已撤销；自动发现不会恢复你暂停的账户。</p>
             <dl class="follow-metrics">
         <div><dt>账户现金</dt><dd>{{ money(account.cash_cny) }}</dd></div>
         <div><dt>账户净值</dt><dd>{{ money(account.equity_cny) }}</dd></div>
@@ -334,7 +346,7 @@ defineExpose({ refresh: readAccounts });
         <h3>当前持仓 <span>{{ account.positions.length }} 只 / 上限 {{ account.max_positions }} 只</span></h3>
         <p v-if="!account.positions.length" class="follow-empty">当前空仓，程序已提交但未成交的买单尚未计入持仓。</p>
         <div class="follow-position-grid">
-          <article v-for="position in account.positions" :key="position.symbol" class="follow-position">
+          <article v-for="(position, positionIndex) in account.positions" :key="`${position.symbol}-${positionIndex}`" class="follow-position">
             <b>{{ position.name || position.symbol }} <span>{{ position.symbol }}</span></b>
             <div class="follow-position-profit" :class="{up:(position.profit_cny ?? 0)>0,down:(position.profit_cny ?? 0)<0}"><span>持仓盈亏<strong>{{ money(position.profit_cny) }}</strong></span><span>收益率<strong>{{ percent(position.return_pct) }}</strong></span></div>
             <dl class="follow-row-data">
@@ -349,6 +361,12 @@ defineExpose({ refresh: readAccounts });
             </dl>
             <p class="follow-muted">最长计划持有 {{account.execution.holding_days}} 个交易日；可因原模型风险条件提前卖出。<template v-if="position.exit_reference_cny != null">日线退出参考线 {{money(position.exit_reference_cny)}}，按已完成日收盘确认。</template>无固定止盈目标价。</p>
             <p v-if="position.exit_reason" class="follow-muted">计划退出原因：{{ position.exit_reason }}</p>
+            <button v-if="sellSymbol !== position.symbol" type="button" :disabled="busy || !active || !position.available_quantity" @click="sellSymbol=position.symbol">卖出可卖持仓</button>
+            <div v-else class="follow-sell-confirm" role="group" aria-label="确认手动卖出">
+              <p>卖出全部 {{ sellable(position.symbol) }} 股可卖持仓。盘中按实时估值，其他时段按最新可用估值模拟成交，扣除卖出费用；同股票未成交委托会撤销。价格以提交时获取的估值为准，可能与当前显示不同；自动运行时模型以后仍可能重新买入。</p>
+              <button type="button" :disabled="busy" @click="sellSymbol=null">取消</button>
+              <button type="button" class="primary" :disabled="busy || !active" @click="sellPosition(position.symbol)">确认模拟卖出</button>
+            </div>
           </article>
         </div>
         <p v-if="account.positions.length" class="follow-muted">持仓盈亏按标明时间的估值计算，成本含买入费用，尚未扣除未来卖出费用；已实现净盈亏可在研究中心“历史盈亏”查询。</p>

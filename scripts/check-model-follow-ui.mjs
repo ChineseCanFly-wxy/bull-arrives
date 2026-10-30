@@ -5,13 +5,14 @@ import path from 'node:path';
 import { uiHarness } from './ui-check-harness.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const rust = readFileSync(path.join(root,'src-tauri/src/commands/model_follow.rs'),'utf8');
-const commandArgs = Object.fromEntries(['research_follow_setup','research_follow_update','research_follow_refresh','research_follow_order','research_follow_delete'].map(name => {
+const commandArgs = Object.fromEntries(['research_follow_setup','research_follow_update','research_follow_refresh','research_follow_order','research_follow_sell','research_follow_delete'].map(name => {
   const signature = rust.match(new RegExp('pub (?:async )?fn '+name+'\\s*\\(([\\s\\S]*?)\\)\\s*->'));
   assert.ok(signature, 'Missing Rust command '+name);
   return [name,[...signature[1].matchAll(/(?:^|,)\s*(\w+)\s*:/g)].map(match=>match[1]).filter(key=>!['db','manager'].includes(key)).map(key=>key.replace(/_([a-z])/g,(_,letter)=>letter.toUpperCase()))];
 }));
 assert.deepEqual(commandArgs.research_follow_update,['accountId','maxPositions','enabled']);
 assert.deepEqual(commandArgs.research_follow_delete,['accountId']);
+assert.deepEqual(commandArgs.research_follow_sell,['accountId','symbol']);
 const allocation = JSON.parse(readFileSync(path.join(root,'src-tauri/model-follow-allocation.json'),'utf8'));
 const approved = JSON.parse(readFileSync(path.join(root,'src-tauri/approved-models.json'),'utf8'));
 for (const [id, model] of Object.entries(approved.models)) {
@@ -180,6 +181,7 @@ function installMock(catalog, evidence, timing, commandArgs) {
       }
       return clone(account);
     }
+    if (command === 'research_follow_sell') { keys(args, commandArgs[command]); const account=findAccount(args.accountId); if (!account.positions.some(p=>p.symbol===args.symbol && p.available_quantity>0)) throw Error('没有可卖持仓'); account.positions=account.positions.filter(p=>p.symbol!==args.symbol); return; }
     if (command === 'research_follow_delete') { keys(args, commandArgs[command]);findAccount(args.accountId);state.accounts=state.accounts.filter(view=>view.account_id!==args.accountId);return; }
     if (command === 'research_follow_refresh') { keys(args, commandArgs[command]); return clone(findAccount(args.accountId)); }
     if (command === 'research_follow_order') {
@@ -254,6 +256,17 @@ try {
    assert.equal((await calls('research_follow_clear_star')).length,1);
    assert.deepEqual(await t.evaluate('window.__followMock.accounts.map(a=>a.account_id)'),ids);
    await t.evaluate('window.__followMock.accounts[0]=window.__savedAccount');await refresh();
+ });
+
+ await check('Manual sale requires confirmation and submits the selected account and symbol',async()=>{
+   assert.equal(await t.evaluate('document.querySelector(".follow-position > button").disabled'),true);
+   await t.evaluate('window.__saleAccount=JSON.parse(JSON.stringify(window.__followMock.accounts[0]));window.__followMock.accounts[0].positions[0].available_quantity=800');await refresh();
+   await click('.follow-position > button');await t.wait('document.querySelector(".follow-sell-confirm")');
+   assert.match(await t.evaluate('document.querySelector(".follow-sell-confirm").innerText'),/800 股.*实时估值/);
+   await t.click('取消');assert.equal((await calls('research_follow_sell')).length,0);
+   await click('.follow-position > button');await t.click('确认模拟卖出');await t.wait('!document.querySelector(".follow-position")');
+   assert.deepEqual((await calls('research_follow_sell')).at(-1).args,{accountId:ids[0],symbol:'sh600101'});
+   await t.evaluate('window.__followMock.accounts[0]=window.__saleAccount');await refresh();
  });
 
  await check('Three real polling cycles retain the selected detail and button geometry, including failure and explicit refresh',async()=>{
