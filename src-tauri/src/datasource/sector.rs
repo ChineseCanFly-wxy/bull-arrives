@@ -161,6 +161,8 @@ pub struct SectorHistory {
     pub items: Vec<SectorKline>,
     pub as_of: String,
     pub source: String,
+    /// 发布方官方序列自身漏发的真实交易日允许单列披露；本程序缺失日期仍拒绝。
+    pub publisher_gaps_allowed: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -923,6 +925,7 @@ fn parse_history_payload(
         sector_code: sector_code.into(), period: period.into(),
         as_of: items.last().unwrap().date.clone(), items,
         source: format!("{} · 90.BK · unadjusted", host.trim_start_matches("https://")),
+        publisher_gaps_allowed: false,
     })
 }
 
@@ -991,9 +994,28 @@ async fn request_history_window(
         query.extend([("beg", beg), ("ut", "fa5fd1943c7b386f172d6893dbfba10b".into()), ("smplmt", "1000000".into())]);
     }
     // bool标记传输是否可用：断连/超时/HTTP失败不再对该主机重复参数窗口。
-    let response = with_browser_headers(universe_client().get(format!("{host}/api/qt/stock/kline/get")),
-        "https://quote.eastmoney.com/").query(&query).timeout(timeout).send().await
-        .map_err(|error| (format!("{provenance}：板块 K 线请求失败：{error}"), false))?;
+    // 全局并发闸门：8个板块并发时各自的兜底窗口会放大突发连接数，官方接口
+    // 可能直接断开（2026-11-25 全市场扫描因此全部失败）。传输失败先退避重试一次。
+    static KLINE_GATE: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+    let gate = KLINE_GATE.get_or_init(|| tokio::sync::Semaphore::new(6));
+    let mut sent = None;
+    let mut transport_error = None;
+    for attempt in 0..2u32 {
+        let permit = gate.acquire().await;
+        let request = with_browser_headers(universe_client().get(format!("{host}/api/qt/stock/kline/get")),
+            "https://quote.eastmoney.com/").query(&query).timeout(timeout);
+        match request.send().await {
+            Ok(value) => { drop(permit); sent = Some(value); break; }
+            Err(error) => {
+                drop(permit);
+                let retriable = error.is_connect() || error.is_timeout();
+                transport_error = Some(error);
+                if attempt == 0 && retriable { tokio::time::sleep(Duration::from_millis(800)).await; } else { break; }
+            }
+        }
+    }
+    let response = sent.ok_or_else(|| (format!("{provenance}：板块 K 线请求失败：{}",
+        transport_error.expect("transport error present when send failed")), false))?;
     let response = response.error_for_status()
         .map_err(|error| (format!("{provenance}：板块 K 线 HTTP失败：{error}"), false))?;
     let value: serde_json::Value = response.json().await

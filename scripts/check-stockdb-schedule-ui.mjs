@@ -53,7 +53,7 @@ try{
  await t.evaluate('document.querySelector("details.history-advanced").open=true');
  assert.equal(await t.evaluate('document.querySelector("input[type=time]").value'),'09:00');
  assert.equal(await t.evaluate(`document.querySelector('[aria-label="StockDB交易日自动更新"]').getAttribute("aria-checked")`),'true');
- const text=await t.evaluate('document.querySelector("details.history-advanced").innerText');assert.match(text,/只执行一次.*不自动重试.*重启也不重复/s);assert.doesNotMatch(text,/1分钟|连续5次/);
+ const text=await t.evaluate('document.querySelector("details.history-advanced").innerText');assert.match(text,/间隔30分钟自动重试.*当天最多3次.*重启不会重复/s);assert.doesNotMatch(text,/1分钟|连续5次/);
  assert.equal(await t.evaluate('document.querySelectorAll("details.history-advanced input[type=number]").length'),0,'Retry policy has no user settings');
  await t.evaluate('(()=>{const el=document.querySelector("input[type=time]");el.value="09:15";el.dispatchEvent(new Event("input",{bubbles:true}));})()');await t.click('保存时间');
  await t.wait('window.__clockSettings.localHistoryAutoUpdateTime==="09:15"');

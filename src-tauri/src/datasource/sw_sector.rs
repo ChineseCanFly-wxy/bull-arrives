@@ -110,7 +110,8 @@ fn parse_history(code: &str, payload: &Value) -> Result<SectorHistory, String> {
         items.push(SectorKline { date: date.to_string(), open, close, high, low, volume, amount,
             change_pct: Some(number(row, "markup")?), turnover_rate: None });
     }
-    Ok(SectorHistory { sector_code: code.into(), period: "daily".into(),
+    // 发布方序列可能漏发个别真实交易日（如2026-10-15）；对齐时单列披露，不补价。
+    Ok(SectorHistory { publisher_gaps_allowed: true, sector_code: code.into(), period: "daily".into(),
         as_of: items.last().ok_or("申万官方日线为空")?.date.clone(), items,
         source: format!("申万宏源研究官方 · {code} DAY · 成交量bargainamount/额bargainsum保留发布者原单位（未换算） · 抓取{}", Utc::now().to_rfc3339()) })
 }

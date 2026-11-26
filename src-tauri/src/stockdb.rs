@@ -745,7 +745,7 @@ impl StockDbManager {
 
     fn record_update_failure(&self,now:chrono::DateTime<chrono::Utc>)->Result<(),String>{
         if let Some(error)=crate::stockdb_schedule::claim_failure_notice(&self.db,now)?{
-            log::error!(target: "automation::data", "StockDB更新失败或中断，今天不自动重试。原因：{}；可手动更新或等待下一交易日。", error.chars().take(600).collect::<String>());
+            log::error!(target: "automation::data", "StockDB更新失败或中断；30分钟后将自动重试，当天最多3次，也可手动更新。原因：{}", error.chars().take(600).collect::<String>());
         }
         Ok(())
     }
@@ -859,7 +859,7 @@ impl StockDbManager {
                             if started.elapsed()>Duration::from_secs(1800){
                                 if let Some(job)=runtime.updater_job.take(){job.terminate();}
                                 if let Some(mut child)=runtime.updater_child.take(){let _=child.kill();let _=child.wait();}
-                                Some(Err("StockDB更新超过30分钟，本次停止；今天不自动重试".into()))
+                                Some(Err("StockDB更新超过30分钟，本次停止；稍后将自动重试".into()))
                             }else{None}
                         },
                         Err(error) => {

@@ -154,6 +154,89 @@ def compare_factors(prior, current, cutoff, codes, first_observed_date=0):
             raise ValueError("上次已观测历史复权记录被修订，停止延续：" + str(key))
 
 
+def sync_boundary_revisions(original, codes, metadata, boundary_map, ci):
+    """Re-sync the newest exported row with the source's current values.
+
+    StockDB often ingests a completed session before the close is finalised;
+    thousands of rows later receive small close/volume/amount corrections plus
+    recomputed pct_chg. Requiring bitwise equality froze every later update
+    forever (observed 2026-11-24: 000001 close 12.32 -> official 12.30 across
+    Eastmoney/Tencent). The boundary row is overwritten with the recorded
+    revisions; interior history stays frozen and implausible revisions,
+    ST-flag changes or a systematic rewrite still stop the refresh.
+    """
+    cutoff = int(original["dates"][-1])
+    strict = day(metadata.get("online_refresh", {}).get("requested_as_of", 0)) == cutoff
+    changes = []
+    close_rels = []
+    material = []
+    observed = 0
+    for c, code in enumerate(codes):
+        if not original["seen"][-1, c]:
+            continue
+        row = boundary_map.get(code)
+        if row is None:
+            raise ValueError("冻结最后一天的已观测行情缺失：" + code)
+        observed += 1
+        for field in FIELDS:
+            prior = original["raw_" + field][-1, c]
+            now = np.asarray(finite(row.get(field)), dtype=original["raw_" + field].dtype).item()
+            if prior == now or (np.isnan(prior) and np.isnan(now)):
+                continue
+            if field == "is_st":
+                raise ValueError("边界ST标记被修订，停止延续：" + code)
+            if not (math.isfinite(prior) and math.isfinite(now)):
+                if field in ("pe_ttm", "pb") and not strict:
+                    changes.append((c, field, now))
+                    continue
+                raise ValueError("冻结边界行情被修订或跨源不一致：" + code + "/" + field)
+            if strict:
+                # Online-provider boundaries keep the original cross-source tolerances.
+                if field in ("open", "high", "low", "close"):
+                    same = abs(float(prior) - float(now)) <= .001
+                elif field in ("volume", "amount"):
+                    same = abs(float(prior) - float(now)) <= max(100., abs(float(prior)) * .003)
+                elif field == "pct_chg":
+                    same = abs(float(prior) - float(now)) <= .05
+                else:
+                    same = True
+                if not same:
+                    raise ValueError("冻结边界行情被修订或跨源不一致：" + code + "/" + field)
+                continue
+            rel = abs(float(prior) - float(now)) / max(abs(float(prior)), 1e-9)
+            delta = abs(float(prior) - float(now))
+            if field in ("open", "high", "low", "close"):
+                if rel > .05 and delta > .05:
+                    raise ValueError("边界行情修订超出可接受幅度：" + code + "/" + field)
+                close_rels.append(rel)
+                if rel > .01:
+                    material.append({"code": code, "field": field, "from": float(prior), "to": float(now)})
+            elif field in ("volume", "amount"):
+                if rel > .5:
+                    raise ValueError("边界量额修订超出可接受幅度：" + code + "/" + field)
+                if rel > .1:
+                    material.append({"code": code, "field": field, "from": float(prior), "to": float(now)})
+            elif field == "pct_chg":
+                if delta > 3.:
+                    raise ValueError("边界涨跌幅修订超出可接受幅度：" + code + "/" + field)
+                if delta > 1.:
+                    material.append({"code": code, "field": field, "from": float(prior), "to": float(now)})
+            changes.append((c, field, now))
+    if close_rels:
+        close_rels.sort()
+        median_rel = close_rels[len(close_rels) // 2]
+        if median_rel > .02:
+            raise ValueError(f"边界收盘价整体修订中位数{median_rel:.2%}，疑似复权或来源重写，停止延续")
+        beyond = sum(1 for rel in close_rels if rel > .02)
+        if observed and beyond > observed * .1:
+            raise ValueError(f"边界收盘价明显修订{beyond}/{observed}只，疑似来源重写，停止延续")
+    stats = {"cutoff": cutoff, "observed": observed, "changed_fields": len(changes), "changed_close": len(close_rels),
+             "median_close_rel": close_rels[len(close_rels) // 2] if close_rels else 0.0,
+             "material_examples": material[:200], "material_total": len(material),
+             "policy": "StockDB收盘定稿的边界行情重同步为源当前值并留痕；复权式整体重写、ST标记或超幅修订仍拒绝"}
+    return changes, stats
+
+
 def append_matrices(original, metadata, daily, boundary, live_factors, new_dates, invalid_rows, minimum_coverage=2000, minimum_coverage_ratio=.95):
     codes = original["codes"].tolist()
     ci = {c: i for i, c in enumerate(codes)}
@@ -164,26 +247,7 @@ def append_matrices(original, metadata, daily, boundary, live_factors, new_dates
     boundary_map = {str(r["code"]): r for r in boundary if str(r.get("code")) in ci}
     if len(boundary_map) != sum(str(r.get("code")) in ci for r in boundary):
         raise ValueError("边界日重复股票")
-    for c, code in enumerate(codes):
-        if not original["seen"][-1, c]:
-            continue
-        row = boundary_map.get(code)
-        if row is None:
-            raise ValueError("冻结最后一天的已观测行情缺失：" + code)
-        for field in FIELDS:
-            prior = original["raw_" + field][-1, c]
-            now = np.asarray(finite(row.get(field)), dtype=original["raw_" + field].dtype).item()
-            same = prior == now or (np.isnan(prior) and np.isnan(now))
-            provider_boundary = day(metadata.get("online_refresh",{}).get("requested_as_of",0)) == cutoff
-            if provider_boundary:
-                # Check source agreement without replacing a single stored value.
-                # Technical models do not use missing online valuation fields.
-                if field in ("pe_ttm","pb") and np.isnan(prior):same = True
-                elif field in ("open","high","low","close"):same = math.isfinite(prior) and math.isfinite(now) and abs(float(prior)-float(now))<=.001
-                elif field in ("volume","amount"):same = math.isfinite(prior) and math.isfinite(now) and abs(float(prior)-float(now))<=max(100.,abs(float(prior))*.003)
-                elif field=="pct_chg":same = math.isfinite(prior) and math.isfinite(now) and abs(float(prior)-float(now))<=.05
-            if not same:
-                raise ValueError("冻结边界行情被修订或跨源不一致：" + code + "/" + field)
+    boundary_changes, boundary_revision = sync_boundary_revisions(original, codes, metadata, boundary_map, ci)
     shape = (old_n + len(new_dates), len(codes))
     data = {"codes": original["codes"], "dates": np.concatenate((original["dates"], np.asarray(new_dates, dtype=original["dates"].dtype)))}
     for key, values in original.items():
@@ -195,6 +259,8 @@ def append_matrices(original, metadata, daily, boundary, live_factors, new_dates
         data[key] = np.full(shape, fill, values.dtype)
         data[key][:old_n] = values
     data["factors"][old_n:] = original["factors"][-1]
+    for c, field, value in boundary_changes:
+        data["raw_" + field][old_n - 1, c] = value
     di = {d: old_n + i for i, d in enumerate(new_dates)}
     observed = set()
     ignored = set()
@@ -253,14 +319,22 @@ def append_matrices(original, metadata, daily, boundary, live_factors, new_dates
         events.append({"i": i, "c": c, "event": event})
     for key, values in original.items():
         prefix = data[key] if key == "codes" else data[key][:old_n]
-        if not np.array_equal(prefix, values, equal_nan=values.dtype.kind == "f"):
+        if key.startswith("raw_"):
+            reference = values.copy()
+            for c, field, value in boundary_changes:
+                if field == key[4:]:
+                    reference[-1, c] = value
+            if not np.array_equal(prefix, reference, equal_nan=values.dtype.kind == "f"):
+                raise ValueError("新增导出改变历史前缀：" + key)
+        elif not np.array_equal(prefix, values, equal_nan=values.dtype.kind == "f"):
             raise ValueError("新增导出改变历史前缀：" + key)
     if not np.all(np.isfinite(data["factors"]) & (data["factors"] > 0)):
         raise ValueError("复权连续性失败")
     result_meta = dict(metadata)
+    result_meta["boundary_revision"] = boundary_revision
     result_meta["events"] = events
     result_meta["quality"] = {**metadata["quality"], "stocks": len(codes), "sessions": len(data["dates"]), "last_date": new_dates[-1], "factor_events": len(events)}
-    return data, result_meta, {"ignored_new_symbols": sorted(ignored), "coverage": {str(d): int(data["valid"][i].sum()) for d, i in di.items()}, "coverage_gate": {"minimum_absolute": minimum_coverage, "minimum_ratio": minimum_coverage_ratio, "reference": "max(source cutoff valid count, previous completed day valid count)", "days": coverage_checks, "limitation": "5% tolerance is a conservative availability guard, not proof all listed shares are updated; larger suspension/data gaps stop refresh"}, "all_matrix_prefixes_exact": True, "historical_events_unchanged": True}
+    return data, result_meta, {"boundary_revision": boundary_revision, "ignored_new_symbols": sorted(ignored), "coverage": {str(d): int(data["valid"][i].sum()) for d, i in di.items()}, "coverage_gate": {"minimum_absolute": minimum_coverage, "minimum_ratio": minimum_coverage_ratio, "reference": "max(source cutoff valid count, previous completed day valid count)", "days": coverage_checks, "limitation": "5% tolerance is a conservative availability guard, not proof all listed shares are updated; larger suspension/data gaps stop refresh"}, "all_matrix_prefixes_exact": True, "historical_events_unchanged": True}
 
 
 def refresh_stockdb(args):
@@ -345,7 +419,7 @@ def refresh_stockdb(args):
     if hashes != {"snapshot": digest(source / "matrices.npz"), "metadata": digest(source / "matrices-metadata.json"), "index": digest(index)}:
         raise ValueError("源文件在计算期间改变，拒绝混用")
     checks["factor_history_first_observed_date"] = first_observed_date
-    result = {"state": "updated", "snapshot": str(exports), "index": str(new_index), "as_of": args.as_of, "input_sha256": hashes, "output_sha256": {"snapshot": digest(exports / "matrices.npz"), "metadata": digest(exports / "matrices-metadata.json"), "index": digest(new_index)}, "checks": checks, "requests": client.requests, "index_provenance": index_provenance, "production_admission": False, "limitations": ["只拒绝上次已观测复权历史与最后完成日行情修订；首次只核矩阵日期轴内事件，此后核留存的全历史API事件；不宣称实时重新审计全八年原始日线", "代码轴固定，新增上市股不自动获得模型资格；日线、开盘代理，不具备分时抢先提醒", "指数新来源两位报价舍入与旧前缀来源不同，已核对重叠价格，不认证历史PIT"]}
+    result = {"state": "updated", "snapshot": str(exports), "index": str(new_index), "as_of": args.as_of, "input_sha256": hashes, "output_sha256": {"snapshot": digest(exports / "matrices.npz"), "metadata": digest(exports / "matrices-metadata.json"), "index": digest(new_index)}, "checks": checks, "requests": client.requests, "index_provenance": index_provenance, "production_admission": False, "limitations": ["只拒绝上次已观测复权历史与超幅边界修订；StockDB收盘定稿的边界行情重同步为源当前值并在boundary_revision留痕；首次只核矩阵日期轴内事件，此后核留存的全历史API事件；不宣称实时重新审计全八年原始日线", "代码轴固定，新增上市股不自动获得模型资格；日线、开盘代理，不具备分时抢先提醒", "指数新来源两位报价舍入与旧前缀来源不同，已核对重叠价格，不认证历史PIT"]}
     write_json(output / "refresh-audit.json", result)
     return result
 
@@ -393,6 +467,15 @@ def self_check():
             pass
         else:
             raise AssertionError("revision/duplicate/partial cross-section accepted")
+    finalised = [dict(r) for r in boundary]
+    finalised[1]["close"] = 10.03
+    finalised[1]["volume"] = 10.5
+    finalised[2]["pct_chg"] = 10.2
+    data2, updated2, checks2 = append_matrices(original, meta, rows, finalised, {}, [20260928], [], minimum_coverage=3)
+    assert data2["raw_close"][0, 1] == np.float32(10.03) and data2["raw_volume"][0, 1] == np.float32(10.5)
+    assert data2["raw_close"][0, 0] == np.float32(10) and bool(data2["seen"][0, 2])
+    revision = checks2["boundary_revision"]
+    assert revision["changed_fields"] == 3 and revision["observed"] == 3 and updated2["boundary_revision"] == revision
     before = {("000001", 20260924): {f: 1 for f in FACTORS}}
     prehistory = {**before, ("000001", 20100101): {f: 1 for f in FACTORS}}
     compare_factors(before, prehistory, 20260924, {"000001"}, 20180102)
@@ -485,7 +568,7 @@ def self_check():
             assert (Path(result["snapshot"]).parent / "http-responses/factor-history-audit.json.gz").is_file()
         finally:
             Client, fetch_index = real_client, real_index
-    print(json.dumps({"self_check": "passed", "checks": ["unchanged axes/prefix", "reject revised boundary", "reject duplicates and incomplete coverage", "reject >2000 partial batch below 95% prior coverage", "reject revised historical actions", "explicit CSI300 append with documented rounding"]}))
+    print(json.dumps({"self_check": "passed", "checks": ["unchanged axes/prefix", "reject implausible boundary revisions", "resync finalised stockdb boundary with audit", "reject duplicates and incomplete coverage", "reject >2000 partial batch below 95% prior coverage", "reject revised historical actions", "explicit CSI300 append with documented rounding"]}))
 
 
 if __name__ == "__main__":

@@ -133,6 +133,18 @@ pub fn due(
     // A durable attempt consumes today's automatic update, even after a crash.
     // Manual updates can still be explicitly claimed below.
     if record.last_attempt_day.as_deref() == Some(day(now).as_str()) {
+        // 网络或数据源的瞬时失败曾消耗整个交易日。限制为最多3次、间隔30分钟
+        // 的自动重试；中断（无完成记录）的运行当天仍不自动重启。
+        let retriable = record.failures > 0
+            && record.failures < 3
+            && record
+                .last_finished_at
+                .as_deref()
+                .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
+                .is_some_and(|finished| (now - finished.with_timezone(&Utc)).num_minutes() >= 30);
+        if retriable {
+            return Ok("due");
+        }
         return Ok("failed");
     }
     Ok("due")
@@ -155,7 +167,7 @@ pub fn status(db: &Database, now: DateTime<Utc>) -> Result<UpdateStatus, String>
         "waiting_calendar" => "交易日历证据不足，取得证据后再自动更新",
         "complete" => "今天已更新，重启应用不会重复执行",
         "running" => "StockDB正在自动更新",
-        "failed" => "今天已执行一次，失败或中断后不自动重试；可手动更新或等待下一交易日",
+        "failed" => "更新失败；间隔30分钟自动重试，当天最多3次；也可手动更新或等待下一交易日",
         _ => "已到更新时间，程序将自动更新",
     };
     Ok(UpdateStatus {
@@ -311,6 +323,26 @@ mod tests {
         assert_eq!(due(&cfg(), &record, at(10, 0), true, false).unwrap(), "failed");
         let tomorrow = at(9, 0) + chrono::Duration::days(1);
         assert_eq!(due(&cfg(), &record, tomorrow, true, false).unwrap(), "due");
+    }
+    #[test]
+    fn transient_failures_auto_retry_spaced_until_exhausted() {
+        let record = |failures: u32| UpdateRecord {
+            last_attempt_day: Some("2026-09-29".into()),
+            last_attempt_at: Some(at(9, 0).to_rfc3339()),
+            last_finished_at: Some(at(9, 2).to_rfc3339()),
+            failures,
+            last_error: Some("网络暂不可用".into()),
+            ..Default::default()
+        };
+        assert_eq!(due(&cfg(), &record(1), at(9, 3), false, false).unwrap(), "failed");
+        assert_eq!(due(&cfg(), &record(1), at(9, 32), false, false).unwrap(), "due");
+        assert_eq!(due(&cfg(), &record(2), at(9, 40), false, false).unwrap(), "due");
+        assert_eq!(due(&cfg(), &record(3), at(9, 40), false, false).unwrap(), "failed");
+        let mut unfinished = record(1);
+        unfinished.last_finished_at = None;
+        assert_eq!(due(&cfg(), &unfinished, at(19, 0), true, false).unwrap(), "failed");
+        let tomorrow = at(9, 0) + chrono::Duration::days(1);
+        assert_eq!(due(&cfg(), &record(3), tomorrow, true, false).unwrap(), "due");
     }
     #[test]
     fn failure_blocks_automatic_restarts_but_allows_manual_updates_and_next_day() {

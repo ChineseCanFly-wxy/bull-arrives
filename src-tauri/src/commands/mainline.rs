@@ -45,7 +45,7 @@ async fn benchmark(day:&str)->Result<Vec<KLineData>,String>{
     if rows.last().map(|b|b.date.as_str())!=Some(day)||rows.len()<66{return Err("真实沪深300指数日线缺失或截止日不一致".into());}
     Ok(rows)
 }
-fn aligned_market_window(bars:&[KLineData],index:&[KLineData])->Result<(Vec<KLineData>,usize),String> {
+fn aligned_market_window(bars:&[KLineData],index:&[KLineData],publisher_gaps:bool)->Result<(Vec<KLineData>,Vec<KLineData>,usize,Vec<String>),String> {
     if index.len()<66 || index.windows(2).any(|r|r[0].date>=r[1].date) {return Err("真实指数历史不足、重复或倒序".into());}
     if bars.windows(2).any(|r|r[0].date>=r[1].date) {return Err("行情包含重复或倒序日期".into());}
     let base=&index[index.len()-66..];
@@ -60,20 +60,36 @@ fn aligned_market_window(bars:&[KLineData],index:&[KLineData])->Result<(Vec<KLin
             removed+=1;
         }
     }
-    let aligned=base.iter().map(|day| {
-        bars.binary_search_by(|row|row.date.cmp(&day.date)).map(|i|bars[i].clone())
-            .map_err(|_|format!("缺少真实交易日{}的行情，不能比较强度",day.date))
-    }).collect::<Result<Vec<_>,_>>()?;
-    Ok((aligned,removed))
+    // 发布方可能漏发个别真实交易日（申万2026-10-15官方序列缺发，六周未补）。
+    // 仅当板块自身序列完整覆盖窗口两端时，允许最多3个缺口按双方共有交易日
+    // 计算，缺口单列披露；绝不补造价格，也不放宽成员个股的严格校验。
+    let covers_window = bars.first().is_some_and(|r|r.date.as_str()<=first) && bars.last().is_some_and(|r|r.date.as_str()==last);
+    let tolerate = publisher_gaps && covers_window;
+    let mut missing_publisher_dates=Vec::new();
+    let mut aligned=Vec::with_capacity(66);let mut aligned_index=Vec::with_capacity(66);
+    for day in base {
+        match bars.binary_search_by(|row|row.date.cmp(&day.date)) {
+            Ok(i)=>{aligned.push(bars[i].clone());aligned_index.push(day.clone());},
+            Err(_)=>{
+                if !(tolerate && missing_publisher_dates.len()<3) {
+                    return Err(format!("缺少真实交易日{}的行情，不能比较强度",day.date));
+                }
+                missing_publisher_dates.push(day.date.clone());
+            }
+        }
+    }
+    Ok((aligned,aligned_index,removed,missing_publisher_dates))
 }
-fn relative_metrics(bars:&[KLineData],index:&[KLineData])->Result<Value,String>{
+fn relative_metrics(bars:&[KLineData],index:&[KLineData],publisher_gaps:bool)->Result<Value,String>{
     // Align actual sessions; discard only dates confirmed closed by the shared market calendar.
-    // Never intersect away a missing trading session or fill an absent price.
-    let (aligned,removed)=aligned_market_window(bars,index)?;
-    let mut m=metrics(&aligned).ok_or("行情窗口不足或无效")?;let bm=metrics(index).ok_or("指数行情窗口无效")?;
+    // Never intersect away a missing trading session or fill an absent price,
+    // except documented publisher omissions on the sector's own official series.
+    let (aligned,aligned_index,removed,missing)=aligned_market_window(bars,index,publisher_gaps)?;
+    let mut m=metrics(&aligned).ok_or("行情窗口不足或无效")?;let bm=metrics(&aligned_index).ok_or("指数行情窗口无效")?;
     m["rs20_vs_hs300"]=json!(number(&m,"r20")-number(&bm,"r20"));m["rs60_vs_hs300"]=json!(number(&m,"r60")-number(&bm,"r60"));
     m["strong"]=json!(m["strong"]==true && number(&m,"rs20_vs_hs300")>0.0 && number(&m,"rs60_vs_hs300")>0.0);
-    m["removed_non_trading_rows"]=json!(removed);m["window_sessions"]=json!(66);
+    m["removed_non_trading_rows"]=json!(removed);m["window_sessions"]=json!(aligned.len());
+    m["publisher_missing_sessions"]=json!(missing);
     m["window_start"]=json!(aligned[0].date);m["window_end"]=json!(aligned.last().unwrap().date);
     Ok(m)
 }
@@ -84,7 +100,7 @@ fn member_metrics(data:&history::LocalHistoryResult,index:&[KLineData],as_of:&st
         None=>return Err("截止交易日ST状态缺失，拒绝猜测".into()),
     }}
     if data.end_date.as_deref()!=Some(as_of){return Err("日线截止日期落后或停牌".into());}
-    relative_metrics(&data.klines,index).map(Some)
+    relative_metrics(&data.klines,index,false).map(Some)
 }
 
 #[tauri::command]
@@ -139,6 +155,24 @@ fn prepare_discovery_retry(state:&mut Value)->Result<bool,String> {
     if retry.len()!=failed.len() {return Err("失败板块与已保存目录不一致，保留原结果等待核对".into());}
     state["retry_queue"]=json!(retry);state["retry_processed"]=json!(0);state["retry_total"]=json!(retry.len());
     state["catalog_retry_pending"]=json!(retry_catalog);state["finished"]=json!(false);
+    Ok(true)
+}
+fn prepare_discovery_auto_retry(state:&mut Value)->Result<bool,String> {
+    // 完成后仍有失败板块时当天自动补查：立即一次，其后每45分钟一次，最多4次。
+    // 网络抖动曾让1034个板块因连接失败整日搁置，只能手动重启。
+    let failed:std::collections::HashSet<String>=state["failed"].as_array().into_iter().flatten()
+        .filter_map(|row|row["code"].as_str().map(str::to_string)).collect();
+    if failed.is_empty() || state["retry_queue"].is_array() {return Ok(false);}
+    let attempts=state["auto_retries"].as_u64().unwrap_or(0);
+    if attempts>=4 {return Ok(false);}
+    let now=chrono::Utc::now().timestamp();
+    if now-state["last_auto_retry_at"].as_i64().unwrap_or(0)<45*60 {return Ok(false);}
+    let queue=state["queue"].as_array().ok_or("发现队列缺失，原候选保留，无法恢复失败板块")?;
+    let retry:Vec<Value>=queue.iter().filter(|row|row["code"].as_str().is_some_and(|code|failed.contains(code))).cloned().collect();
+    if retry.len()!=failed.len() {return Ok(false);}
+    state["retry_queue"]=json!(retry);state["retry_processed"]=json!(0);state["retry_total"]=json!(retry.len());
+    state["finished"]=json!(false);state["auto_retries"]=json!(attempts+1);state["last_auto_retry_at"]=json!(now);
+    log::info!(target:"automation::mainline","全市场扫描存在{}个失败板块，当天自动补查（第{}次）",retry.len(),attempts+1);
     Ok(true)
 }
 fn apply_discovery_result(state:&mut Value,row:&Value,result:Result<Value,String>)->Result<(),String> {
@@ -212,9 +246,10 @@ fn start_discovery_chunk(db:&Database,revision:u64,chunk:&[Value],day:&str,index
             let result=tokio::time::timeout(std::time::Duration::from_secs(50),sector_history(code,&index)).await
                 .map_err(|_|"板块日线请求超时".to_string()).and_then(|r|r);
             let result=result.and_then(|hist|{
+                let publisher_gaps=hist.publisher_gaps_allowed;
                 let bars:Vec<_>=hist.items.iter().filter(|b|b.date<=cutoff).map(|b|KLineData{date:b.date.clone(),open:b.open,high:b.high,low:b.low,close:b.close,volume:0,turnover:0.0}).collect();
                 if bars.last().map(|r|r.date.as_str())!=Some(&cutoff){return Err("板块日线截止日期不一致".into());}
-                let m=relative_metrics(&bars,&index)?;
+                let m=relative_metrics(&bars,&index,publisher_gaps)?;
                 let extension=(number(&m,"close")-number(&m,"ma20"))/number(&m,"atr");
                 Ok(json!({"kind":row["kind"],"code":row["code"],"name":row["name"],"as_of":cutoff,"metrics":m,
                     "extension_atr":extension,"entry_ready":extension<=2.0,"observation_state":if extension<=2.0{"ready"}else{"waiting_pullback"},"source":hist.source,"model_status":"unvalidated_sector_observation"}))
@@ -260,7 +295,10 @@ async fn discover_batch_inner(db:&Database,revision:u64)->Result<(),String> {
             "scope":"申万发行方行业与东方财富行业/概念目录；共享真实交易日窗口，非交易日记录剔除，真实交易日缺失拒绝；失败单列","catalog_errors":errors});
         if !save_discovery_progress(db,&state,revision)?{return Ok(());}
     }
-    if state["finished"]==true {return Ok(());}
+    if state["finished"]==true {
+        if !prepare_discovery_auto_retry(&mut state)? {return Ok(());}
+        if !save_discovery_progress(db,&state,revision)? {return Ok(());}
+    }
     if state["catalog_retry_pending"]==true {
         retry_discovery_catalog(&mut state).await?;
         if !save_discovery_progress(db,&state,revision)? {return Ok(());}
@@ -309,7 +347,8 @@ pub(crate) fn completed_day(now: chrono::DateTime<Utc>) -> Result<NaiveDate, Str
 
 fn mean(bars: &[KLineData], n: usize) -> f64 { bars[bars.len()-n..].iter().map(|b| b.close).sum::<f64>() / n as f64 }
 fn metrics(bars: &[KLineData]) -> Option<Value> {
-    if bars.len() < 66 || bars.iter().any(|b| [b.open,b.high,b.low,b.close].iter().any(|p|!p.is_finite()||*p<=0.0)||b.high<b.open.max(b.close)||b.low>b.open.min(b.close)||b.low>b.high) { return None; }
+    // 61根保证r60仍取自真实序列；发布方缺口窗口最少63根。
+    if bars.len() < 61 || bars.iter().any(|b| [b.open,b.high,b.low,b.close].iter().any(|p|!p.is_finite()||*p<=0.0)||b.high<b.open.max(b.close)||b.low>b.open.min(b.close)||b.low>b.high) { return None; }
     let n = bars.len(); let last = &bars[n-1];
     let ma20 = mean(bars,20); let ma60 = mean(bars,60);
     let atr = bars[n-14..].iter().enumerate().map(|(i,b)| {
@@ -448,8 +487,9 @@ pub async fn scan(db: &Database, kind: &str, code: &str, name: &str) -> Result<V
     let day=completed_day(Utc::now())?; let as_of=day.to_string();
     let (members,index)=tokio::try_join!(sector_members(kind,code),benchmark(&as_of))?;
     let hist=sector_history(code,&index).await?;
+    let publisher_gaps=hist.publisher_gaps_allowed;
     let bars:Vec<_>=hist.items.iter().filter(|b|b.date<=as_of).map(|b|KLineData{date:b.date.clone(),open:b.open,high:b.high,low:b.low,close:b.close,volume:0,turnover:0.0}).collect();
-    let sector_metrics=relative_metrics(&bars,&index)?;
+    let sector_metrics=relative_metrics(&bars,&index,publisher_gaps)?;
     let sector_date=bars.last().unwrap().date.clone();
     let excluded_base=members.items.iter().filter(|m|!is_stock(m)).count();
     let eligible:Vec<_>=members.items.iter().filter(|m|is_stock(m)).cloned().collect();
@@ -621,11 +661,11 @@ mod tests {
             date+=Duration::days(1);
         }
         let mut contaminated=rows.clone();let mut weekend=rows[30].clone();weekend.date="2026-07-04".into();contaminated.push(weekend);contaminated.sort_by(|a,b|a.date.cmp(&b.date));
-        let expected=relative_metrics(&rows,&rows).unwrap();let actual=relative_metrics(&contaminated,&rows).unwrap();
+        let expected=relative_metrics(&rows,&rows,false).unwrap();let actual=relative_metrics(&contaminated,&rows,false).unwrap();
         assert_eq!(actual["removed_non_trading_rows"],1);assert_eq!(actual["window_sessions"],66);
         for key in ["r20","r60","ma20","ma60","atr","rs20_vs_hs300","rs60_vs_hs300"] {assert_eq!(expected[key],actual[key],"{key}");}
         let missing_date=contaminated[40].date.clone();contaminated.remove(40);
-        assert!(relative_metrics(&contaminated,&rows).unwrap_err().contains(&missing_date));
+        assert!(relative_metrics(&contaminated,&rows,false).unwrap_err().contains(&missing_date));
         let mut data=history::LocalHistoryResult{klines:rows.clone(),raw_klines:rows.clone(),st_by_date:vec![(rows.last().unwrap().date.clone(),Some(false))],
             source:"offline fixture".into(),protocol:history::LocalHistoryProtocol::Json,start_date:Some(rows[0].date.clone()),end_date:Some(rows.last().unwrap().date.clone()),sample_count:rows.len()};
         let as_of=rows.last().unwrap().date.as_str();assert!(member_metrics(&data,&rows,as_of,true).unwrap().is_some());
@@ -639,8 +679,46 @@ mod tests {
         assert!(member_metrics(&data,&rows,as_of,true).is_err(),"Online names must not become historical ST evidence");
         assert_eq!(plan(&data.klines,&data.raw_klines,&observed,"sh600519")["status"],"reference_unavailable");
         data.end_date=Some(rows[88].date.clone());assert!(member_metrics(&data,&rows,as_of,false).is_err());
-        let mut duplicate=rows.clone();duplicate.insert(40,rows[40].clone());assert!(relative_metrics(&duplicate,&rows).is_err());
-        let mut broken=rows.clone();broken[89].close=f64::NAN;assert!(relative_metrics(&broken,&rows).is_err());
+        let mut duplicate=rows.clone();duplicate.insert(40,rows[40].clone());assert!(relative_metrics(&duplicate,&rows,false).is_err());
+        let mut broken=rows.clone();broken[89].close=f64::NAN;assert!(relative_metrics(&broken,&rows,false).is_err());
+    }
+    #[test]
+    fn publisher_gap_alignment_discloses_and_never_fills_prices() {
+        use chrono::Datelike;
+        let mut date=NaiveDate::from_ymd_opt(2026,6,1).unwrap();let mut rows=Vec::new();
+        while rows.len()<90 {
+            if !matches!(date.weekday(),chrono::Weekday::Sat|chrono::Weekday::Sun) {
+                let close=10.0+rows.len() as f64*0.1;
+                rows.push(KLineData{date:date.to_string(),open:close,high:close+0.2,low:close-0.2,close,volume:100,turnover:1.0});
+            }
+            date+=Duration::days(1);
+        }
+        let mut missing=rows.clone();let dropped=missing[40].date.clone();missing.remove(40);
+        assert!(relative_metrics(&missing,&rows,false).is_err(),"strict alignment keeps refusing missing real sessions");
+        let tolerant=relative_metrics(&missing,&rows,true).unwrap();
+        assert_eq!(tolerant["publisher_missing_sessions"],json!([dropped]));
+        assert_eq!(tolerant["window_sessions"],65);
+        let mut heavy=missing.clone();heavy.remove(30);heavy.remove(30);heavy.remove(30);heavy.remove(30);
+        assert!(relative_metrics(&heavy,&rows,true).is_err(),"at most three publisher omissions are tolerated");
+    }
+    #[test]
+    fn finished_scans_auto_requeue_failures_with_spacing() {
+        let base=json!({"schema":DISCOVERY_SCHEMA,"as_of":"2026-09-30","total":2,"processed":2,"finished":true,
+            "queue":[{"kind":"industry","code":"SW801010","name":"农林牧渔"},{"kind":"concept","code":"BK1305","name":"测试概念"}],
+            "failed":[{"code":"BK1305","reason":"网络中断"}],"candidates":[]});
+        let mut state:Value=serde_json::from_str(&base.to_string()).unwrap();
+        assert!(prepare_discovery_auto_retry(&mut state).unwrap());
+        assert_eq!(state["retry_total"],1);assert_eq!(state["finished"],false);assert_eq!(state["auto_retries"],1);
+        assert!(!prepare_discovery_auto_retry(&mut state).unwrap(),"an in-flight retry pass is not requeued");
+        state.as_object_mut().unwrap().remove("retry_queue");
+        assert!(!prepare_discovery_auto_retry(&mut state).unwrap(),"retries keep a 45 minute spacing");
+        state["last_auto_retry_at"]=json!(chrono::Utc::now().timestamp()-45*60);
+        assert!(prepare_discovery_auto_retry(&mut state).unwrap(),"spaced retries continue until the cap");
+        assert_eq!(state["auto_retries"],2);
+        let mut exhausted:Value=serde_json::from_str(&json!({"finished":true,"queue":[{"code":"BK1305"}],"failed":[{"code":"BK1305"}],"auto_retries":4}).to_string()).unwrap();
+        assert!(!prepare_discovery_auto_retry(&mut exhausted).unwrap(),"auto retries stop after four attempts");
+        let mut recovered:Value=serde_json::from_str(&json!({"finished":true,"queue":[{"code":"SW801010"}],"failed":[],"candidates":[]}).to_string()).unwrap();
+        assert!(!prepare_discovery_auto_retry(&mut recovered).unwrap());
     }
     #[tokio::test]
     async fn pause_cancels_inflight_tasks_and_rejects_late_progress() {

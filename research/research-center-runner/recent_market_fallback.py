@@ -110,6 +110,7 @@ def collect(codes, expected, output, now=None, requester=None):
     now = now or dt.datetime.now(CST)
     requester = requester or request_batch
     selected, requests = {}, []
+    observed_sessions = {}
     # Sina uses actual shares/yuan. Tencent fills unavailable/old/invalid rows.
     # Fetch only frozen symbols plus the explicitly identified CSI300 index.
     for provider in ("sina", "tencent"):
@@ -123,10 +124,15 @@ def collect(codes, expected, output, now=None, requester=None):
                     rows, provenance = future.result()
                     requests.append(provenance)
                     for code, row in rows.items():
+                        observed_sessions[row.get("date")] = observed_sessions.get(row.get("date"), 0) + 1
                         if code in chunk and current_row(row, expected, now):
                             selected[code] = row
                 except Exception as error:
                     requests.append({"provider": provider, "symbols": len(chunk), "error": str(error)})
+    if not selected:
+        latest = max((d for d in observed_sessions if isinstance(d, str) and d), default=None)
+        if latest is not None and latest != expected:
+            raise ValueError(f"实时行情已是{latest}的交易快照，无法代表{expected}完成日日线；跨日实时行情不能回填，等待StockDB更新或下一完成日")
     return selected, requests
 
 
