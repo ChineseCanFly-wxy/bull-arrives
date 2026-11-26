@@ -1,9 +1,9 @@
 {
-  "tag": "model-assets-2026-10-11",
-  "asset": "bull-arrives-models-2026-10-11.zip",
-  "sha256": "833c21b75371dcdef680eedd2ccf6334fe2760983ee6d1d85378db260f0f2d5e",
+  "tag": "model-assets-2026-11-26",
+  "asset": "bull-arrives-models-2026-11-26.zip",
+  "sha256": "9690cf2c47cb5d998d06e7a097e8578d336a53832f2af918238997bbef9d3741",
   "files": 51,
-  "bytes": 285790827,
+  "bytes": 285792474,
   "additional_files": {
     "research/ashare-open-2026-10-01/online/301016-20250430.pdf": "0b3fc140bfb60a5f4243a2ade3f8a9eed2299f8711404bd3692c510b006fe3f0",
     "research/ashare-open-2026-10-01/online/301016-20260430.pdf": "60bec72f7f5e49a37475d8bc6f4f04b68e2b883d4ba02cde2adf6261ed56ea92",
