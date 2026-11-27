@@ -130,6 +130,19 @@ fn discovery_status(db:&Database)->Result<Value,String> {
     Ok(state)
 }
 fn valid_sw_code(code:&str)->bool {code.len()==8&&code.starts_with("SW801")&&code[2..].bytes().all(|b|b.is_ascii_digit())}
+fn quote_timestamp_acceptable(quoted_at_unix:Option<i64>,now:chrono::DateTime<Utc>)->bool {
+    // 东财快照 f124 盘中属于当日，而截止日是上一完成交易日；它只用于拒绝明显来自未来的行情，
+    // 缺失或盘中时间都不代表成分股没有截止日行情，日线截止日由 member_metrics 校验。
+    match quoted_at_unix.and_then(|t|chrono::DateTime::from_timestamp(t,0)) {
+        Some(time)=>time<=now+Duration::minutes(5),
+        None=>true,
+    }
+}
+fn membership_snapshot_current(member_as_of:&str,as_of:&str)->bool {
+    // 成分快照允许晚于截止日（盘中扫描会取到当日快照），但不得早于截止日或无法解析。
+    let Some(date)=member_as_of.get(..10).and_then(|d|NaiveDate::parse_from_str(d,"%Y-%m-%d").ok()) else {return false;};
+    NaiveDate::parse_from_str(as_of,"%Y-%m-%d").is_ok_and(|day| date>=day)
+}
 async fn sector_history(code:&str,index:&[KLineData])->Result<sector::SectorHistory,String>{
     if valid_sw_code(code){crate::datasource::sw_sector::fetch_history(code).await}else{
         if index.len()<66{return Err("真实指数历史不足，无法核验板块日线".into());}
@@ -530,9 +543,8 @@ pub async fn scan(db: &Database, kind: &str, code: &str, name: &str) -> Result<V
     let mut candidates=Vec::new();let mut missing=Vec::new();let mut covered=0;let mut trending=0;let mut excluded=excluded_base;
     for (member,result) in results {
         let symbol=format!("{}{}",member.market,member.code);
-        let quoted=member.quoted_at_unix.and_then(|t|chrono::DateTime::from_timestamp(t,0));
-        if !valid_sw_code(code) && !quoted.is_some_and(|t|t<=Utc::now()+Duration::minutes(5) && t.with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap()).date_naive()==day) {
-            missing.push(json!({"symbol":symbol,"reason":"该成分行情时间缺失、未来或不是截止交易日"}));continue;
+        if !valid_sw_code(code) && !quote_timestamp_acceptable(member.quoted_at_unix, Utc::now()) {
+            missing.push(json!({"symbol":symbol,"reason":"该成分行情时间来自未来，拒绝使用"}));continue;
         }
         let history=match result {Ok(v)=>v,Err(e)=>{missing.push(json!({"symbol":symbol,"reason":e}));continue;}};
         let m=match member_metrics(&history,&index,&as_of,local_history){
@@ -550,8 +562,8 @@ pub async fn scan(db: &Database, kind: &str, code: &str, name: &str) -> Result<V
         candidates.push(row);
     }
     candidates.sort_by(|a,b|number(b,"score").total_cmp(&number(a,"score")).then_with(||a["symbol"].as_str().cmp(&b["symbol"].as_str())));
-    let member_date=members.as_of.get(..10).unwrap_or("");
-    let complete=missing.is_empty() && !eligible.is_empty() && sector_date==as_of && (valid_sw_code(code)||member_date==as_of);
+    let complete=missing.is_empty() && !eligible.is_empty() && sector_date==as_of
+        && (valid_sw_code(code)||membership_snapshot_current(&members.as_of,&as_of));
     let observed_members_at=members.as_of.clone();
     let breadth=if covered>0 {trending as f64/covered as f64}else{0.0};
     let strong=complete && sector_metrics["strong"]==true && breadth>=0.5 && !candidates.is_empty();
@@ -842,6 +854,18 @@ mod tests {
         assert!(metrics(&bars[..60]).is_none());
     }
     #[test]
+    fn intraday_quote_snapshot_does_not_exclude_members() {
+        let now=Utc::now();
+        assert!(quote_timestamp_acceptable(None,now),"missing f124 must not exclude a member with a completed daily bar");
+        assert!(quote_timestamp_acceptable(Some((now-Duration::hours(8)).timestamp()),now),"an intraday snapshot is not a future quote");
+        assert!(quote_timestamp_acceptable(Some((now+Duration::minutes(1)).timestamp()),now));
+        assert!(!quote_timestamp_acceptable(Some((now+Duration::minutes(30)).timestamp()),now),"a future snapshot is rejected");
+        assert!(membership_snapshot_current("2026-11-27 12:02:38","2026-11-26"),"intraday membership must not block a completed-day scan");
+        assert!(membership_snapshot_current("2026-11-26 15:00:00","2026-11-26"));
+        assert!(!membership_snapshot_current("2026-11-25 15:00:00","2026-11-26"),"a stale membership snapshot stays incomplete");
+        assert!(!membership_snapshot_current("行情时间未返回","2026-11-26"));
+    }
+    #[test]
     fn causal_trend_and_calendar_guard() {
         let bars:Vec<_>=(0..90).map(|i|{let p=10.0+i as f64*0.1;KLineData{date:i.to_string(),open:p,high:p+0.15,low:p-0.15,close:p,volume:100,turnover:1.0}}).collect();
         let m=metrics(&bars).unwrap();assert_eq!(m["strong"],true);assert_eq!(m["persistence"],5);
@@ -893,6 +917,21 @@ mod tests {
         assert_eq!(value["model_status"],"unvalidated_hypothesis");
         assert_eq!(value["total_members"].as_u64().unwrap(),value["covered_members"].as_u64().unwrap()+value["excluded_members"].as_u64().unwrap()+value["missing_members"].as_array().unwrap().len() as u64);
         println!("{}",value);
+        drop(db);std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    #[ignore = "requires loopback StockDB and Eastmoney network; run before the close on a trading day"]
+    async fn live_intraday_bk_sector_scan_uses_stockdb_currency() {
+        let root=std::env::temp_dir().join(format!("bull-mainline-intraday-{}",uuid::Uuid::new_v4()));
+        let db=Database::open(root.clone()).unwrap();db.set_setting("local_history_enabled","1").unwrap();
+        let kind=std::env::var("BULL_MAINLINE_TEST_KIND").unwrap_or_else(|_|"concept".into());
+        let sector=std::env::var("BULL_MAINLINE_TEST_SECTOR").unwrap_or_else(|_|"BK1295".into());
+        let name=std::env::var("BULL_MAINLINE_TEST_NAME").unwrap_or_else(|_|"其他数字媒体".into());
+        let value=scan(&db,&kind,&sector,&name).await.unwrap();
+        assert_eq!(value["member_history_source"],"StockDB");
+        assert_eq!(value["complete"],true,"intraday membership snapshot must not block the completed-day scan: {}",value["missing_members"]);
+        assert_eq!(value["covered_members"].as_u64().unwrap()+value["excluded_members"].as_u64().unwrap(),value["total_members"].as_u64().unwrap());
+        println!("INTRADAY_MAINLINE_OK as_of={} membership_observed_at={} covered={} missing={}",value["as_of"],value["membership_observed_at"],value["covered_members"],value["missing_members"]);
         drop(db);std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
