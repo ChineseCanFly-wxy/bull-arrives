@@ -235,11 +235,11 @@ fn save_discovery_progress(db:&Database,state:&Value,revision:u64)->Result<bool,
     Ok(true)
 }
 fn start_discovery_chunk(db:&Database,revision:u64,chunk:&[Value],day:&str,index:&[KLineData])
-    ->Option<tokio::task::JoinSet<(Value,Result<Value,String>)>>{
+    ->Option<tokio::task::JoinSet<(usize,Value,Result<Value,String>)>>{
     let _control=DISCOVERY_CONTROL.get_or_init(||std::sync::Mutex::new(())).lock().unwrap_or_else(|e|e.into_inner());
     if !discovery_enabled(db)||DISCOVERY_REVISION.load(Ordering::SeqCst)!=revision{return None;}
     let mut tasks=tokio::task::JoinSet::new();
-    for row in chunk {
+    for (position,row) in chunk.iter().enumerate() {
         let row=row.clone();let cutoff=day.to_owned();let index=index.to_vec();
         tasks.spawn(async move {
             let code=row["code"].as_str().unwrap_or("");
@@ -253,7 +253,7 @@ fn start_discovery_chunk(db:&Database,revision:u64,chunk:&[Value],day:&str,index
                 let extension=(number(&m,"close")-number(&m,"ma20"))/number(&m,"atr");
                 Ok(json!({"kind":row["kind"],"code":row["code"],"name":row["name"],"as_of":cutoff,"metrics":m,
                     "extension_atr":extension,"entry_ready":extension<=2.0,"observation_state":if extension<=2.0{"ready"}else{"waiting_pullback"},"source":hist.source,"model_status":"unvalidated_sector_observation"}))
-            });(row,result)
+            });(position,row,result)
         });
     }
     Some(tasks)
@@ -317,10 +317,20 @@ async fn discover_batch_inner(db:&Database,revision:u64)->Result<(),String> {
     let limit=(begin+80).min(queue.len());let index=benchmark(&day).await?;
     // ponytail: eight concurrent requests and one checkpoint per eight; pause may redo at most eight sectors.
     for chunk in queue[begin..limit].chunks(8) {
+        let rows:Vec<Value>=chunk.to_vec();
         let Some(mut tasks)=start_discovery_chunk(db,revision,chunk,&day,&index) else{return Ok(());};
+        let mut accounted=vec![false;rows.len()];let mut crashed=None;
         while let Some(result)=tasks.join_next().await {
-            let (row,result)=result.map_err(|e|e.to_string())?;
-            apply_discovery_result(&mut state,&row,result)?;
+            match result {
+                Ok((position,row,result))=>{accounted[position]=true;apply_discovery_result(&mut state,&row,result)?;},
+                Err(error)=>crashed=Some(error.to_string()),
+            }
+        }
+        // 单个板块任务崩溃不得终止整轮扫描：该板块记入失败列表，仍按既有补查机制重试。
+        if let Some(error)=crashed {
+            for (position,row) in rows.iter().enumerate() {
+                if !accounted[position] {apply_discovery_result(&mut state,row,Err(format!("板块任务异常：{error}")))?;}
+            }
         }
         let processed=state[counter].as_u64().unwrap() as usize+chunk.len();
         state[counter]=json!(processed);
@@ -356,7 +366,10 @@ fn metrics(bars: &[KLineData]) -> Option<Value> {
         (b.high-b.low).max((b.high-prev).abs()).max((b.low-prev).abs())
     }).sum::<f64>() / 14.0;
     if !atr.is_finite() || atr <= 0.0 { return None; }
-    let persistence = (0..5).filter(|offset| {
+    // 持续性最多回看5个逐根窗口，但每个窗口自身还要有60根才能算ma60：
+    // 发布方缺口容忍后的63根窗口只能评估4个，第5个窗口仅剩59根，len-60会下溢。
+    let persistence_windows = 5.min(n.saturating_sub(59));
+    let persistence = (0..persistence_windows).filter(|offset| {
         let slice = &bars[..n-offset]; let p = slice.last().unwrap().close;
         p > mean(slice,20) && mean(slice,20) > mean(slice,60)
     }).count();
@@ -728,7 +741,7 @@ mod tests {
         // An empty index fails before HTTP; use the real batch starter without contacting any source.
         let chunk=vec![json!({"kind":"concept","code":"BK1305","name":"离线测试"})];
         let mut batch=start_discovery_chunk(&db,revision,&chunk,"2026-09-30",&[]).unwrap();
-        assert!(batch.join_next().await.unwrap().unwrap().1.is_err());
+        assert!(batch.join_next().await.unwrap().unwrap().2.is_err());
         let started=Arc::new(tokio::sync::Notify::new());let stopped=Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_db=db.clone();let worker_started=started.clone();let worker_stopped=stopped.clone();
         let worker=tokio::spawn(async move {
@@ -814,6 +827,19 @@ mod tests {
         assert_eq!(plan(&[],&raw,&m,"sh600001")["status"],"reference_unavailable");
         let mut bad_metrics=m.clone();bad_metrics["atr"]=json!(0);assert_eq!(plan(&adjusted,&raw,&bad_metrics,"sh600001")["status"],"reference_unavailable");
         bad_metrics["atr"]=json!(1e308);assert_eq!(plan(&adjusted,&raw,&bad_metrics,"sh600001")["status"],"reference_unavailable");
+    }
+    #[test]
+    fn metrics_survives_publisher_gap_window_without_underflow() {
+        // 63根是发布方缺口容忍后的最小真实窗口；回看第5个窗口只剩59根，
+        // len-60 曾在usize上下溢并让整轮全市场扫描以panic中止。
+        let bars:Vec<_>=(0..66).map(|i|{let p=10.0+i as f64*0.1;KLineData{date:i.to_string(),open:p,high:p+0.15,low:p-0.15,close:p,volume:100,turnover:1.0}}).collect();
+        for len in [61usize,62,63,64,65,66] {
+            let windows=5.min(len.saturating_sub(59));
+            let m=metrics(&bars[..len]).unwrap_or_else(||panic!("metrics rejected {len} bars"));
+            assert_eq!(m["persistence"],json!(windows),"{len}-bar window must only evaluate windows that still hold 60 bars");
+        }
+        assert_eq!(metrics(&bars[..63]).unwrap()["strong"],true);
+        assert!(metrics(&bars[..60]).is_none());
     }
     #[test]
     fn causal_trend_and_calendar_guard() {
